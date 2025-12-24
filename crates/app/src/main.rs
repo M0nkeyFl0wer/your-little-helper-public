@@ -34,7 +34,7 @@ impl Default for AppState {
         let (settings, _) = load_settings_or_default();
         let welcome_msg = ChatMessage {
             role: "assistant".to_string(),
-            content: "Hi Tarah! 🌸 I'm your Little Helper. What would you like me to help you with today?".to_string(),
+            content: "Hi! 🌸 I'm your Little Helper. What would you like me to help you with today?".to_string(),
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
         
@@ -70,9 +70,9 @@ impl AppState {
         
         // Prepare context based on current mode
         let system_prompt = match self.current_mode {
-            ChatMode::Find => "You are Little Helper, Tarah's friendly file-finding assistant. Help her find files on her computer, including mounted drives like Google Drive and SSH connections. Be conversational and ask follow-up questions to better understand what she's looking for.",
-            ChatMode::Fix => "You are Little Helper, Tarah's friendly tech support assistant. Help her troubleshoot and fix technical problems. Be patient, ask clarifying questions, and provide step-by-step solutions.",
-            ChatMode::Research => "You are Little Helper, Tarah's friendly research assistant. Help her find information and research topics. Be thorough but conversational, and ask what specific aspects she'd like to explore.",
+            ChatMode::Find => "You are Little Helper, a friendly file-finding assistant. Help users find files on their computer, including mounted drives like Google Drive and SSH connections. Be conversational and ask follow-up questions to better understand what they're looking for.",
+            ChatMode::Fix => "You are Little Helper, a friendly tech support assistant. Help users troubleshoot and fix technical problems. Be patient, ask clarifying questions, and provide step-by-step solutions.",
+            ChatMode::Research => "You are Little Helper, a friendly research assistant. Help users find information and research topics. Be thorough but conversational, and ask what specific aspects they'd like to explore.",
         };
         
         // Convert chat history to API format
@@ -161,7 +161,7 @@ fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        "Little Helper - Tarah's File Finder",
+        "Little Helper - Your AI Assistant",
         options,
         Box::new(|_cc| Box::new(LittleHelperApp { state: Arc::new(Mutex::new(AppState::default())) })),
     )
@@ -267,12 +267,6 @@ impl eframe::App for LittleHelperApp {
                     }).rounding(egui::Rounding::same(12.0))).clicked() {
                         s.current_mode = ChatMode::Research;
                     }
-                    
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(16.0);
-                        ui.small(egui::RichText::new("for Tarah 😊")
-                            .color(egui::Color32::from_rgb(153, 102, 153)));
-                    });
                 });
                 ui.add_space(20.0);
             });
