@@ -11,3 +11,7 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 shared = { path = "../shared" }
+oauth2 = { workspace = true }
+url = { workspace = true }
+tiny_http = { workspace = true }
+open = { workspace = true }

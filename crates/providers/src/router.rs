@@ -26,15 +26,15 @@ impl ProviderRouter {
                     client.generate(messages.clone()).await
                 }
                 "openai" => {
-                    let client = OpenAIClient::new(&self.config.openai_model)?;
+                    let client = OpenAIClient::from_auth(&self.config.openai_model, &self.config.openai_auth)?;
                     client.generate(messages.clone()).await
                 }
                 "anthropic" => {
-                    let client = AnthropicClient::new(&self.config.anthropic_model)?;
+                    let client = AnthropicClient::from_auth(&self.config.anthropic_model, &self.config.anthropic_auth)?;
                     client.generate(messages.clone()).await
                 }
                 "gemini" => {
-                    let client = GeminiClient::new(&self.config.gemini_model)?;
+                    let client = GeminiClient::from_auth(&self.config.gemini_model, &self.config.gemini_auth)?;
                     client.generate(messages.clone()).await
                 }
                 _ => {

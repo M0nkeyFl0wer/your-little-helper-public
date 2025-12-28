@@ -31,3 +31,7 @@ strsim = "0.11"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["clock"] }
 directories = "5"
+oauth2 = "4"
+url = "2"
+tiny_http = "0.12"
+open = "5"

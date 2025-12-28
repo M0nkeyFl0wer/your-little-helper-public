@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
+use shared::settings::ProviderAuth;
 use std::env;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,14 +32,31 @@ struct AnthropicResponse {
 
 pub struct AnthropicClient {
     http: Client,
-    key: String,
+    auth_token: String,
     model: String,
 }
 
 impl AnthropicClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
-        Ok(Self { http: Client::new(), key, model: model.to_string() })
+        Ok(Self { http: Client::new(), auth_token: key, model: model.to_string() })
+    }
+
+    pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
+        let auth_token = if let Some(oauth) = &auth.oauth {
+            oauth.access_token.clone()
+        } else if let Some(api_key) = &auth.api_key {
+            api_key.clone()
+        } else {
+            // Try environment variable as fallback
+            env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("No Anthropic authentication configured"))?
+        };
+
+        Ok(Self {
+            http: Client::new(),
+            auth_token,
+            model: model.to_string(),
+        })
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
@@ -60,7 +78,7 @@ impl AnthropicClient {
 
         let resp = self.http
             .post(url)
-            .header("x-api-key", &self.key)
+            .header("x-api-key", &self.auth_token)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
             .json(&req)
