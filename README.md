@@ -45,25 +45,42 @@ By default, Little Helper uses **Ollama** for completely local AI processing. Yo
 No configuration needed! Just install using the installer above.
 
 ### Cloud Providers (Optional - More Powerful)
-You can optionally configure cloud AI providers for enhanced capabilities:
+You can optionally configure cloud AI providers for enhanced capabilities.
 
-#### OpenAI
+**⚠️ Important:** These providers require **API accounts** with pay-per-use billing. This is **separate** from ChatGPT Plus, Claude Pro, or Gemini Advanced subscriptions.
+
+#### Setting Up API Access (Recommended Method)
+
+**OpenAI**
 ```bash
 export OPENAI_API_KEY="your-api-key-here"
 ```
 Get your API key from: https://platform.openai.com/api-keys
+(Separate from ChatGPT Plus - requires OpenAI API account)
 
-#### Anthropic (Claude)
+**Anthropic (Claude)**
 ```bash
 export ANTHROPIC_API_KEY="your-api-key-here"
 ```
 Get your API key from: https://console.anthropic.com/settings/keys
+(Separate from Claude Pro - requires Anthropic API account)
 
-#### Google Gemini
+**Google Gemini**
 ```bash
 export GEMINI_API_KEY="your-api-key-here"
 ```
 Get your API key from: https://aistudio.google.com/app/apikey
+(Separate from Gemini Advanced - uses Gemini API)
+
+#### OAuth Authentication (Advanced - Like Cline in VS Code)
+
+Little Helper supports OAuth browser flows similar to Cline/Continue.dev. The infrastructure is ready, but requires creating OAuth applications:
+
+- **Anthropic**: No public OAuth (enterprise only)
+- **Google**: Requires Google Cloud Console setup
+- **OpenAI**: No OAuth for API access
+
+**For most users, API keys are simpler.**
 
 ### Provider Priority
 Edit your settings file (`~/.config/Little Helper/LittleHelper/settings.json`) to configure provider fallback:
