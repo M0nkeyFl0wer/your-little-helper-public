@@ -13,7 +13,7 @@ impl AgentHost {
 
     pub async fn chat(&self, messages: Vec<ChatMessage>) -> Result<String> {
         use providers::router::ProviderRouter;
-        let router = ProviderRouter::new(self.settings.model.local_model.clone(), self.settings.model.enable_gemini);
+        let router = ProviderRouter::new(self.settings.model.clone());
         router.generate(messages).await
     }
 }

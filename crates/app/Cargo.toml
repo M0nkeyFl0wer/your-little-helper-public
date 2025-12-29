@@ -19,4 +19,4 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 
 [package.metadata]
-description = "Little Helper - Tarah's File Finder GUI"
+description = "Little Helper - Personal AI Assistant GUI"

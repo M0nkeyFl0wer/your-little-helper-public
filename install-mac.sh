@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Little Helper - One-Click Mac Installer
-# This script installs everything Tarah needs to run Little Helper
+# This script installs everything you need to run Little Helper
 
 set -e
 
-echo "🌸 Installing Little Helper for Tarah..."
+echo "🌸 Installing Little Helper..."
 echo ""
 
 # Check if we're on macOS
@@ -34,9 +34,9 @@ ollama serve &
 OLLAMA_PID=$!
 sleep 3
 
-# Install a good, lightweight model for Tarah
+# Install a good, lightweight local model
 echo "🤖 Installing AI model (this may take a few minutes)..."
-echo "   Downloading a smart but fast model perfect for Tarah..."
+echo "   Downloading a smart but fast model for local processing..."
 
 # Use a smaller, faster model that's great for conversation
 if ! ollama list | grep -q "llama3.2:3b"; then
@@ -86,7 +86,7 @@ cat > "Little Helper.app/Contents/Info.plist" << EOF
     <key>CFBundleExecutable</key>
     <string>Little Helper</string>
     <key>CFBundleIdentifier</key>
-    <string>com.tarah.littlehelper</string>
+    <string>com.littlehelper.app</string>
     <key>CFBundleName</key>
     <string>Little Helper</string>
     <key>CFBundleVersion</key>
@@ -109,13 +109,13 @@ rm -rf "/Applications/Little Helper.app"
 cp -r "Little Helper.app" "/Applications/"
 
 # Create startup script for Ollama
-cat > "$HOME/Library/LaunchAgents/com.tarah.ollama.plist" << EOF
+cat > "$HOME/Library/LaunchAgents/com.littlehelper.ollama.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tarah.ollama</string>
+    <string>com.littlehelper.ollama</string>
     <key>ProgramArguments</key>
     <array>
         <string>$(which ollama)</string>
@@ -130,18 +130,18 @@ cat > "$HOME/Library/LaunchAgents/com.tarah.ollama.plist" << EOF
 EOF
 
 # Load the service
-launchctl load "$HOME/Library/LaunchAgents/com.tarah.ollama.plist"
+launchctl load "$HOME/Library/LaunchAgents/com.littlehelper.ollama.plist"
 
 echo ""
 echo "🎉 Installation complete!"
 echo ""
 echo "✅ Little Helper is now installed in Applications"
-echo "✅ AI model (llama3.2:3b) is ready"
+echo "✅ AI model (llama3.2:3b) is ready for local processing"
 echo "✅ Ollama service will start automatically"
 echo ""
-echo "🌸 Tarah can now open Little Helper from Applications!"
-echo "   It will connect to the local AI automatically."
+echo "🌸 You can now open Little Helper from Applications!"
+echo "   By default, it uses local AI for complete privacy."
+echo "   You can optionally configure cloud providers (OpenAI, Anthropic, Gemini) in settings."
 echo ""
-echo "📝 Note: The first time she uses it, macOS may ask for permission"
-echo "   to access files - just click 'Allow' to let Little Helper"
-echo "   search her files."
+echo "📝 Note: The first time you use it, macOS may ask for permission"
+echo "   to access files - just click 'Allow' to enable file search."

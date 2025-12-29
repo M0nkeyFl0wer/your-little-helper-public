@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Little Helper - Secure Mac Installer
-# This script installs everything Tarah needs with security checks
+# This script installs everything you need with security checks
 
 set -e
 
