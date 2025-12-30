@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  workflow_dispatch:  # Manual trigger button
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build-apple-silicon:
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
@@ -22,11 +22,10 @@ jobs:
       - name: Build app
         run: cargo build --release -p app
 
-      - name: Create app bundle
+      - name: Create Little Helper.app bundle
         run: |
           mkdir -p "Little Helper.app/Contents/MacOS"
           mkdir -p "Little Helper.app/Contents/Resources"
-
           cp target/release/app "Little Helper.app/Contents/MacOS/Little Helper"
           chmod +x "Little Helper.app/Contents/MacOS/Little Helper"
 
@@ -40,8 +39,6 @@ jobs:
               <key>CFBundleIdentifier</key>
               <string>com.littlehelper.app</string>
               <key>CFBundleName</key>
-              <string>Little Helper</string>
-              <key>CFBundleDisplayName</key>
               <string>Little Helper</string>
               <key>CFBundleVersion</key>
               <string>1.0.0</string>
@@ -59,12 +56,52 @@ jobs:
           </plist>
           EOF
 
-          # Verify binary architecture
-          echo "Binary architecture:"
-          file "Little Helper.app/Contents/MacOS/Little Helper"
+      - name: Create Setup app (one-click installer)
+        run: |
+          # Compile AppleScript to .app
+          osacompile -o "Setup Little Helper.app" installer/setup.applescript
 
-      - name: Create zip
-        run: zip -r "LittleHelper-macOS-arm64.zip" "Little Helper.app"
+          # Copy install script into the Setup app bundle
+          cp installer/install.sh "Setup Little Helper.app/Contents/Resources/"
+          chmod +x "Setup Little Helper.app/Contents/Resources/install.sh"
+
+          # Verify
+          echo "Setup app contents:"
+          ls -la "Setup Little Helper.app/Contents/Resources/"
+
+      - name: Create release zip
+        run: |
+          # Create a folder with both apps
+          mkdir -p "LittleHelper-Installer"
+          cp -r "Setup Little Helper.app" "LittleHelper-Installer/"
+          cp -r "Little Helper.app" "LittleHelper-Installer/"
+
+          # Add a simple README
+          cat > "LittleHelper-Installer/READ ME FIRST.txt" << 'EOF'
+          Welcome to Little Helper!
+
+          EASY INSTALL (Recommended):
+          1. Double-click "Setup Little Helper.app"
+          2. Click "Install"
+          3. Follow the prompts
+          4. Done! Little Helper will open automatically.
+
+          Note: Your Mac password is needed once to install the AI engine.
+
+          MANUAL INSTALL:
+          1. Drag "Little Helper.app" to Applications
+          2. Install Ollama from https://ollama.com/download
+          3. Open Terminal and run: ollama pull llama3.2:3b
+          4. Open Little Helper from Applications
+
+          First time opening: macOS may warn about "unidentified developer"
+          Just right-click the app > Open > Open
+
+          Enjoy your new AI assistant!
+          EOF
+
+          # Zip it
+          zip -r "LittleHelper-macOS-arm64.zip" "LittleHelper-Installer"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -90,21 +127,20 @@ jobs:
         with:
           files: LittleHelper-macOS-arm64.zip
           body: |
-            ## Little Helper v${{ github.ref_name }}
+            ## Little Helper ${{ github.ref_name }}
 
-            ### One-Command Install (Recommended)
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
-            ```
+            ### One-Click Install
+            1. Download the zip below
+            2. Unzip it
+            3. Double-click **"Setup Little Helper.app"**
+            4. Click **Install**
+            5. Enter your Mac password when asked
+            6. Wait ~5 minutes for AI model to download
+            7. Done! App opens automatically.
 
-            ### Manual Install
-            1. Download `LittleHelper-macOS-arm64.zip` below
-            2. Unzip and move to Applications
-            3. First open: Right-click > Open > Open (bypasses Gatekeeper)
-            4. Install Ollama: https://ollama.com/download
-            5. Run: `ollama pull llama3.2:3b`
+            **Note:** First time opening, macOS may warn about "unidentified developer".
+            Right-click > Open > Open to bypass.
 
-            **Note:** This build is for Apple Silicon Macs (M1/M2/M3/M4).
-            Intel Mac support coming soon!
+            **Requirements:** Apple Silicon Mac (M1/M2/M3/M4) with macOS 11+
           draft: false
           prerelease: false

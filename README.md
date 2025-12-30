@@ -7,7 +7,7 @@ A beautiful, private AI assistant for your Mac. Chat with AI to find files, get 
 One command in Terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/main/install-easy.sh | bash
 ```
 
 **What it does:**
@@ -86,8 +86,8 @@ rm ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone https://github.com/M0nkeyFl0wer/claudia-lite.git
-cd claudia-lite
+git clone https://github.com/M0nkeyFl0wer/your-little-helper.git
+cd your-little-helper
 cargo build --release -p app
 ```
 
