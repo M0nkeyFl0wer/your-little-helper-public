@@ -1,104 +1,96 @@
-# 🌸 Little Helper - Your Personal AI Assistant
+# Little Helper
 
-A beautiful AI assistant that gives you control over your privacy. Chat with your personal AI to find files, get tech support, and research topics - choose between fully local processing or powerful cloud models.
+A beautiful, private AI assistant for your Mac. Chat with AI to find files, get tech support, and research topics - all running locally on your machine.
 
-## ✨ Features
-- **🔍 Find Mode**: Ask your AI to find any file on your Mac, Google Drive, or connected drives
-- **🔧 Fix Mode**: Get personalized tech support and troubleshooting help
-- **🔌 Research Mode**: Have conversations about any topic with your AI
-- **🎨 Beautiful Design**: Modern, rounded interface with soft colors
-- **🔒 Privacy Options**: Choose fully local processing (Ollama) or cloud models (OpenAI, Anthropic, Gemini)
-- **🤖 Smart Conversations**: Real back-and-forth chat with context memory
+## Install (Apple Silicon Macs)
 
-## 🚀 One-Click Installation (macOS)
-
-Just run this single command in Terminal:
+One command in Terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-mac.sh | bash
+curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
 ```
 
-This automatically installs:
-- ✅ Little Helper app in Applications
-- ✅ Local AI engine (Ollama) for privacy-focused operation
-- ✅ Smart AI model (3GB, optimized for conversations)
-- ✅ Optional: Configure cloud providers (OpenAI, Anthropic, Gemini) in settings
+**What it does:**
+- Downloads Little Helper app (~5MB)
+- Installs Ollama AI engine
+- Downloads AI model (~2GB)
+- Sets up auto-start
 
-## 🎯 How to Use
+**Requirements:** macOS 11+ on Apple Silicon (M1/M2/M3/M4)
 
-1. **Open Little Helper** from Applications
-2. **Choose your mode**: Find, Fix, or Research  
-3. **Start chatting!** Ask questions naturally like:
+---
+
+## Features
+
+**Find Mode** - Ask your AI to find files on your Mac, Google Drive, or connected drives
+
+**Fix Mode** - Get personalized tech support and troubleshooting help
+
+**Research Mode** - Have conversations about any topic
+
+Everything runs locally. Your data never leaves your Mac.
+
+---
+
+## First Launch
+
+macOS will warn about "unidentified developer" the first time:
+
+1. **Right-click** the app in Applications
+2. Click **Open**
+3. Click **Open** again in the dialog
+
+After that, it opens normally.
+
+---
+
+## How to Use
+
+1. Open Little Helper from Applications
+2. Choose your mode: Find, Fix, or Research
+3. Start chatting! Ask questions naturally like:
    - "Find my tax documents from 2023"
    - "My WiFi is acting up, can you help?"
    - "Tell me about sustainable gardening"
 
-Your AI remembers the conversation context and asks follow-up questions to better help you!
+---
 
-## 🔐 AI Provider Configuration
+## Cloud Providers (Optional)
 
-Little Helper supports multiple AI providers, giving you complete control over privacy and capabilities:
+By default, everything runs locally with Ollama. You can optionally add cloud AI:
 
-### Local-Only (Default - Maximum Privacy)
-By default, Little Helper uses **Ollama** for completely local AI processing. Your data never leaves your computer.
-
-No configuration needed! Just install using the installer above.
-
-### Cloud Providers (Optional - More Powerful)
-You can optionally configure cloud AI providers for enhanced capabilities.
-
-**⚠️ Important:** These providers require **API accounts** with pay-per-use billing. This is **separate** from ChatGPT Plus, Claude Pro, or Gemini Advanced subscriptions.
-
-#### Setting Up API Access (Recommended Method)
-
-**OpenAI**
 ```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
-Get your API key from: https://platform.openai.com/api-keys
-(Separate from ChatGPT Plus - requires OpenAI API account)
+# OpenAI
+export OPENAI_API_KEY="your-key"
 
-**Anthropic (Claude)**
+# Anthropic Claude
+export ANTHROPIC_API_KEY="your-key"
+
+# Google Gemini
+export GEMINI_API_KEY="your-key"
+```
+
+---
+
+## Uninstall
+
 ```bash
-export ANTHROPIC_API_KEY="your-api-key-here"
+rm -rf "/Applications/Little Helper.app"
+launchctl unload ~/Library/LaunchAgents/com.littlehelper.ollama.plist
+rm ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 ```
-Get your API key from: https://console.anthropic.com/settings/keys
-(Separate from Claude Pro - requires Anthropic API account)
 
-**Google Gemini**
+---
+
+## Build from Source
+
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
-Get your API key from: https://aistudio.google.com/app/apikey
-(Separate from Gemini Advanced - uses Gemini API)
-
-#### OAuth Authentication (Advanced - Like Cline in VS Code)
-
-Little Helper supports OAuth browser flows similar to Cline/Continue.dev. The infrastructure is ready, but requires creating OAuth applications:
-
-- **Anthropic**: No public OAuth (enterprise only)
-- **Google**: Requires Google Cloud Console setup
-- **OpenAI**: No OAuth for API access
-
-**For most users, API keys are simpler.**
-
-### Provider Priority
-Edit your settings file (`~/.config/Little Helper/LittleHelper/settings.json`) to configure provider fallback:
-
-```json
-{
-  "model": {
-    "provider_preference": ["local", "openai", "anthropic", "gemini"]
-  }
-}
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+git clone https://github.com/M0nkeyFl0wer/claudia-lite.git
+cd claudia-lite
+cargo build --release -p app
 ```
 
-The app will try each provider in order until one succeeds. For maximum privacy, use `["local"]` only.
+---
 
-## 🛠️ Developer Setup
-
-If you want to build from source:
-```bash
-# Prerequisites: Rust toolchain + Ollama running locally
-cargo run -p app
-```
+MIT License

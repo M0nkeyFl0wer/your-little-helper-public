@@ -1,0 +1,110 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:  # Manual trigger button
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-apple-silicon:
+    runs-on: macos-14  # Apple Silicon runner
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build app
+        run: cargo build --release -p app
+
+      - name: Create app bundle
+        run: |
+          mkdir -p "Little Helper.app/Contents/MacOS"
+          mkdir -p "Little Helper.app/Contents/Resources"
+
+          cp target/release/app "Little Helper.app/Contents/MacOS/Little Helper"
+          chmod +x "Little Helper.app/Contents/MacOS/Little Helper"
+
+          cat > "Little Helper.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Little Helper</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.littlehelper.app</string>
+              <key>CFBundleName</key>
+              <string>Little Helper</string>
+              <key>CFBundleDisplayName</key>
+              <string>Little Helper</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+          </dict>
+          </plist>
+          EOF
+
+          # Verify binary architecture
+          echo "Binary architecture:"
+          file "Little Helper.app/Contents/MacOS/Little Helper"
+
+      - name: Create zip
+        run: zip -r "LittleHelper-macOS-arm64.zip" "Little Helper.app"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-arm64
+          path: "LittleHelper-macOS-arm64.zip"
+
+  release:
+    needs: build-apple-silicon
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: LittleHelper-arm64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: LittleHelper-macOS-arm64.zip
+          body: |
+            ## Little Helper v${{ github.ref_name }}
+
+            ### One-Command Install (Recommended)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
+            ```
+
+            ### Manual Install
+            1. Download `LittleHelper-macOS-arm64.zip` below
+            2. Unzip and move to Applications
+            3. First open: Right-click > Open > Open (bypasses Gatekeeper)
+            4. Install Ollama: https://ollama.com/download
+            5. Run: `ollama pull llama3.2:3b`
+
+            **Note:** This build is for Apple Silicon Macs (M1/M2/M3/M4).
+            Intel Mac support coming soon!
+          draft: false
+          prerelease: false
