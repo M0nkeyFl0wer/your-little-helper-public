@@ -1,4 +1,4 @@
-name: Build macOS App
+name: Build Apps
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-apple-silicon:
+  build-mac:
     runs-on: macos-14
 
     steps:
@@ -58,89 +58,146 @@ jobs:
 
       - name: Create Setup app (one-click installer)
         run: |
-          # Compile AppleScript to .app
           osacompile -o "Setup Little Helper.app" installer/setup.applescript
-
-          # Copy install script into the Setup app bundle
           cp installer/install.sh "Setup Little Helper.app/Contents/Resources/"
           chmod +x "Setup Little Helper.app/Contents/Resources/install.sh"
 
-          # Verify
-          echo "Setup app contents:"
-          ls -la "Setup Little Helper.app/Contents/Resources/"
-
       - name: Create release zip
         run: |
-          # Create a folder with both apps
           mkdir -p "LittleHelper-Installer"
           cp -r "Setup Little Helper.app" "LittleHelper-Installer/"
           cp -r "Little Helper.app" "LittleHelper-Installer/"
 
-          # Add a simple README
           cat > "LittleHelper-Installer/READ ME FIRST.txt" << 'EOF'
           Welcome to Little Helper!
 
-          EASY INSTALL (Recommended):
+          EASY INSTALL:
           1. Double-click "Setup Little Helper.app"
           2. Click "Install"
           3. Follow the prompts
-          4. Done! Little Helper will open automatically.
+          4. Done!
 
-          Note: Your Mac password is needed once to install the AI engine.
+          Your Mac password is needed once for the AI engine.
 
-          MANUAL INSTALL:
-          1. Drag "Little Helper.app" to Applications
-          2. Install Ollama from https://ollama.com/download
-          3. Open Terminal and run: ollama pull llama3.2:3b
-          4. Open Little Helper from Applications
+          First time opening: if macOS warns about "unidentified developer"
+          just right-click the app > Open > Open
 
-          First time opening: macOS may warn about "unidentified developer"
-          Just right-click the app > Open > Open
-
-          Enjoy your new AI assistant!
+          Enjoy!
           EOF
 
-          # Zip it
           zip -r "LittleHelper-macOS-arm64.zip" "LittleHelper-Installer"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LittleHelper-arm64
+          name: LittleHelper-macOS
           path: "LittleHelper-macOS-arm64.zip"
 
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build app
+        run: cargo build --release -p app
+
+      - name: Create release zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "LittleHelper-Installer"
+
+          # Copy the exe
+          Copy-Item "target/release/app.exe" "LittleHelper-Installer/LittleHelper.exe"
+
+          # Copy installer script
+          Copy-Item "installer/install-windows.ps1" "LittleHelper-Installer/Install.ps1"
+
+          # Create a batch file to run PowerShell script easily
+          @"
+          @echo off
+          echo Starting Little Helper Setup...
+          powershell -ExecutionPolicy Bypass -File "%~dp0Install.ps1"
+          "@ | Out-File -FilePath "LittleHelper-Installer/Install.bat" -Encoding ASCII
+
+          # Create README
+          @"
+          Welcome to Little Helper!
+
+          EASY INSTALL:
+          1. Double-click "Install.bat"
+          2. Follow the prompts
+          3. Done!
+
+          MANUAL INSTALL:
+          1. Copy LittleHelper.exe wherever you want
+          2. Install Ollama from https://ollama.com/download
+          3. Open Command Prompt and run: ollama pull llama3.2:3b
+          4. Run LittleHelper.exe
+
+          Enjoy!
+          "@ | Out-File -FilePath "LittleHelper-Installer/READ ME FIRST.txt" -Encoding UTF8
+
+          # Zip it
+          Compress-Archive -Path "LittleHelper-Installer" -DestinationPath "LittleHelper-Windows.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Windows
+          path: "LittleHelper-Windows.zip"
+
   release:
-    needs: build-apple-silicon
+    needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
 
     steps:
-      - name: Download build
+      - name: Download Mac build
         uses: actions/download-artifact@v4
         with:
-          name: LittleHelper-arm64
+          name: LittleHelper-macOS
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: LittleHelper-Windows
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: LittleHelper-macOS-arm64.zip
+          files: |
+            LittleHelper-macOS-arm64.zip
+            LittleHelper-Windows.zip
           body: |
             ## Little Helper ${{ github.ref_name }}
 
-            ### One-Click Install
-            1. Download the zip below
+            ### Mac (Apple Silicon)
+            1. Download `LittleHelper-macOS-arm64.zip`
             2. Unzip it
             3. Double-click **"Setup Little Helper.app"**
-            4. Click **Install**
-            5. Enter your Mac password when asked
-            6. Wait ~5 minutes for AI model to download
-            7. Done! App opens automatically.
+            4. Click Install, enter password, wait ~5 min
+            5. Done!
 
-            **Note:** First time opening, macOS may warn about "unidentified developer".
-            Right-click > Open > Open to bypass.
+            *First time: if macOS warns "unidentified developer" → right-click > Open > Open*
 
-            **Requirements:** Apple Silicon Mac (M1/M2/M3/M4) with macOS 11+
+            ### Windows
+            1. Download `LittleHelper-Windows.zip`
+            2. Unzip it
+            3. Double-click **"Install.bat"**
+            4. Follow prompts, wait ~5 min for AI download
+            5. Done!
+
+            *Windows may show SmartScreen warning → click "More info" > "Run anyway"*
+
+            ---
+            **Requirements:**
+            - Mac: Apple Silicon (M1/M2/M3/M4), macOS 11+
+            - Windows: Windows 10/11, 64-bit
           draft: false
           prerelease: false
