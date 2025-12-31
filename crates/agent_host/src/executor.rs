@@ -360,6 +360,218 @@ pub fn parse_progress(output: &str) -> Option<u8> {
     last_percent
 }
 
+/// Execute a command with sudo, providing password via stdin
+/// 
+/// SECURITY: Password is never stored or logged. It's passed directly to sudo via stdin
+/// and cleared from memory after use.
+#[cfg(not(windows))]
+pub async fn execute_with_sudo(cmd: &str, password: &str, timeout_secs: u64) -> Result<CommandResult> {
+    use tokio::io::AsyncWriteExt;
+    
+    let start = Instant::now();
+    
+    // Strip "sudo " prefix if present, we'll add it ourselves
+    let actual_cmd = cmd.strip_prefix("sudo ").unwrap_or(cmd);
+    
+    // Use sudo -S to read password from stdin
+    // -k invalidates cached credentials to ensure we're always prompted
+    let mut child = tokio::process::Command::new("sudo")
+        .arg("-S")  // Read password from stdin
+        .arg("-k")  // Invalidate cached credentials
+        .arg("sh")
+        .arg("-c")
+        .arg(actual_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    
+    // Write password to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        // Password followed by newline
+        let password_with_newline = format!("{}\n", password);
+        stdin.write_all(password_with_newline.as_bytes()).await?;
+        // Explicitly drop stdin to close it
+        drop(stdin);
+    }
+    
+    // Wait for command with timeout
+    let output = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        child.wait_with_output()
+    ).await;
+    
+    let duration_ms = start.elapsed().as_millis() as u64;
+    
+    match output {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            
+            // Remove password prompt from stderr (sudo outputs "[sudo] password for user:")
+            if let Some(idx) = stderr.find('\n') {
+                let first_line = &stderr[..idx];
+                if first_line.contains("password for") || first_line.contains("[sudo]") {
+                    stderr = stderr[idx + 1..].to_string();
+                }
+            }
+            
+            let exit_code = output.status.code().unwrap_or(-1);
+            let success = output.status.success();
+            
+            // Check for wrong password
+            let wrong_password = stderr.contains("incorrect password") 
+                || stderr.contains("Sorry, try again")
+                || stderr.contains("Authentication failure");
+            
+            let summary = if wrong_password {
+                "Incorrect password".to_string()
+            } else if success {
+                generate_summary(cmd, &stdout, &stderr, success, duration_ms)
+            } else {
+                format!("Command failed: {}", stderr.lines().next().unwrap_or("unknown error"))
+            };
+            
+            let mut combined = stdout.clone();
+            if !stderr.is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(&stderr);
+            }
+            
+            Ok(CommandResult {
+                command: format!("sudo {}", actual_cmd),
+                exit_code,
+                stdout,
+                stderr,
+                output: combined,
+                duration_ms,
+                success: success && !wrong_password,
+                summary,
+                needed_sudo: true,
+            })
+        }
+        Ok(Err(e)) => {
+            Ok(CommandResult {
+                command: format!("sudo {}", actual_cmd),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: e.to_string(),
+                output: format!("Failed to execute: {}", e),
+                duration_ms,
+                success: false,
+                summary: format!("Command failed: {}", e),
+                needed_sudo: true,
+            })
+        }
+        Err(_) => {
+            Ok(CommandResult {
+                command: format!("sudo {}", actual_cmd),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Command timed out".to_string(),
+                output: format!("Command timed out after {} seconds", timeout_secs),
+                duration_ms,
+                success: false,
+                summary: format!("Timed out after {}s", timeout_secs),
+                needed_sudo: true,
+            })
+        }
+    }
+}
+
+/// Windows equivalent - uses runas for elevation
+/// Note: Windows UAC will show a system prompt, we can't programmatically provide credentials
+#[cfg(windows)]
+pub async fn execute_with_elevation(cmd: &str, timeout_secs: u64) -> Result<CommandResult> {
+    let start = Instant::now();
+    
+    // On Windows, we use PowerShell's Start-Process with -Verb RunAs
+    // This triggers UAC prompt which the user must approve
+    let ps_cmd = format!(
+        "Start-Process cmd -ArgumentList '/c {}' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode",
+        cmd.replace("'", "''")
+    );
+    
+    let output = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        Command::new("powershell")
+            .arg("-Command")
+            .arg(&ps_cmd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+    ).await;
+    
+    let duration_ms = start.elapsed().as_millis() as u64;
+    
+    match output {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_code = stdout.trim().parse().unwrap_or(-1);
+            let success = exit_code == 0;
+            
+            Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code,
+                stdout: String::new(), // Elevated process output not captured
+                stderr,
+                output: if success {
+                    "Command completed with admin privileges".to_string()
+                } else {
+                    format!("Command failed with exit code {}", exit_code)
+                },
+                duration_ms,
+                success,
+                summary: if success {
+                    "Completed with admin privileges".to_string()
+                } else {
+                    "Failed or was cancelled".to_string()
+                },
+                needed_sudo: true,
+            })
+        }
+        Ok(Err(e)) => {
+            Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: e.to_string(),
+                output: format!("Failed to elevate: {}", e),
+                duration_ms,
+                success: false,
+                summary: "Failed to request admin privileges".to_string(),
+                needed_sudo: true,
+            })
+        }
+        Err(_) => {
+            Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Operation timed out".to_string(),
+                output: "Admin operation timed out or was cancelled".to_string(),
+                duration_ms,
+                success: false,
+                summary: "Timed out or cancelled".to_string(),
+                needed_sudo: true,
+            })
+        }
+    }
+}
+
+/// Check if a command needs elevated privileges based on output
+pub fn needs_elevation(result: &CommandResult) -> bool {
+    result.needed_sudo 
+        || result.stderr.contains("Permission denied")
+        || result.stderr.contains("Operation not permitted")
+        || result.stderr.contains("Access is denied")
+        || result.stderr.contains("requires root")
+        || result.stderr.contains("must be root")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

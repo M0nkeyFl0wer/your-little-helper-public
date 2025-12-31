@@ -13,7 +13,13 @@ use regex::Regex;
 use shared::agent_api::ChatMessage;
 use shared::settings::AppSettings;
 
-pub use executor::{CommandResult, DangerLevel, classify_command, execute_command, parse_progress};
+pub use executor::{CommandResult, DangerLevel, classify_command, execute_command, parse_progress, needs_elevation};
+
+#[cfg(not(windows))]
+pub use executor::execute_with_sudo;
+
+#[cfg(windows)]
+pub use executor::execute_with_elevation;
 
 /// Tool result from command execution
 #[derive(Debug, Clone)]
