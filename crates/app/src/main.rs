@@ -11,12 +11,22 @@ use viewers::{
     text_viewer::TextViewer, FileType,
 };
 
+// Default mascot image (boss's dog!)
+const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppScreen {
+    Onboarding,
+    Chat,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChatMode {
     Find,     // Help me find something
     Fix,      // Help me fix something
-    Research, // Help me research something
+    Research, // Deep research session
     Data,     // Work with data and files
+    Content,  // Content creation/management
 }
 
 #[derive(Clone)]
@@ -37,6 +47,7 @@ enum ActiveViewer {
 
 struct AppState {
     settings: AppSettings,
+    current_screen: AppScreen,
     current_mode: ChatMode,
     input_text: String,
     chat_history: Vec<ChatMessage>,
@@ -47,19 +58,43 @@ struct AppState {
     show_preview: bool,
     preview_path: Option<PathBuf>,
     active_viewer: ActiveViewer,
+
+    // Onboarding
+    onboarding_name: String,
+
+    // Background mascot texture
+    mascot_texture: Option<egui::TextureHandle>,
+    mascot_loaded: bool,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         let (settings, _) = load_settings_or_default();
+        let needs_onboarding = !settings.user_profile.onboarding_complete;
+
+        let user_name = if settings.user_profile.name.is_empty() {
+            "friend".to_string()
+        } else {
+            settings.user_profile.name.clone()
+        };
+
         let welcome_msg = ChatMessage {
             role: "assistant".to_string(),
-            content: "Hi! I'm your Little Helper. What would you like me to help you with today?\n\nYou can ask me to find files, fix problems, research topics, or work with data.".to_string(),
+            content: format!(
+                "Hi {}! I'm your Little Helper. What would you like me to help you with today?\n\n\
+                You can ask me to find files, fix problems, do deep research, work with data, or create content.",
+                user_name
+            ),
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
 
         Self {
             settings: settings.clone(),
+            current_screen: if needs_onboarding {
+                AppScreen::Onboarding
+            } else {
+                AppScreen::Chat
+            },
             current_mode: ChatMode::Find,
             input_text: String::new(),
             chat_history: vec![welcome_msg],
@@ -68,11 +103,54 @@ impl Default for AppState {
             show_preview: false,
             preview_path: None,
             active_viewer: ActiveViewer::None,
+            onboarding_name: String::new(),
+            mascot_texture: None,
+            mascot_loaded: false,
         }
     }
 }
 
 impl AppState {
+    /// Load the mascot image as a texture (custom or default)
+    fn load_mascot_texture(&mut self, ctx: &egui::Context) {
+        if self.mascot_loaded {
+            return;
+        }
+        self.mascot_loaded = true;
+
+        // Try custom image first, fall back to default
+        let image_result = if let Some(path_str) = &self.settings.user_profile.mascot_image_path {
+            let path = Path::new(path_str);
+            if path.exists() {
+                image::open(path).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Use custom image or fall back to embedded default
+        let image_data = image_result.or_else(|| image::load_from_memory(DEFAULT_MASCOT).ok());
+
+        if let Some(img) = image_data {
+            let rgba = img.to_rgba8();
+            let size = [rgba.width() as usize, rgba.height() as usize];
+            let pixels = rgba.into_raw();
+
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+            let texture = ctx.load_texture("mascot", color_image, egui::TextureOptions::LINEAR);
+            self.mascot_texture = Some(texture);
+        }
+    }
+
+    /// Reload mascot texture when path changes
+    fn reload_mascot_texture(&mut self, ctx: &egui::Context) {
+        self.mascot_loaded = false;
+        self.mascot_texture = None;
+        self.load_mascot_texture(ctx);
+    }
+
     fn send_message(&mut self) {
         if self.input_text.trim().is_empty() {
             return;
@@ -92,11 +170,33 @@ impl AppState {
         self.is_thinking = true;
 
         // Prepare context based on current mode
+        let user_name = if self.settings.user_profile.name.is_empty() {
+            "friend".to_string()
+        } else {
+            self.settings.user_profile.name.clone()
+        };
+
         let system_prompt = match self.current_mode {
-            ChatMode::Find => "You are Little Helper, a friendly file-finding assistant. Help users find files on their computer. When you find files, mention their paths so the user can click to preview them.",
-            ChatMode::Fix => "You are Little Helper, a friendly tech support assistant. Help users troubleshoot and fix technical problems. Be patient and provide step-by-step solutions.",
-            ChatMode::Research => "You are Little Helper, a friendly research assistant. Help users find information and research topics. Be thorough but conversational.",
-            ChatMode::Data => "You are Little Helper, a data assistant. Help users work with CSV files, JSON data, and databases. When referencing files, mention their paths so users can preview them.",
+            ChatMode::Find => format!(
+                "You are Little Helper, a friendly assistant helping {}. Help find files on their computer. When you find files, mention their paths so they can click to preview them.",
+                user_name
+            ),
+            ChatMode::Fix => format!(
+                "You are Little Helper, a friendly tech support assistant helping {}. Help troubleshoot and fix technical problems. Be patient and provide step-by-step solutions.",
+                user_name
+            ),
+            ChatMode::Research => format!(
+                "You are Little Helper in DEEP RESEARCH mode, helping {}. Conduct thorough, comprehensive research on topics. Ask clarifying questions, explore multiple angles, cite sources, and provide detailed analysis. This is for serious research work.",
+                user_name
+            ),
+            ChatMode::Data => format!(
+                "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. When referencing files, mention their paths so they can preview them.",
+                user_name
+            ),
+            ChatMode::Content => format!(
+                "You are Little Helper in CONTENT CREATION mode, helping {}. Help create, manage, and schedule content. You can help draft posts, review content calendars, and manage publishing workflows.",
+                user_name
+            ),
         };
 
         // Convert chat history to API format
@@ -257,14 +357,6 @@ fn load_settings_or_default() -> (AppSettings, bool) {
     (default_settings, true)
 }
 
-fn _save_settings(settings: &AppSettings) {
-    if let Some(path) = config_path() {
-        if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
-            let _ = fs::write(path, bytes);
-        }
-    }
-}
-
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let options = eframe::NativeOptions {
@@ -292,16 +384,40 @@ impl eframe::App for LittleHelperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
 
-        // Set up modern theme
+        // Set up theme (dark or light mode)
         let mut style = (*ctx.style()).clone();
         style.visuals.window_rounding = egui::Rounding::same(12.0);
-        style.visuals.panel_fill = egui::Color32::from_rgb(250, 250, 252);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+
+        if s.settings.user_profile.dark_mode {
+            style.visuals = egui::Visuals::dark();
+            style.visuals.panel_fill = egui::Color32::from_rgb(30, 30, 35);
+        } else {
+            style.visuals.panel_fill = egui::Color32::from_rgb(250, 250, 252);
+        }
         ctx.set_style(style);
+
+        // Route to appropriate screen
+        match s.current_screen {
+            AppScreen::Onboarding => {
+                render_onboarding_screen(&mut s, ctx);
+                return;
+            }
+            AppScreen::Chat => {
+                // Load mascot texture if not already loaded
+                s.load_mascot_texture(ctx);
+            }
+        }
+
+        let dark = s.settings.user_profile.dark_mode;
 
         // Top header with mode buttons
         egui::TopBottomPanel::top("header")
-            .frame(egui::Frame::none().fill(egui::Color32::from_rgb(245, 247, 250)))
+            .frame(egui::Frame::none().fill(if dark {
+                egui::Color32::from_rgb(35, 35, 42)
+            } else {
+                egui::Color32::from_rgb(245, 247, 250)
+            }))
             .show(ctx, |ui| {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
@@ -309,7 +425,11 @@ impl eframe::App for LittleHelperApp {
                     ui.heading(
                         egui::RichText::new("Little Helper")
                             .size(24.0)
-                            .color(egui::Color32::from_rgb(60, 60, 80)),
+                            .color(if dark {
+                                egui::Color32::from_rgb(220, 220, 230)
+                            } else {
+                                egui::Color32::from_rgb(60, 60, 80)
+                            }),
                     );
 
                     ui.add_space(32.0);
@@ -319,9 +439,35 @@ impl eframe::App for LittleHelperApp {
                     mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode);
                     mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode);
                     mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode);
+                    mode_button(ui, "Content", ChatMode::Content, &mut s.current_mode);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
+
+                        // Dark mode toggle
+                        let dark_icon = if s.settings.user_profile.dark_mode {
+                            "☀" // Sun icon - click to switch to light
+                        } else {
+                            "🌙" // Moon icon - click to switch to dark
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new(dark_icon).size(18.0))
+                                    .frame(false),
+                            )
+                            .on_hover_text(if s.settings.user_profile.dark_mode {
+                                "Switch to light mode"
+                            } else {
+                                "Switch to dark mode"
+                            })
+                            .clicked()
+                        {
+                            s.settings.user_profile.dark_mode = !s.settings.user_profile.dark_mode;
+                            save_settings(&s.settings);
+                        }
+
+                        ui.add_space(8.0);
+
                         if s.show_preview {
                             if ui.button("Close Preview").clicked() {
                                 s.close_preview();
@@ -339,7 +485,11 @@ impl eframe::App for LittleHelperApp {
                 .min_width(300.0)
                 .frame(
                     egui::Frame::none()
-                        .fill(egui::Color32::from_rgb(255, 255, 255))
+                        .fill(if dark {
+                            egui::Color32::from_rgb(35, 35, 42)
+                        } else {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        })
                         .inner_margin(egui::Margin::same(12.0)),
                 )
                 .show(ctx, |ui| {
@@ -385,10 +535,41 @@ impl eframe::App for LittleHelperApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(250, 250, 252))
+                    .fill(if dark {
+                        egui::Color32::from_rgb(25, 25, 30)
+                    } else {
+                        egui::Color32::from_rgb(250, 250, 252)
+                    })
                     .inner_margin(egui::Margin::same(16.0)),
             )
             .show(ctx, |ui| {
+                // Paint mascot as watermark FIRST (background layer)
+                let panel_rect = ui.max_rect();
+                if let Some(texture) = &s.mascot_texture {
+                    let tex_size = texture.size_vec2();
+
+                    // Scale to fit nicely - about 30% of panel width
+                    let max_width = panel_rect.width() * 0.30;
+                    let max_height = panel_rect.height() * 0.40;
+                    let scale = (max_width / tex_size.x).min(max_height / tex_size.y);
+                    let img_size = tex_size * scale;
+
+                    // Position in bottom-right, above where input box will be
+                    let pos = egui::pos2(
+                        panel_rect.right() - img_size.x - 30.0,
+                        panel_rect.bottom() - img_size.y - 90.0,
+                    );
+                    let rect = egui::Rect::from_min_size(pos, img_size);
+
+                    // Very subtle watermark - won't obstruct text
+                    ui.painter().image(
+                        texture.id(),
+                        rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::from_white_alpha(20), // Very faint
+                    );
+                }
+
                 // Chat messages scroll area
                 let chat_height = ui.available_height() - 70.0;
 
@@ -401,7 +582,7 @@ impl eframe::App for LittleHelperApp {
                     .show(ui, |ui| {
                         for msg in &s.chat_history {
                             ui.add_space(6.0);
-                            if let Some(path) = render_message(ui, msg) {
+                            if let Some(path) = render_message(ui, msg, dark) {
                                 clicked_path = Some(path);
                             }
                             ui.add_space(6.0);
@@ -410,13 +591,21 @@ impl eframe::App for LittleHelperApp {
                         if s.is_thinking {
                             ui.add_space(6.0);
                             egui::Frame::none()
-                                .fill(egui::Color32::from_rgb(245, 245, 248))
+                                .fill(if dark {
+                                    egui::Color32::from_rgb(50, 50, 58)
+                                } else {
+                                    egui::Color32::from_rgb(245, 245, 248)
+                                })
                                 .rounding(egui::Rounding::same(12.0))
                                 .inner_margin(egui::Margin::same(12.0))
                                 .show(ui, |ui| {
                                     ui.label(
                                         egui::RichText::new("Thinking...")
-                                            .color(egui::Color32::from_rgb(100, 100, 120))
+                                            .color(if dark {
+                                                egui::Color32::from_rgb(160, 160, 180)
+                                            } else {
+                                                egui::Color32::from_rgb(100, 100, 120)
+                                            })
                                             .italics(),
                                     );
                                 });
@@ -437,6 +626,7 @@ impl eframe::App for LittleHelperApp {
                         ChatMode::Fix => "What needs fixing?",
                         ChatMode::Research => "What should I research?",
                         ChatMode::Data => "What data would you like to work with?",
+                        ChatMode::Content => "What content would you like to create?",
                     };
 
                     let response = ui.add_sized(
@@ -484,7 +674,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
 }
 
 /// Render a chat message, returning any clicked file path
-fn render_message(ui: &mut egui::Ui, msg: &ChatMessage) -> Option<PathBuf> {
+fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> Option<PathBuf> {
     let is_user = msg.role == "user";
     let mut clicked_path: Option<PathBuf> = None;
 
@@ -508,7 +698,11 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage) -> Option<PathBuf> {
     } else {
         // Assistant message - left aligned, with clickable paths
         egui::Frame::none()
-            .fill(egui::Color32::from_rgb(245, 245, 248))
+            .fill(if dark {
+                egui::Color32::from_rgb(50, 50, 58)
+            } else {
+                egui::Color32::from_rgb(245, 245, 248)
+            })
             .rounding(egui::Rounding::same(12.0))
             .inner_margin(egui::Margin::same(12.0))
             .show(ui, |ui| {
@@ -517,17 +711,23 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage) -> Option<PathBuf> {
                 // Check for file paths in the message
                 let paths = extract_paths(&msg.content);
 
+                let text_color = if dark {
+                    egui::Color32::from_rgb(220, 220, 230)
+                } else {
+                    egui::Color32::from_rgb(40, 40, 50)
+                };
+
                 if paths.is_empty() {
                     ui.label(
                         egui::RichText::new(&msg.content)
-                            .color(egui::Color32::from_rgb(40, 40, 50))
+                            .color(text_color)
                             .size(15.0),
                     );
                 } else {
                     // Render text with clickable paths
                     ui.label(
                         egui::RichText::new(&msg.content)
-                            .color(egui::Color32::from_rgb(40, 40, 50))
+                            .color(text_color)
                             .size(15.0),
                     );
 
@@ -552,4 +752,235 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage) -> Option<PathBuf> {
     }
 
     clicked_path
+}
+
+/// Render the onboarding screen for first-time users
+fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
+    let dark = s.settings.user_profile.dark_mode;
+
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::none()
+                .fill(if dark {
+                    egui::Color32::from_rgb(25, 25, 30)
+                } else {
+                    egui::Color32::from_rgb(250, 250, 252)
+                })
+                .inner_margin(egui::Margin::same(40.0)),
+        )
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(60.0);
+
+                // Welcome header
+                ui.label(
+                    egui::RichText::new("Welcome to Little Helper!")
+                        .size(32.0)
+                        .strong()
+                        .color(if dark {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_rgb(50, 50, 70)
+                        }),
+                );
+
+                ui.add_space(12.0);
+
+                ui.label(
+                    egui::RichText::new("Your friendly AI assistant for finding files, fixing problems, and getting things done.")
+                        .size(16.0)
+                        .color(if dark {
+                            egui::Color32::from_rgb(180, 180, 190)
+                        } else {
+                            egui::Color32::from_rgb(100, 100, 120)
+                        }),
+                );
+
+                ui.add_space(50.0);
+
+                // Form container
+                egui::Frame::none()
+                    .fill(if dark {
+                        egui::Color32::from_rgb(40, 40, 48)
+                    } else {
+                        egui::Color32::WHITE
+                    })
+                    .rounding(egui::Rounding::same(16.0))
+                    .inner_margin(egui::Margin::same(32.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 4.0),
+                        blur: 20.0,
+                        spread: 0.0,
+                        color: egui::Color32::from_black_alpha(20),
+                    })
+                    .show(ui, |ui| {
+                        ui.set_max_width(400.0);
+
+                        // Name input
+                        ui.label(
+                            egui::RichText::new("What should I call you?")
+                                .size(14.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(200, 200, 210)
+                                } else {
+                                    egui::Color32::from_rgb(80, 80, 100)
+                                }),
+                        );
+                        ui.add_space(8.0);
+
+                        ui.add_sized(
+                            [350.0, 36.0],
+                            egui::TextEdit::singleline(&mut s.onboarding_name)
+                                .hint_text("Your name")
+                                .font(egui::FontId::new(16.0, egui::FontFamily::Proportional)),
+                        );
+
+                        ui.add_space(24.0);
+
+                        // Mascot image upload (optional)
+                        ui.label(
+                            egui::RichText::new("Add a mascot image (optional)")
+                                .size(14.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(200, 200, 210)
+                                } else {
+                                    egui::Color32::from_rgb(80, 80, 100)
+                                }),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("A pet photo or favorite image to personalize your assistant")
+                                .size(12.0)
+                                .weak(),
+                        );
+                        ui.add_space(8.0);
+
+                        ui.horizontal(|ui| {
+                            if let Some(path) = &s.settings.user_profile.mascot_image_path {
+                                let file_name = Path::new(path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy();
+                                ui.label(
+                                    egui::RichText::new(format!("Selected: {}", file_name))
+                                        .size(13.0)
+                                        .color(egui::Color32::from_rgb(70, 130, 180)),
+                                );
+                                if ui.small_button("Clear").clicked() {
+                                    s.settings.user_profile.mascot_image_path = None;
+                                }
+                            } else {
+                                if ui
+                                    .button(egui::RichText::new("Choose Image...").size(14.0))
+                                    .clicked()
+                                {
+                                    // Open file dialog
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                                        .pick_file()
+                                    {
+                                        s.settings.user_profile.mascot_image_path =
+                                            Some(path.to_string_lossy().to_string());
+                                    }
+                                }
+                            }
+                        });
+
+                        ui.add_space(24.0);
+
+                        // Dark mode toggle
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Dark mode")
+                                    .size(14.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(200, 200, 210)
+                                    } else {
+                                        egui::Color32::from_rgb(80, 80, 100)
+                                    }),
+                            );
+                            ui.add_space(8.0);
+                            if ui
+                                .add(egui::widgets::Checkbox::new(
+                                    &mut s.settings.user_profile.dark_mode,
+                                    "",
+                                ))
+                                .changed()
+                            {
+                                // Theme will update on next frame
+                            }
+                        });
+
+                        ui.add_space(32.0);
+
+                        // Get Started button
+                        ui.vertical_centered(|ui| {
+                            let btn = egui::Button::new(
+                                egui::RichText::new("Get Started")
+                                    .size(16.0)
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(egui::Color32::from_rgb(70, 130, 180))
+                            .rounding(egui::Rounding::same(10.0))
+                            .min_size(egui::vec2(200.0, 44.0));
+
+                            if ui.add(btn).clicked() {
+                                // Save name to profile
+                                if !s.onboarding_name.trim().is_empty() {
+                                    s.settings.user_profile.name = s.onboarding_name.trim().to_string();
+                                }
+                                s.settings.user_profile.onboarding_complete = true;
+
+                                // Update welcome message with user's name
+                                let user_name = if s.settings.user_profile.name.is_empty() {
+                                    "friend".to_string()
+                                } else {
+                                    s.settings.user_profile.name.clone()
+                                };
+                                if let Some(first_msg) = s.chat_history.first_mut() {
+                                    first_msg.content = format!(
+                                        "Hi {}! I'm your Little Helper. What would you like me to help you with today?\n\n\
+                                        You can ask me to find files, fix problems, do deep research, work with data, or create content.",
+                                        user_name
+                                    );
+                                }
+
+                                // Save settings
+                                save_settings(&s.settings);
+
+                                // Switch to chat
+                                s.current_screen = AppScreen::Chat;
+                            }
+                        });
+                    });
+
+                ui.add_space(20.0);
+
+                // Skip option
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Skip for now")
+                                .size(13.0)
+                                .color(egui::Color32::from_rgb(120, 120, 140)),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    s.settings.user_profile.onboarding_complete = true;
+                    save_settings(&s.settings);
+                    s.current_screen = AppScreen::Chat;
+                }
+            });
+        });
+}
+
+/// Save settings to disk
+fn save_settings(settings: &AppSettings) {
+    if let Some(path) = config_path() {
+        if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
+            let _ = fs::write(path, bytes);
+        }
+    }
 }

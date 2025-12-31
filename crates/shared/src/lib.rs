@@ -16,16 +16,25 @@ pub mod settings {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ModelProvider {
-        pub local_model: String,      // e.g., "llama3.2:3b" for Ollama
+        pub local_model: String,              // e.g., "llama3.2:3b" for Ollama
         pub provider_preference: Vec<String>, // e.g., ["local", "openai", "anthropic", "gemini"]
-        pub openai_model: String,     // e.g., "gpt-4o-mini"
-        pub anthropic_model: String,  // e.g., "claude-3-5-sonnet-20241022"
-        pub gemini_model: String,     // e.g., "gemini-1.5-flash"
+        pub openai_model: String,             // e.g., "gpt-4o-mini"
+        pub anthropic_model: String,          // e.g., "claude-3-5-sonnet-20241022"
+        pub gemini_model: String,             // e.g., "gemini-1.5-flash"
 
         // Authentication (either API key or OAuth)
         pub openai_auth: ProviderAuth,
         pub anthropic_auth: ProviderAuth,
         pub gemini_auth: ProviderAuth,
+    }
+
+    /// User profile for personalization
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct UserProfile {
+        pub name: String,
+        pub mascot_image_path: Option<String>, // Path to pet/mascot image
+        pub dark_mode: bool,
+        pub onboarding_complete: bool,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +43,7 @@ pub mod settings {
         pub model: ModelProvider,
         pub enable_internet_research: bool,
         pub max_results: usize,
+        pub user_profile: UserProfile,
     }
 
     impl Default for ProviderAuth {
@@ -61,6 +71,7 @@ pub mod settings {
                 },
                 enable_internet_research: false,
                 max_results: 200,
+                user_profile: UserProfile::default(),
             }
         }
     }
@@ -71,7 +82,7 @@ pub mod agent_api {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ChatMessage {
-        pub role: String,   // "system" | "user" | "assistant"
+        pub role: String, // "system" | "user" | "assistant"
         pub content: String,
     }
 }
