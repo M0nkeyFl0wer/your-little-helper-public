@@ -5,6 +5,7 @@ members = [
   "crates/providers",
   "crates/services",
   "crates/shared",
+  "crates/viewers",
 ]
 resolver = "2"
 
@@ -35,3 +36,5 @@ oauth2 = "4"
 url = "2"
 tiny_http = "0.12"
 open = "5"
+image = "0.24"
+csv = "1.3"
