@@ -8,5 +8,7 @@ anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
 providers = { path = "../providers" }
 shared = { path = "../shared" }

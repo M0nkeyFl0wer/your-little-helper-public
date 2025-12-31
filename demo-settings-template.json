@@ -1,0 +1,30 @@
+{
+  "allowed_dirs": [
+    "~",
+    "/home"
+  ],
+  "model": {
+    "local_model": "llama3.2:3b",
+    "provider_preference": [
+      "openai",
+      "local"
+    ],
+    "openai_model": "gpt-4o-mini",
+    "anthropic_model": "claude-3-5-sonnet-20241022",
+    "gemini_model": "gemini-1.5-flash",
+    "openai_auth": {
+      "api_key": "YOUR_OPENAI_API_KEY_HERE",
+      "oauth": null
+    },
+    "anthropic_auth": {
+      "api_key": null,
+      "oauth": null
+    },
+    "gemini_auth": {
+      "api_key": null,
+      "oauth": null
+    }
+  },
+  "enable_internet_research": false,
+  "max_results": 200
+}
