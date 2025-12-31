@@ -10,13 +10,18 @@ anyhow = { workspace = true }
 shared = { path = "../shared" }
 services = { path = "../services" }
 agent_host = { path = "../agent_host" }
+viewers = { path = "../viewers" }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
+image = { workspace = true }
+regex = { workspace = true }
+dirs = "5"
 
 [package.metadata]
 description = "Little Helper - Personal AI Assistant GUI"
