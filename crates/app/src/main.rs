@@ -23,7 +23,7 @@ struct AiResult {
 // Default mascot image (boss's dog!)
 const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
-// Pre-loaded API key (gitignored secrets.rs)
+// Pre-loaded API key (gitignored secrets.rs, or empty for CI builds)
 mod secrets;
 use secrets::OPENAI_API_KEY;
 
