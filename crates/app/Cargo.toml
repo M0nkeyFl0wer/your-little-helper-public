@@ -10,6 +10,7 @@ anyhow = { workspace = true }
 shared = { path = "../shared" }
 services = { path = "../services" }
 agent_host = { path = "../agent_host" }
+providers = { path = "../providers" }
 viewers = { path = "../viewers" }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
@@ -23,6 +24,7 @@ image = { workspace = true }
 regex = { workspace = true }
 dirs = "5"
 rfd = "0.14"
+open = "5"
 
 [package.metadata]
 description = "Little Helper - Personal AI Assistant GUI"

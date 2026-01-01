@@ -8,3 +8,9 @@ target/
 /dist/
 /target/
 Cargo.lock
+
+# API keys - NEVER commit these
+secrets.toml
+.env
+*.key
+crates/app/src/secrets.rs

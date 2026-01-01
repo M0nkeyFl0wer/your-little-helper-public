@@ -12,3 +12,4 @@ tokio = { workspace = true }
 regex = { workspace = true }
 providers = { path = "../providers" }
 shared = { path = "../shared" }
+urlencoding = "2.1"

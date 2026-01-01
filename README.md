@@ -1,63 +1,75 @@
 # Little Helper
 
-A beautiful, private AI assistant for your Mac. Chat with AI to find files, get tech support, and research topics - all running locally on your machine.
+A beautiful, private AI assistant for your desktop. Chat with AI to find files, get tech support, research topics, and work with data - all running locally on your machine.
 
-## Install (Apple Silicon Macs)
+## Download
 
-One command in Terminal:
+**[Download Latest Release](https://github.com/M0nkeyFl0wer/claudia-lite/releases/latest)**
 
+| Platform | File | Requirements |
+|----------|------|--------------|
+| **Mac (Apple Silicon)** | `LittleHelper-macOS-arm64.zip` | macOS 11+, M1/M2/M3/M4 |
+| **Windows** | `LittleHelper-Windows.zip` | Windows 10/11, 64-bit |
+
+---
+
+## Quick Install
+
+### Mac
+
+1. Download `LittleHelper-macOS-arm64.zip`
+2. Unzip and double-click **"Setup Little Helper.app"**
+3. Click Install, enter your password, wait ~5 min
+4. Done!
+
+*First time opening: if macOS warns "unidentified developer" - right-click > Open > Open*
+
+**Or use Terminal:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/main/install-easy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
 ```
 
-**What it does:**
-- Downloads Little Helper app (~5MB)
-- Installs Ollama AI engine
-- Downloads AI model (~2GB)
-- Sets up auto-start
+### Windows
 
-**Requirements:** macOS 11+ on Apple Silicon (M1/M2/M3/M4)
+1. Download `LittleHelper-Windows.zip`
+2. Unzip and double-click **"Install.bat"**
+3. Follow prompts, wait ~5 min for AI download
+4. Done!
+
+*Windows may show SmartScreen warning - click "More info" > "Run anyway"*
 
 ---
 
 ## Features
 
-**Find Mode** - Ask your AI to find files on your Mac, Google Drive, or connected drives
+| Mode | What it does |
+|------|--------------|
+| **Find** | Search for files on your computer |
+| **Fix** | Tech support and troubleshooting |
+| **Research** | Deep research with web search |
+| **Data** | Work with CSV, JSON, databases |
+| **Content** | Create and manage content |
 
-**Fix Mode** - Get personalized tech support and troubleshooting help
+**Built-in viewers:** Text, Images, PDF, CSV, JSON, HTML
 
-**Research Mode** - Have conversations about any topic
-
-Everything runs locally. Your data never leaves your Mac.
+**Everything runs locally.** Your data stays on your machine.
 
 ---
 
 ## First Launch
 
-macOS will warn about "unidentified developer" the first time:
+The app will ask for your name and let you pick a background image (optional).
 
-1. **Right-click** the app in Applications
-2. Click **Open**
-3. Click **Open** again in the dialog
-
-After that, it opens normally.
-
----
-
-## How to Use
-
-1. Open Little Helper from Applications
-2. Choose your mode: Find, Fix, or Research
-3. Start chatting! Ask questions naturally like:
-   - "Find my tax documents from 2023"
-   - "My WiFi is acting up, can you help?"
-   - "Tell me about sustainable gardening"
+Choose your AI mode and start chatting:
+- "Find my tax documents from 2023"
+- "My WiFi is acting up, can you help?"
+- "Research the history of coffee"
 
 ---
 
 ## Cloud Providers (Optional)
 
-By default, everything runs locally with Ollama. You can optionally add cloud AI:
+By default, Little Helper uses Ollama (local AI). You can add cloud providers:
 
 ```bash
 # OpenAI
@@ -74,20 +86,29 @@ export GEMINI_API_KEY="your-key"
 
 ## Uninstall
 
+### Mac
 ```bash
 rm -rf "/Applications/Little Helper.app"
 launchctl unload ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 rm ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 ```
 
+### Windows
+1. Delete the LittleHelper folder from `%LOCALAPPDATA%\LittleHelper`
+2. Delete the desktop shortcut
+3. Uninstall Ollama from Add/Remove Programs (optional)
+
 ---
 
 ## Build from Source
 
 ```bash
+# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone https://github.com/M0nkeyFl0wer/your-little-helper.git
-cd your-little-helper
+
+# Clone and build
+git clone https://github.com/M0nkeyFl0wer/claudia-lite.git
+cd claudia-lite
 cargo build --release -p app
 ```
 

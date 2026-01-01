@@ -49,9 +49,10 @@ pub struct CommandResult {
 
 /// Safe commands that can run without confirmation
 const SAFE_COMMANDS: &[&str] = &[
+    // === UNIX/LINUX COMMANDS ===
     // File listing and info (read-only)
     "ls", "find", "cat", "head", "tail", "wc", "du", "df", "pwd", 
-    "file", "stat", "tree", "which", "whereis", "type",
+    "file", "stat", "tree", "which", "whereis",
     // Text processing (read-only)
     "grep", "rg", "ag", "awk", "sed", "sort", "uniq", "cut", "tr",
     "diff", "comm", "join", "paste", "column",
@@ -62,6 +63,21 @@ const SAFE_COMMANDS: &[&str] = &[
     // Network info (read-only)
     "ip", "ifconfig", "netstat", "ss", "ping", "nslookup", "dig",
     "host", "traceroute", "curl", "wget",
+    // Archive listing
+    "tar -tf", "unzip -l", "zipinfo",
+    
+    // === WINDOWS COMMANDS ===
+    // File listing and info (read-only)
+    "dir", "type", "where", "tree /f", "attrib",
+    // System info (read-only)
+    "systeminfo", "ver", "set", "echo %", "wmic", "tasklist",
+    "ipconfig", "getmac", "arp",
+    // PowerShell read-only
+    "powershell -c \"Get-", "powershell -c \"Write-", "powershell Get-",
+    "Get-ChildItem", "Get-Content", "Get-Process", "Get-Service",
+    "Get-NetAdapter", "Get-NetIPAddress", "Get-ComputerInfo",
+    
+    // === CROSS-PLATFORM ===
     // Git (read operations)
     "git status", "git log", "git diff", "git show", "git branch",
     "git remote", "git fetch", "git ls-files", "git blame",
@@ -70,32 +86,39 @@ const SAFE_COMMANDS: &[&str] = &[
     "cargo fmt --check", "rustc --version", "cargo --version",
     // Node/Python (read operations)
     "node --version", "npm --version", "python --version", "pip --version",
-    "python -c", "node -e",
-    // Archive listing
-    "tar -tf", "unzip -l", "zipinfo",
+    "python -c", "python3 -c", "node -e",
+    "python3 --version", "pip3 --version",
 ];
 
 /// Commands that need user confirmation before running
 const NEEDS_CONFIRMATION: &[&str] = &[
-    // File operations
+    // Unix file operations
     "cp", "mv", "mkdir", "touch", "ln",
+    // Windows file operations  
+    "copy", "move", "xcopy", "robocopy", "md", "ren",
     // Git write operations
     "git add", "git commit", "git push", "git pull", "git merge",
     "git checkout", "git reset", "git stash",
     // Package managers
-    "pip install", "npm install", "cargo install",
+    "pip install", "pip3 install", "npm install", "cargo install",
     // Editors (opening files)
-    "nano", "vim", "nvim", "code",
+    "nano", "vim", "nvim", "code", "notepad",
 ];
 
 /// Dangerous commands that need explicit confirmation with warning
 const DANGEROUS_COMMANDS: &[&str] = &[
-    // Destructive file operations
+    // Unix destructive file operations
     "rm", "rmdir", "shred",
-    // Permissions
+    // Windows destructive file operations
+    "del", "rd", "rmdir /s", "erase",
+    // Unix permissions
     "chmod", "chown", "chgrp",
-    // System modifications
+    // Windows permissions
+    "icacls", "takeown",
+    // Unix process control
     "kill", "killall", "pkill",
+    // Windows process control
+    "taskkill", "Stop-Process",
     // Git destructive
     "git reset --hard", "git clean", "git push --force",
     // Database
@@ -104,12 +127,17 @@ const DANGEROUS_COMMANDS: &[&str] = &[
 
 /// Commands that are always blocked
 const BLOCKED_COMMANDS: &[&str] = &[
-    // System destruction
+    // Unix system destruction
     "rm -rf /", "rm -rf /*", ":(){ :|:& };:",
-    // Format/wipe
+    // Unix format/wipe
     "mkfs", "dd if=/dev/zero", "dd if=/dev/random",
-    // Dangerous redirects
+    // Unix dangerous redirects
     "> /dev/sda", ">/dev/sda",
+    // Windows system destruction
+    "format c:", "format C:", "rd /s /q C:", 
+    "del /f /s /q C:", "Remove-Item -Recurse -Force C:",
+    // Registry destruction
+    "reg delete HKLM", "Remove-ItemProperty -Path HKLM",
     // Network attacks
     "nc -l", "nmap",
 ];
@@ -206,7 +234,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResu
             let mut combined = stdout.clone();
             if !stderr.is_empty() {
                 if !combined.is_empty() {
-                    combined.push_str("\n");
+                    combined.push('\n');
                 }
                 combined.push_str(&stderr);
             }
@@ -570,6 +598,129 @@ pub fn needs_elevation(result: &CommandResult) -> bool {
         || result.stderr.contains("Access is denied")
         || result.stderr.contains("requires root")
         || result.stderr.contains("must be root")
+}
+
+/// Perform a web search using DuckDuckGo's HTML interface
+/// Returns search results as text
+pub async fn web_search(query: &str) -> Result<CommandResult> {
+    let start = Instant::now();
+    
+    // Use DuckDuckGo's lite/HTML interface for simple text results
+    let encoded_query = urlencoding::encode(query);
+    let url = format!("https://html.duckduckgo.com/html/?q={}", encoded_query);
+    
+    // Use curl to fetch results (available on most systems)
+    let output = Command::new("curl")
+        .arg("-s")  // Silent
+        .arg("-L")  // Follow redirects
+        .arg("-A")  // User agent
+        .arg("Mozilla/5.0 (compatible; LittleHelper/1.0)")
+        .arg(&url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await?;
+    
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let html = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    
+    if !output.status.success() {
+        return Ok(CommandResult {
+            command: format!("web_search: {}", query),
+            exit_code: output.status.code().unwrap_or(-1),
+            stdout: String::new(),
+            stderr: stderr.clone(),
+            output: format!("Search failed: {}", stderr),
+            duration_ms,
+            success: false,
+            summary: "Search failed".to_string(),
+            needed_sudo: false,
+        });
+    }
+    
+    // Parse results from HTML - extract titles and snippets
+    let results = parse_ddg_results(&html);
+    
+    let result_count = results.len();
+    let output_text = if results.is_empty() {
+        "No results found.".to_string()
+    } else {
+        results.iter()
+            .enumerate()
+            .map(|(i, (title, snippet, url))| {
+                format!("{}. {}\n   {}\n   URL: {}\n", i + 1, title, snippet, url)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    
+    Ok(CommandResult {
+        command: format!("web_search: {}", query),
+        exit_code: 0,
+        stdout: output_text.clone(),
+        stderr: String::new(),
+        output: output_text,
+        duration_ms,
+        success: true,
+        summary: format!("Found {} results ({}ms)", result_count, duration_ms),
+        needed_sudo: false,
+    })
+}
+
+/// Parse DuckDuckGo HTML results into (title, snippet, url) tuples
+fn parse_ddg_results(html: &str) -> Vec<(String, String, String)> {
+    let mut results = Vec::new();
+    
+    // DuckDuckGo HTML format has results in <a class="result__a"> and <a class="result__snippet">
+    // Simple regex-based parsing (not perfect but works for basic extraction)
+    
+    // Find result links - they contain the title
+    let title_re = regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)</a>"#).unwrap();
+    let snippet_re = regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]+)"#).unwrap();
+    
+    let titles: Vec<(String, String)> = title_re.captures_iter(html)
+        .filter_map(|cap| {
+            let url = cap.get(1)?.as_str();
+            let title = cap.get(2)?.as_str();
+            // DuckDuckGo uses redirect URLs, try to extract actual URL
+            let actual_url = if url.contains("uddg=") {
+                url.split("uddg=").nth(1)
+                    .and_then(|u| urlencoding::decode(u).ok())
+                    .map(|u| u.into_owned())
+                    .unwrap_or_else(|| url.to_string())
+            } else {
+                url.to_string()
+            };
+            Some((html_decode(title), actual_url))
+        })
+        .collect();
+    
+    let snippets: Vec<String> = snippet_re.captures_iter(html)
+        .filter_map(|cap| cap.get(1).map(|m| html_decode(m.as_str())))
+        .collect();
+    
+    // Combine titles and snippets
+    for (i, (title, url)) in titles.into_iter().take(10).enumerate() {
+        let snippet = snippets.get(i).cloned().unwrap_or_default();
+        if !title.is_empty() {
+            results.push((title, snippet, url));
+        }
+    }
+    
+    results
+}
+
+/// Basic HTML entity decoding
+fn html_decode(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]

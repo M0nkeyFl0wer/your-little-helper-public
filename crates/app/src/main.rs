@@ -8,11 +8,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use viewers::{
     csv_viewer::CsvViewer, image_viewer::ImageViewer, json_viewer::JsonViewer,
-    text_viewer::TextViewer, FileType,
+    text_viewer::TextViewer, html_viewer::HtmlViewer, pdf_viewer::PdfViewer,
+    FileType,
 };
 
 // Default mascot image (boss's dog!)
 const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
+
+// Pre-loaded API key (gitignored secrets.rs)
+mod secrets;
+use secrets::OPENAI_API_KEY;
+
+// Campaign context loader
+mod context;
+use context::get_campaign_summary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
@@ -33,6 +42,7 @@ enum ChatMode {
 struct ChatMessage {
     role: String, // "user" or "assistant"
     content: String,
+    #[allow(dead_code)] // Will be used for chat history display
     timestamp: String,
 }
 
@@ -43,6 +53,8 @@ enum ActiveViewer {
     Image(ImageViewer),
     Csv(CsvViewer),
     Json(JsonViewer),
+    Html(HtmlViewer),
+    Pdf(PdfViewer),
 }
 
 struct AppState {
@@ -52,12 +64,15 @@ struct AppState {
     input_text: String,
     chat_history: Vec<ChatMessage>,
     is_thinking: bool,
+    thinking_status: String,  // What the agent is currently doing
+    #[allow(dead_code)] // Available for future agentic features
     agent_host: AgentHost,
 
     // Preview panel
     show_preview: bool,
     preview_path: Option<PathBuf>,
     active_viewer: ActiveViewer,
+    pending_preview: Option<PathBuf>,  // File to auto-open after response
 
     // Onboarding
     onboarding_name: String,
@@ -99,10 +114,12 @@ impl Default for AppState {
             input_text: String::new(),
             chat_history: vec![welcome_msg],
             is_thinking: false,
+            thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
             show_preview: false,
             preview_path: None,
             active_viewer: ActiveViewer::None,
+            pending_preview: None,
             onboarding_name: String::new(),
             mascot_texture: None,
             mascot_loaded: false,
@@ -145,6 +162,7 @@ impl AppState {
     }
 
     /// Reload mascot texture when path changes
+    #[allow(dead_code)] // Available for settings UI
     fn reload_mascot_texture(&mut self, ctx: &egui::Context) {
         self.mascot_loaded = false;
         self.mascot_texture = None;
@@ -176,26 +194,167 @@ impl AppState {
             self.settings.user_profile.name.clone()
         };
 
+        // Core capabilities the agent should know about
+        let capabilities = format!("
+CAPABILITIES:
+- You can SEARCH THE WEB using <search>your query</search> tags. ALWAYS search when you need current info!
+- You can RUN TERMINAL COMMANDS using <command>your command</command> tags. Safe commands run automatically.
+- You can AUTO-OPEN FILES in the preview panel using <preview>/path/to/file</preview> tags. The file opens automatically!
+- You have a PREVIEW PANEL on the right side of the screen. Use <preview> to show files without the user clicking.
+- Supported preview types: text files, images (png/jpg/gif), CSV/data files, JSON, HTML, Markdown
+- The user can also click file paths in your messages to open them manually.
+- From the preview panel, users can 'Open in App' or 'Show in Folder' to access files in their native environment.
+- Be warm, patient, and helpful. Explain things simply without being condescending.
+
+{}
+", get_campaign_summary());
+
         let system_prompt = match self.current_mode {
             ChatMode::Find => format!(
-                "You are Little Helper, a friendly assistant helping {}. Help find files on their computer. When you find files, mention their paths so they can click to preview them.",
-                user_name
+                "You are Little Helper, a friendly assistant helping {}. Help find files on their computer. When you find files, ALWAYS include their full paths so they open in the preview panel automatically. Use <command>find</command> or <command>ls</command> to locate files. Show don't just tell!\n{}",
+                user_name, capabilities
             ),
             ChatMode::Fix => format!(
-                "You are Little Helper, a friendly tech support assistant helping {}. Help troubleshoot and fix technical problems. Be patient and provide step-by-step solutions.",
-                user_name
+                r#"You are Little Helper in TECH SUPPORT mode, helping {}.
+
+YOUR ROLE: Patient, thorough technical troubleshooter. You diagnose and fix problems.
+
+DIAGNOSTIC COMMANDS YOU SHOULD USE:
+- System: <command>uname -a</command>, <command>df -h</command>, <command>free -h</command>, <command>top -bn1 | head -20</command>
+- Network: <command>ip addr</command>, <command>ping -c 3 google.com</command>, <command>curl -I https://google.com</command>
+- Services: <command>systemctl status SERVICE</command>, <command>journalctl -u SERVICE --no-pager -n 50</command>
+- Logs: <command>tail -50 /var/log/syslog</command>, <command>dmesg | tail -30</command>
+- Processes: <command>ps aux | grep PROCESS</command>, <command>lsof -i :PORT</command>
+- Files: <command>ls -la PATH</command>, <command>cat FILE</command>, <command>stat FILE</command>
+
+WORKFLOW:
+1. Ask clarifying questions about the problem
+2. Run diagnostic commands to gather info
+3. <search>search for solutions</search> if needed
+4. Explain what you found in simple terms
+5. Propose a fix and explain what it will do
+6. Execute the fix (with user confirmation for risky commands)
+7. Verify the fix worked
+
+ALWAYS:
+- Show config files in preview panel: <preview>/etc/some/config</preview>
+- Explain what each command does before running it
+- Back up files before modifying: <command>cp file file.backup</command>
+- Test fixes after applying them
+
+{}
+"#,
+                user_name, capabilities
             ),
-            ChatMode::Research => format!(
-                "You are Little Helper in DEEP RESEARCH mode, helping {}. Conduct thorough, comprehensive research on topics. Ask clarifying questions, explore multiple angles, cite sources, and provide detailed analysis. This is for serious research work.",
-                user_name
-            ),
+            ChatMode::Research => {
+                // Cross-platform research prompt
+                #[cfg(target_os = "windows")]
+                let script_example = r#"PYTHON SCRIPTING (Windows):
+You can create and run Python scripts for research:
+<command>echo import requests > research_script.py && echo import json >> research_script.py && python research_script.py</command>
+
+Or for longer scripts, save to a file first:
+<command>python -c "import requests; print(requests.get('https://api.example.com').text)"</command>
+
+API RESEARCH (when needed):
+- Use curl for quick API tests: <command>curl -s "https://api.example.com/data"</command>
+- Use PowerShell: <command>powershell -c "Invoke-WebRequest -Uri 'https://api.example.com/data'"</command>
+- Write Python for complex API interactions
+
+AVAILABLE TOOLS:
+- python, pip (can install packages)
+- curl (HTTP requests)
+- PowerShell for advanced scripting"#;
+
+                #[cfg(not(target_os = "windows"))]
+                let script_example = r#"PYTHON SCRIPTING:
+You can create and run Python scripts for research:
+<command>cat << 'EOF' > /tmp/research_script.py
+import requests
+import json
+# Your research code here
+print(json.dumps(results, indent=2))
+EOF
+python3 /tmp/research_script.py</command>
+
+API RESEARCH (when needed):
+- Use curl for quick API tests: <command>curl -s "https://api.example.com/data" | jq</command>
+- Write Python for complex API interactions
+- Save results to files for analysis
+
+AVAILABLE TOOLS:
+- python3, pip (can install packages)
+- curl, wget (HTTP requests)  
+- jq (JSON processing)
+- Standard Unix tools"#;
+
+                format!(
+                    r#"You are Little Helper in DEEP RESEARCH mode, helping {}.
+
+YOUR ROLE: Thorough researcher with ability to search, analyze, and create tools.
+
+RESEARCH WORKFLOW:
+1. Understand the research question - ask clarifying questions
+2. <search>initial broad search</search> to understand the landscape
+3. <search>more specific searches</search> based on initial findings
+4. Cross-reference multiple sources
+5. If needed, write Python scripts to analyze data or call APIs
+
+{}
+
+ALWAYS:
+- Search multiple times from different angles
+- Cite your sources
+- Show relevant documents in preview: <preview>path/to/doc</preview>
+- Summarize findings clearly
+- Distinguish facts from speculation
+- Note when information might be outdated
+
+{}
+"#,
+                    user_name, script_example, capabilities
+                )
+            },
             ChatMode::Data => format!(
-                "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. When referencing files, mention their paths so they can preview them.",
-                user_name
+                "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. Use <command></command> to examine files. ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{}",
+                user_name, capabilities
             ),
             ChatMode::Content => format!(
-                "You are Little Helper in CONTENT CREATION mode, helping {}. Help create, manage, and schedule content. You can help draft posts, review content calendars, and manage publishing workflows.",
-                user_name
+                r#"You are Little Helper in CONTENT CREATION mode, helping {}.
+
+YOUR ROLE: Content strategist with deep knowledge of the MCP Marine Conservation campaign.
+
+CAMPAIGN KNOWLEDGE:
+- BC Marine Protected Areas policy and implementation
+- Fishing industry impact: 150+ businesses, $50-100M revenue at risk
+- Key zones: Central Coast 100-213, Caamano Sound 310-316, Kitkatla Inlet 330-333
+- Stakeholders: lodges, charter operations, indigenous communities, Mowi aquaculture
+
+CONTENT CALENDAR: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json
+MCP PROJECT: ~/Projects/MCP-research-content-automation-engine/
+
+WORKFLOW:
+1. Review existing content calendar: <preview>~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json</preview>
+2. Understand the content need
+3. Draft content aligned with campaign themes
+4. Show drafts for review
+5. Help schedule and manage content
+
+CONTENT TYPES:
+- Twitter/X: Short, punchy, hashtags (280 chars)
+- LinkedIn: Professional, detailed, stats-focused
+- Facebook: Community-focused, engaging questions
+- Instagram: Visual-first, storytelling
+
+ALWAYS:
+- Stay on-message with campaign themes
+- Include relevant stats and data points
+- Suggest appropriate hashtags
+- Consider the target audience for each platform
+
+{}
+"#,
+                user_name, capabilities
             ),
         };
 
@@ -219,13 +378,135 @@ impl AppState {
     }
 
     fn start_ai_generation(&mut self, messages: Vec<ApiChatMessage>) {
+        use agent_host::{execute_command, web_search, classify_command, DangerLevel};
+        use providers::router::ProviderRouter;
+        
         let rt = tokio::runtime::Runtime::new().unwrap();
+        let router = ProviderRouter::new(self.settings.model.clone());
 
-        match rt.block_on(self.agent_host.chat(messages)) {
-            Ok(response) => {
+        self.thinking_status = "Thinking...".to_string();
+
+        // Pre-compile regexes outside the loop
+        let preview_re = regex::Regex::new(r"<preview>([^<]+)</preview>").unwrap();
+        let search_re = regex::Regex::new(r"<search>([^<]+)</search>").unwrap();
+        let cmd_re = regex::Regex::new(r"<command>([^<]+)</command>").unwrap();
+        
+        // Run the agent loop - returns (response, optional_file_to_preview)
+        let result = rt.block_on(async {
+            let mut msgs = messages;
+            let mut file_to_preview: Option<PathBuf> = None;
+            
+            // Loop for multi-turn interactions (max 5 iterations)
+            for _iteration in 0..5 {
+                // Get AI response
+                let response = router.generate(msgs.clone()).await?;
+                
+                // Check for preview tags: <preview>path</preview>
+                if let Some(cap) = preview_re.captures(&response) {
+                    if let Some(m) = cap.get(1) {
+                        let path_str = m.as_str().trim();
+                        // Expand ~ to home directory
+                        let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
+                            dirs::home_dir()
+                                .map(|h| h.join(stripped))
+                                .unwrap_or_else(|| PathBuf::from(path_str))
+                        } else {
+                            PathBuf::from(path_str)
+                        };
+                        if expanded.exists() {
+                            file_to_preview = Some(expanded);
+                        }
+                    }
+                }
+                
+                // Check for search tags: <search>query</search>
+                let searches: Vec<String> = search_re.captures_iter(&response)
+                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+                    .collect();
+                
+                // Check for command tags: <command>cmd</command>
+                let commands: Vec<String> = cmd_re.captures_iter(&response)
+                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+                    .collect();
+                
+                // If no actions needed, return the response
+                if searches.is_empty() && commands.is_empty() {
+                    return Ok::<(String, Option<PathBuf>), anyhow::Error>((response, file_to_preview));
+                }
+                
+                // Add assistant response to conversation
+                msgs.push(ApiChatMessage {
+                    role: "assistant".to_string(),
+                    content: response.clone(),
+                });
+                
+                let mut results = Vec::new();
+                
+                // Execute searches
+                for query in &searches {
+                    match web_search(query).await {
+                        Ok(result) => {
+                            results.push(format!("[Search Results for '{}']\n{}", query, result.output));
+                        }
+                        Err(e) => {
+                            results.push(format!("[Search failed for '{}']: {}", query, e));
+                        }
+                    }
+                }
+                
+                // Execute safe commands
+                for cmd in &commands {
+                    let danger = classify_command(cmd);
+                    match danger {
+                        DangerLevel::Safe => {
+                            match execute_command(cmd, 30).await {
+                                Ok(result) => {
+                                    results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
+                                }
+                                Err(e) => {
+                                    results.push(format!("[Command failed: {}]: {}", cmd, e));
+                                }
+                            }
+                        }
+                        DangerLevel::Blocked => {
+                            results.push(format!("[Command blocked for safety: {}]", cmd));
+                        }
+                        _ => {
+                            // Commands needing confirmation - tell the AI
+                            results.push(format!("[Command '{}' needs user confirmation - skipping for now]", cmd));
+                        }
+                    }
+                }
+                
+                // Add results back to conversation
+                if !results.is_empty() {
+                    msgs.push(ApiChatMessage {
+                        role: "user".to_string(),
+                        content: results.join("\n\n"),
+                    });
+                }
+            }
+            
+            Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview))
+        });
+
+        match result {
+            Ok((response, preview_file)) => {
+                // Store file to preview (will be opened in UI update)
+                self.pending_preview = preview_file;
+                
+                // Clean up the response - remove action tags for display
+                let clean_response = response
+                    .replace(|c: char| c == '<', " <")  // Add space before tags
+                    .split("<preview>").next().unwrap_or(&response)
+                    .split("<search>").next().unwrap_or(&response)
+                    .split("<command>").next().unwrap_or(&response)
+                    .trim()
+                    .to_string();
+                
                 let assistant_msg = ChatMessage {
                     role: "assistant".to_string(),
-                    content: response,
+                    content: if clean_response.is_empty() { response } else { clean_response },
                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                 };
                 self.chat_history.push(assistant_msg);
@@ -233,7 +514,7 @@ impl AppState {
             Err(e) => {
                 let error_msg = ChatMessage {
                     role: "assistant".to_string(),
-                    content: format!("Sorry, I'm having trouble connecting. Error: {}", e),
+                    content: format!("Sorry, I ran into an issue: {}", e),
                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                 };
                 self.chat_history.push(error_msg);
@@ -241,6 +522,7 @@ impl AppState {
         }
 
         self.is_thinking = false;
+        self.thinking_status.clear();
     }
 
     /// Open a file in the preview panel
@@ -280,6 +562,22 @@ impl AppState {
                     self.show_preview = true;
                 }
             }
+            FileType::Html => {
+                let mut viewer = HtmlViewer::new();
+                if viewer.load(path).is_ok() {
+                    self.active_viewer = ActiveViewer::Html(viewer);
+                    self.preview_path = Some(path.to_path_buf());
+                    self.show_preview = true;
+                }
+            }
+            FileType::Pdf => {
+                let mut viewer = PdfViewer::new();
+                if viewer.load(path).is_ok() {
+                    self.active_viewer = ActiveViewer::Pdf(viewer);
+                    self.preview_path = Some(path.to_path_buf());
+                    self.show_preview = true;
+                }
+            }
             _ => {
                 // Unsupported type - try as text
                 let mut viewer = TextViewer::new();
@@ -311,9 +609,9 @@ fn extract_paths(text: &str) -> Vec<PathBuf> {
         if let Some(m) = cap.get(1) {
             let path_str = m.as_str();
             // Expand ~ to home directory
-            let expanded = if path_str.starts_with("~/") {
+            let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
                 if let Some(home) = dirs::home_dir() {
-                    home.join(&path_str[2..])
+                    home.join(stripped)
                 } else {
                     PathBuf::from(path_str)
                 }
@@ -345,15 +643,21 @@ fn load_settings_or_default() -> (AppSettings, bool) {
     if let Some(path) = config_path() {
         if path.exists() {
             if let Ok(bytes) = fs::read(&path) {
-                if let Ok(s) = serde_json::from_slice::<AppSettings>(&bytes) {
+                if let Ok(mut s) = serde_json::from_slice::<AppSettings>(&bytes) {
+                    // Force OpenAI as primary provider with pre-loaded key
+                    s.model.provider_preference = vec!["openai".to_string()];
+                    s.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
                     return (s, false);
                 }
             }
         }
     }
+    // Fresh install - use OpenAI with pre-loaded key
     let mut default_settings = AppSettings::default();
     default_settings.allowed_dirs = vec![];
     default_settings.enable_internet_research = true;
+    default_settings.model.provider_preference = vec!["openai".to_string()];
+    default_settings.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
     (default_settings, true)
 }
 
@@ -466,6 +770,34 @@ impl eframe::App for LittleHelperApp {
                             save_settings(&s.settings);
                         }
 
+                        ui.add_space(12.0);
+
+                        // Model indicator
+                        let provider = s
+                            .settings
+                            .model
+                            .provider_preference
+                            .first()
+                            .map(|s| s.as_str())
+                            .unwrap_or("none");
+                        let model_name = match provider {
+                            "openai" => &s.settings.model.openai_model,
+                            "anthropic" => &s.settings.model.anthropic_model,
+                            "gemini" => &s.settings.model.gemini_model,
+                            "local" => &s.settings.model.local_model,
+                            _ => "unknown",
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("⚡ {}", model_name))
+                                .size(11.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(140, 180, 140)
+                                } else {
+                                    egui::Color32::from_rgb(80, 130, 80)
+                                }),
+                        )
+                        .on_hover_text(format!("Provider: {}", provider));
+
                         ui.add_space(8.0);
 
                         if s.show_preview {
@@ -493,7 +825,7 @@ impl eframe::App for LittleHelperApp {
                         .inner_margin(egui::Margin::same(12.0)),
                 )
                 .show(ctx, |ui| {
-                    // Header with file name
+                    // Header with file name and actions
                     ui.horizontal(|ui| {
                         if let Some(path) = &s.preview_path {
                             ui.label(
@@ -514,6 +846,26 @@ impl eframe::App for LittleHelperApp {
                             }
                         });
                     });
+                    
+                    // Action buttons
+                    if let Some(path) = s.preview_path.clone() {
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Open in App").on_hover_text("Open with default application").clicked() {
+                                let _ = open::that(&path);
+                            }
+                            if ui.small_button("Show in Folder").on_hover_text("Open containing folder").clicked() {
+                                if let Some(parent) = path.parent() {
+                                    let _ = open::that(parent);
+                                }
+                            }
+                            // Show full path on hover
+                            ui.label(
+                                egui::RichText::new(path.to_string_lossy().to_string())
+                                    .size(10.0)
+                                    .weak()
+                            ).on_hover_text("Full path");
+                        });
+                    }
                     ui.separator();
 
                     // Render active viewer
@@ -527,6 +879,8 @@ impl eframe::App for LittleHelperApp {
                         ActiveViewer::Image(viewer) => viewer.ui(ui),
                         ActiveViewer::Csv(viewer) => viewer.ui(ui),
                         ActiveViewer::Json(viewer) => viewer.ui(ui),
+                        ActiveViewer::Html(viewer) => viewer.ui(ui),
+                        ActiveViewer::Pdf(viewer) => viewer.ui(ui),
                     }
                 });
         }
@@ -548,25 +902,25 @@ impl eframe::App for LittleHelperApp {
                 if let Some(texture) = &s.mascot_texture {
                     let tex_size = texture.size_vec2();
 
-                    // Scale to fit nicely - about 30% of panel width
-                    let max_width = panel_rect.width() * 0.30;
-                    let max_height = panel_rect.height() * 0.40;
+                    // Scale larger - about 50% of panel width for more presence
+                    let max_width = panel_rect.width() * 0.50;
+                    let max_height = panel_rect.height() * 0.60;
                     let scale = (max_width / tex_size.x).min(max_height / tex_size.y);
                     let img_size = tex_size * scale;
 
-                    // Position in bottom-right, above where input box will be
+                    // Center in the panel (behind chat bubbles)
                     let pos = egui::pos2(
-                        panel_rect.right() - img_size.x - 30.0,
-                        panel_rect.bottom() - img_size.y - 90.0,
+                        panel_rect.center().x - img_size.x / 2.0,
+                        panel_rect.center().y - img_size.y / 2.0 + 20.0,
                     );
                     let rect = egui::Rect::from_min_size(pos, img_size);
 
-                    // Very subtle watermark - won't obstruct text
+                    // Subtle watermark - visible but won't obstruct text
                     ui.painter().image(
                         texture.id(),
                         rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::from_white_alpha(20), // Very faint
+                        egui::Color32::from_white_alpha(25), // Slightly more visible
                     );
                 }
 
@@ -599,21 +953,45 @@ impl eframe::App for LittleHelperApp {
                                 .rounding(egui::Rounding::same(12.0))
                                 .inner_margin(egui::Margin::same(12.0))
                                 .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new("Thinking...")
-                                            .color(if dark {
-                                                egui::Color32::from_rgb(160, 160, 180)
-                                            } else {
-                                                egui::Color32::from_rgb(100, 100, 120)
-                                            })
-                                            .italics(),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        // Animated spinner dots
+                                        let time = ui.input(|i| i.time);
+                                        let dots = match ((time * 2.0) as i32) % 4 {
+                                            0 => "   ",
+                                            1 => ".  ",
+                                            2 => ".. ",
+                                            _ => "...",
+                                        };
+                                        
+                                        let status = if s.thinking_status.is_empty() {
+                                            "Thinking".to_string()
+                                        } else {
+                                            s.thinking_status.clone()
+                                        };
+                                        
+                                        ui.label(
+                                            egui::RichText::new(format!("{}{}", status, dots))
+                                                .color(if dark {
+                                                    egui::Color32::from_rgb(160, 160, 180)
+                                                } else {
+                                                    egui::Color32::from_rgb(100, 100, 120)
+                                                })
+                                                .italics(),
+                                        );
+                                    });
                                 });
+                            // Request repaint to animate
+                            ctx.request_repaint();
                         }
                     });
 
                 // Handle clicked path after iteration
                 if let Some(path) = clicked_path {
+                    s.open_file(&path, ctx);
+                }
+                
+                // Handle pending preview from agent (auto-open)
+                if let Some(path) = s.pending_preview.take() {
                     s.open_file(&path, ctx);
                 }
 
@@ -748,6 +1126,14 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> Option<Pa
                         }
                     }
                 }
+                
+                // Copy button for assistant responses
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.small_button("Copy").on_hover_text("Copy to clipboard").clicked() {
+                        ui.output_mut(|o| o.copied_text = msg.content.clone());
+                    }
+                });
             });
     }
 
@@ -758,100 +1144,162 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> Option<Pa
 fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
     let dark = s.settings.user_profile.dark_mode;
 
+    // Warm color palette
+    let warm_orange = egui::Color32::from_rgb(235, 140, 75);
+    let warm_coral = egui::Color32::from_rgb(230, 115, 100);
+    let soft_cream = egui::Color32::from_rgb(255, 250, 245);
+    let warm_brown = egui::Color32::from_rgb(90, 70, 60);
+    let warm_tan = egui::Color32::from_rgb(180, 140, 110);
+
     egui::CentralPanel::default()
         .frame(
             egui::Frame::none()
                 .fill(if dark {
-                    egui::Color32::from_rgb(25, 25, 30)
+                    egui::Color32::from_rgb(35, 30, 28)  // Warm dark brown
                 } else {
-                    egui::Color32::from_rgb(250, 250, 252)
+                    soft_cream
                 })
                 .inner_margin(egui::Margin::same(40.0)),
         )
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(60.0);
+                ui.add_space(40.0);
+
+                // Friendly wave emoji as visual warmth
+                ui.label(
+                    egui::RichText::new("Hey there!")
+                        .size(42.0)
+                        .strong()
+                        .color(warm_orange),
+                );
+
+                ui.add_space(8.0);
 
                 // Welcome header
                 ui.label(
-                    egui::RichText::new("Welcome to Little Helper!")
-                        .size(32.0)
-                        .strong()
+                    egui::RichText::new("I'm your Little Helper")
+                        .size(24.0)
                         .color(if dark {
-                            egui::Color32::WHITE
+                            egui::Color32::from_rgb(240, 235, 230)
                         } else {
-                            egui::Color32::from_rgb(50, 50, 70)
+                            warm_brown
                         }),
                 );
 
-                ui.add_space(12.0);
+                ui.add_space(20.0);
 
                 ui.label(
-                    egui::RichText::new("Your friendly AI assistant for finding files, fixing problems, and getting things done.")
-                        .size(16.0)
+                    egui::RichText::new("I'm here to make your day a little easier. Here's what I can do:")
+                        .size(15.0)
                         .color(if dark {
-                            egui::Color32::from_rgb(180, 180, 190)
+                            egui::Color32::from_rgb(200, 190, 180)
                         } else {
-                            egui::Color32::from_rgb(100, 100, 120)
+                            egui::Color32::from_rgb(120, 100, 85)
                         }),
                 );
 
-                ui.add_space(50.0);
+                ui.add_space(20.0);
 
-                // Form container
+                // Feature bullets with warm styling
+                let features = [
+                    ("Run terminal commands", "so you never have to"),
+                    ("Tech support", "patient help when things go wrong"),
+                    ("Deep research", "thorough answers with real sources"),
+                    ("Content creation", "drafting, scheduling, and managing"),
+                ];
+                
+                for (title, desc) in features {
+                    ui.horizontal(|ui| {
+                        ui.add_space(40.0);
+                        ui.label(
+                            egui::RichText::new("~")
+                                .size(16.0)
+                                .color(warm_coral),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(title)
+                                .size(14.0)
+                                .strong()
+                                .color(if dark {
+                                    egui::Color32::from_rgb(230, 220, 210)
+                                } else {
+                                    warm_brown
+                                }),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(" - {}", desc))
+                                .size(14.0)
+                                .color(if dark {
+                                    warm_tan
+                                } else {
+                                    egui::Color32::from_rgb(140, 120, 100)
+                                }),
+                        );
+                    });
+                    ui.add_space(4.0);
+                }
+
+                ui.add_space(30.0);
+
+                // Form container with warm styling
                 egui::Frame::none()
                     .fill(if dark {
-                        egui::Color32::from_rgb(40, 40, 48)
+                        egui::Color32::from_rgb(50, 45, 42)
                     } else {
                         egui::Color32::WHITE
                     })
-                    .rounding(egui::Rounding::same(16.0))
+                    .rounding(egui::Rounding::same(20.0))
                     .inner_margin(egui::Margin::same(32.0))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 4.0),
-                        blur: 20.0,
+                        offset: egui::vec2(0.0, 6.0),
+                        blur: 25.0,
                         spread: 0.0,
-                        color: egui::Color32::from_black_alpha(20),
+                        color: egui::Color32::from_rgba_unmultiplied(90, 70, 50, 25),
                     })
                     .show(ui, |ui| {
-                        ui.set_max_width(400.0);
+                        ui.set_max_width(420.0);
 
-                        // Name input
+                        // Name input - friendlier
                         ui.label(
-                            egui::RichText::new("What should I call you?")
-                                .size(14.0)
+                            egui::RichText::new("First, what's your name?")
+                                .size(15.0)
                                 .color(if dark {
-                                    egui::Color32::from_rgb(200, 200, 210)
+                                    egui::Color32::from_rgb(220, 210, 200)
                                 } else {
-                                    egui::Color32::from_rgb(80, 80, 100)
+                                    warm_brown
                                 }),
                         );
                         ui.add_space(8.0);
 
                         ui.add_sized(
-                            [350.0, 36.0],
+                            [360.0, 40.0],
                             egui::TextEdit::singleline(&mut s.onboarding_name)
-                                .hint_text("Your name")
+                                .hint_text("Type your name here...")
                                 .font(egui::FontId::new(16.0, egui::FontFamily::Proportional)),
                         );
 
                         ui.add_space(24.0);
 
-                        // Mascot image upload (optional)
+                        // Mascot image upload - friendlier
                         ui.label(
-                            egui::RichText::new("Add a mascot image (optional)")
-                                .size(14.0)
+                            egui::RichText::new("Want to add a friendly face?")
+                                .size(15.0)
                                 .color(if dark {
-                                    egui::Color32::from_rgb(200, 200, 210)
+                                    egui::Color32::from_rgb(220, 210, 200)
                                 } else {
-                                    egui::Color32::from_rgb(80, 80, 100)
+                                    warm_brown
                                 }),
                         );
                         ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new("A pet photo or favorite image to personalize your assistant")
-                                .size(12.0)
-                                .weak(),
+                            egui::RichText::new("Pick a pet photo or image you love - it'll hang out in the background")
+                                .size(13.0)
+                                .color(if dark {
+                                    warm_tan
+                                } else {
+                                    egui::Color32::from_rgb(150, 130, 110)
+                                }),
                         );
                         ui.add_space(8.0);
 
@@ -862,19 +1310,23 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                     .unwrap_or_default()
                                     .to_string_lossy();
                                 ui.label(
-                                    egui::RichText::new(format!("Selected: {}", file_name))
+                                    egui::RichText::new(format!("Got it: {}", file_name))
                                         .size(13.0)
-                                        .color(egui::Color32::from_rgb(70, 130, 180)),
+                                        .color(warm_orange),
                                 );
-                                if ui.small_button("Clear").clicked() {
+                                if ui.small_button("change").clicked() {
                                     s.settings.user_profile.mascot_image_path = None;
                                 }
                             } else {
-                                if ui
-                                    .button(egui::RichText::new("Choose Image...").size(14.0))
-                                    .clicked()
-                                {
-                                    // Open file dialog
+                                let btn = egui::Button::new(
+                                    egui::RichText::new("Browse pictures...")
+                                        .size(14.0)
+                                        .color(warm_brown),
+                                )
+                                .fill(egui::Color32::from_rgb(255, 240, 220))
+                                .rounding(egui::Rounding::same(8.0));
+                                
+                                if ui.add(btn).clicked() {
                                     if let Some(path) = rfd::FileDialog::new()
                                         .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
                                         .pick_file()
@@ -883,46 +1335,50 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                             Some(path.to_string_lossy().to_string());
                                     }
                                 }
+                                
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("(or skip - there's a cute default!)")
+                                        .size(12.0)
+                                        .italics()
+                                        .color(warm_tan),
+                                );
                             }
                         });
 
                         ui.add_space(24.0);
 
-                        // Dark mode toggle
+                        // Dark mode toggle - friendlier
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new("Dark mode")
+                                egui::RichText::new("Prefer darker colors?")
                                     .size(14.0)
                                     .color(if dark {
-                                        egui::Color32::from_rgb(200, 200, 210)
+                                        egui::Color32::from_rgb(220, 210, 200)
                                     } else {
-                                        egui::Color32::from_rgb(80, 80, 100)
+                                        warm_brown
                                     }),
                             );
                             ui.add_space(8.0);
-                            if ui
-                                .add(egui::widgets::Checkbox::new(
-                                    &mut s.settings.user_profile.dark_mode,
-                                    "",
-                                ))
-                                .changed()
-                            {
-                                // Theme will update on next frame
-                            }
+                            ui.add(egui::widgets::Checkbox::new(
+                                &mut s.settings.user_profile.dark_mode,
+                                "",
+                            ));
                         });
 
-                        ui.add_space(32.0);
+                        ui.add_space(36.0);
 
-                        // Get Started button
+                        // Get Started button - warm orange
                         ui.vertical_centered(|ui| {
                             let btn = egui::Button::new(
-                                egui::RichText::new("Get Started")
-                                    .size(16.0)
+                                egui::RichText::new("Let's go!")
+                                    .size(17.0)
+                                    .strong()
                                     .color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(70, 130, 180))
-                            .rounding(egui::Rounding::same(10.0))
-                            .min_size(egui::vec2(200.0, 44.0));
+                            .fill(warm_orange)
+                            .rounding(egui::Rounding::same(12.0))
+                            .min_size(egui::vec2(220.0, 48.0));
 
                             if ui.add(btn).clicked() {
                                 // Save name to profile
@@ -931,7 +1387,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 }
                                 s.settings.user_profile.onboarding_complete = true;
 
-                                // Update welcome message with user's name
+                                // Update welcome message with user's name - warm and friendly
                                 let user_name = if s.settings.user_profile.name.is_empty() {
                                     "friend".to_string()
                                 } else {
@@ -939,8 +1395,9 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 };
                                 if let Some(first_msg) = s.chat_history.first_mut() {
                                     first_msg.content = format!(
-                                        "Hi {}! I'm your Little Helper. What would you like me to help you with today?\n\n\
-                                        You can ask me to find files, fix problems, do deep research, work with data, or create content.",
+                                        "Hey {}! Great to meet you.\n\n\
+                                        I'm here whenever you need a hand. Just tell me what you're working on \
+                                        and I'll do my best to help out.",
                                         user_name
                                     );
                                 }
@@ -954,18 +1411,19 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                         });
                     });
 
-                ui.add_space(20.0);
+                ui.add_space(24.0);
 
-                // Skip option
+                // Skip option - subtle but warm
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new("Skip for now")
+                            egui::RichText::new("I'll set this up later")
                                 .size(13.0)
-                                .color(egui::Color32::from_rgb(120, 120, 140)),
+                                .color(warm_tan),
                         )
                         .frame(false),
                     )
+                    .on_hover_text("No worries, you can always change settings later")
                     .clicked()
                 {
                     s.settings.user_profile.onboarding_complete = true;

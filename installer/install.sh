@@ -30,7 +30,7 @@ TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
 # Download pre-built app
-RELEASE_URL="https://github.com/M0nkeyFl0wer/your-little-helper/releases/latest/download/LittleHelper-macOS-arm64.zip"
+RELEASE_URL="https://github.com/M0nkeyFl0wer/claudia-lite/releases/latest/download/LittleHelper-macOS-arm64.zip"
 
 if curl -fsSL -o "LittleHelper.zip" "$RELEASE_URL" 2>/dev/null; then
     unzip -q "LittleHelper.zip"
