@@ -29,7 +29,7 @@ use secrets::OPENAI_API_KEY;
 
 // Campaign context loader
 mod context;
-use context::get_campaign_summary;
+use context::{get_campaign_summary, load_campaign_context};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
@@ -367,24 +367,24 @@ ALWAYS:
                 "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. Use <command></command> to examine files. ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{}",
                 user_name, capabilities
             ),
-            ChatMode::Content => format!(
-                r#"You are Little Helper in CONTENT CREATION mode, helping {}.
+            ChatMode::Content => {
+                // Load full campaign context for Content mode
+                let campaign_docs = load_campaign_context();
+                
+                format!(
+                    r#"You are Little Helper in CONTENT CREATION mode, helping {}.
 
 YOUR ROLE: Content strategist with deep knowledge of the MCP Marine Conservation campaign.
 
-CAMPAIGN KNOWLEDGE:
-- BC Marine Protected Areas policy and implementation
-- Fishing industry impact: 150+ businesses, $50-100M revenue at risk
-- Key zones: Central Coast 100-213, Caamano Sound 310-316, Kitkatla Inlet 330-333
-- Stakeholders: lodges, charter operations, indigenous communities, Mowi aquaculture
+{}
 
-CONTENT CALENDAR: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json
+CONTENT CALENDAR LOCATION: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json
 MCP PROJECT: ~/Projects/MCP-research-content-automation-engine/
 
 WORKFLOW:
 1. Review existing content calendar: <preview>~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json</preview>
 2. Understand the content need
-3. Draft content aligned with campaign themes
+3. Draft content aligned with campaign themes and the data above
 4. Show drafts for review
 5. Help schedule and manage content
 
@@ -395,15 +395,17 @@ CONTENT TYPES:
 - Instagram: Visual-first, storytelling
 
 ALWAYS:
-- Stay on-message with campaign themes
-- Include relevant stats and data points
+- Stay on-message with campaign themes from the documents above
+- Include relevant stats and data points from the campaign materials
 - Suggest appropriate hashtags
 - Consider the target audience for each platform
+- Reference specific facts from the loaded campaign documents
 
 {}
 "#,
-                user_name, capabilities
-            ),
+                    user_name, campaign_docs, capabilities
+                )
+            },
         };
 
         // Convert chat history to API format

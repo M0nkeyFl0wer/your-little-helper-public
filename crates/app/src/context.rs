@@ -9,7 +9,7 @@ use std::fs;
 use std::process::Command;
 
 /// Load campaign context documents for the agent
-#[allow(dead_code)] // Available for Content mode deep context loading
+/// Returns full content of key campaign files for deep context
 pub fn load_campaign_context() -> String {
     let mut context = String::new();
 
@@ -18,36 +18,68 @@ pub fn load_campaign_context() -> String {
         .map(|h| h.join("Projects/MCP-research-content-automation-engine"))
         .unwrap_or_default();
 
-    // Priority documents to load
+    // Check if the project exists
+    if !mcp_base.exists() {
+        return "CAMPAIGN CONTEXT: MCP project not found on this system. Campaign-specific features will be limited.\n".to_string();
+    }
+
+    // Priority documents to load (in order of importance)
     let docs = [
-        ("Campaign Spec", "specs/002-mcp-marine-conservation/spec.md"),
-        ("Campaign Plan", "specs/002-mcp-marine-conservation/plan.md"),
-        ("Content Calendar", "FINAL_MCP_Content_Calendar.json"),
-        ("Video Specs", "MCP_Video_Content_Specifications.md"),
-        ("Integration Guide", "MCP_INTEGRATIONS_README.md"),
+        // Core campaign strategy
+        (
+            "Campaign Spec",
+            "specs/002-mcp-marine-conservation/spec.md",
+            15000,
+        ),
+        (
+            "Campaign Plan",
+            "specs/002-mcp-marine-conservation/plan.md",
+            15000,
+        ),
+        // Content
+        ("Content Summary", "MCP_Content_Summary_FINAL.md", 20000),
+        ("Content Calendar", "FINAL_MCP_Content_Calendar.json", 20000),
+        // Video content
+        ("Video Specs", "MCP_Video_Content_Specifications.md", 10000),
+        (
+            "Video Scripts (Northern BC Voice)",
+            "MCP_Video_Scripts_NorthernBC_Voice.md",
+            12000,
+        ),
+        // Visual assets
+        (
+            "Visual Requirements",
+            "MCP_Visual_Asset_Requirements.md",
+            8000,
+        ),
     ];
 
-    context.push_str("=== CAMPAIGN CONTEXT ===\n\n");
-    context.push_str("You have access to the Marine Conservation Plan (MCP) campaign materials.\n");
+    context.push_str("=== MCP MARINE CONSERVATION CAMPAIGN - FULL CONTEXT ===\n\n");
     context.push_str(
-        "Use this knowledge to provide informed support, research, and content creation.\n\n",
+        "You have FULL ACCESS to the Marine Conservation Plan (MCP) campaign materials.\n",
     );
+    context
+        .push_str("Use this detailed knowledge for content creation, research, and strategy.\n\n");
 
-    for (name, path) in docs {
+    let mut loaded_count = 0;
+    for (name, path, max_chars) in docs {
         let full_path = mcp_base.join(path);
         if let Ok(content) = fs::read_to_string(&full_path) {
-            // Truncate very long files
-            let truncated = if content.len() > 8000 {
+            loaded_count += 1;
+            // Truncate if over limit but keep more content
+            let truncated = if content.len() > max_chars {
                 format!(
-                    "{}...\n[Truncated - {} total chars]",
-                    &content[..8000],
+                    "{}...\n[Truncated at {} chars - full file has {} chars]",
+                    &content[..max_chars],
+                    max_chars,
                     content.len()
                 )
             } else {
                 content
             };
 
-            context.push_str(&format!("--- {} ---\n", name));
+            context.push_str(&format!("=== {} ===\n", name));
+            context.push_str(&format!("Source: {}\n\n", path));
             context.push_str(&truncated);
             context.push_str("\n\n");
         }
@@ -57,16 +89,22 @@ pub fn load_campaign_context() -> String {
     let reports_dir = mcp_base.join("data/reports");
     if reports_dir.exists() {
         if let Ok(entries) = fs::read_dir(&reports_dir) {
-            context.push_str("--- Available Research Reports ---\n");
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                context.push_str(&format!("- {}\n", name));
+            let reports: Vec<_> = entries.flatten().collect();
+            if !reports.is_empty() {
+                context.push_str("=== Available Research Reports ===\n");
+                for entry in reports {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    context.push_str(&format!("- {}\n", name));
+                }
+                context.push('\n');
             }
-            context.push('\n');
         }
     }
 
-    context.push_str("=== END CAMPAIGN CONTEXT ===\n\n");
+    context.push_str(&format!(
+        "=== END CAMPAIGN CONTEXT ({} documents loaded) ===\n\n",
+        loaded_count
+    ));
 
     context
 }
