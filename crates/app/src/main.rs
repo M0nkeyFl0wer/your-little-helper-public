@@ -6,11 +6,19 @@ use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use viewers::{
     csv_viewer::CsvViewer, image_viewer::ImageViewer, json_viewer::JsonViewer,
     text_viewer::TextViewer, html_viewer::HtmlViewer, pdf_viewer::PdfViewer,
     FileType,
 };
+
+/// Result from background AI generation
+struct AiResult {
+    response: String,
+    preview_file: Option<PathBuf>,
+    error: Option<String>,
+}
 
 // Default mascot image (boss's dog!)
 const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
@@ -80,6 +88,9 @@ struct AppState {
     // Background mascot texture
     mascot_texture: Option<egui::TextureHandle>,
     mascot_loaded: bool,
+    
+    // Async AI response channel
+    ai_result_rx: Option<Receiver<AiResult>>,
 }
 
 impl Default for AppState {
@@ -123,11 +134,48 @@ impl Default for AppState {
             onboarding_name: String::new(),
             mascot_texture: None,
             mascot_loaded: false,
+            ai_result_rx: None,
         }
     }
 }
 
 impl AppState {
+    /// Check for completed AI responses (called each frame)
+    fn poll_ai_response(&mut self) {
+        if let Some(rx) = &self.ai_result_rx {
+            // Non-blocking check for result
+            if let Ok(result) = rx.try_recv() {
+                self.is_thinking = false;
+                self.thinking_status.clear();
+                self.ai_result_rx = None;
+                
+                if let Some(error) = result.error {
+                    // Format error message with helpful info
+                    let error_content = format_error_message(&error);
+                    let error_msg = ChatMessage {
+                        role: "assistant".to_string(),
+                        content: error_content,
+                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    };
+                    self.chat_history.push(error_msg);
+                } else {
+                    // Store file to preview
+                    self.pending_preview = result.preview_file;
+                    
+                    // Clean up response - remove action tags
+                    let clean_response = clean_ai_response(&result.response);
+                    
+                    let assistant_msg = ChatMessage {
+                        role: "assistant".to_string(),
+                        content: if clean_response.is_empty() { result.response } else { clean_response },
+                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    };
+                    self.chat_history.push(assistant_msg);
+                }
+            }
+        }
+    }
+    
     /// Load the mascot image as a texture (custom or default)
     fn load_mascot_texture(&mut self, ctx: &egui::Context) {
         if self.mascot_loaded {
@@ -378,153 +426,18 @@ ALWAYS:
     }
 
     fn start_ai_generation(&mut self, messages: Vec<ApiChatMessage>) {
-        use agent_host::{execute_command, web_search, classify_command, DangerLevel};
-        use providers::router::ProviderRouter;
-        
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let router = ProviderRouter::new(self.settings.model.clone());
-
+        let (tx, rx) = channel::<AiResult>();
+        self.ai_result_rx = Some(rx);
         self.thinking_status = "Thinking...".to_string();
-
-        // Pre-compile regexes outside the loop
-        let preview_re = regex::Regex::new(r"<preview>([^<]+)</preview>").unwrap();
-        let search_re = regex::Regex::new(r"<search>([^<]+)</search>").unwrap();
-        let cmd_re = regex::Regex::new(r"<command>([^<]+)</command>").unwrap();
         
-        // Run the agent loop - returns (response, optional_file_to_preview)
-        let result = rt.block_on(async {
-            let mut msgs = messages;
-            let mut file_to_preview: Option<PathBuf> = None;
-            
-            // Loop for multi-turn interactions (max 5 iterations)
-            for _iteration in 0..5 {
-                // Get AI response
-                let response = router.generate(msgs.clone()).await?;
-                
-                // Check for preview tags: <preview>path</preview>
-                if let Some(cap) = preview_re.captures(&response) {
-                    if let Some(m) = cap.get(1) {
-                        let path_str = m.as_str().trim();
-                        // Expand ~ to home directory
-                        let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
-                            dirs::home_dir()
-                                .map(|h| h.join(stripped))
-                                .unwrap_or_else(|| PathBuf::from(path_str))
-                        } else {
-                            PathBuf::from(path_str)
-                        };
-                        if expanded.exists() {
-                            file_to_preview = Some(expanded);
-                        }
-                    }
-                }
-                
-                // Check for search tags: <search>query</search>
-                let searches: Vec<String> = search_re.captures_iter(&response)
-                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
-                    .collect();
-                
-                // Check for command tags: <command>cmd</command>
-                let commands: Vec<String> = cmd_re.captures_iter(&response)
-                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
-                    .collect();
-                
-                // If no actions needed, return the response
-                if searches.is_empty() && commands.is_empty() {
-                    return Ok::<(String, Option<PathBuf>), anyhow::Error>((response, file_to_preview));
-                }
-                
-                // Add assistant response to conversation
-                msgs.push(ApiChatMessage {
-                    role: "assistant".to_string(),
-                    content: response.clone(),
-                });
-                
-                let mut results = Vec::new();
-                
-                // Execute searches
-                for query in &searches {
-                    match web_search(query).await {
-                        Ok(result) => {
-                            results.push(format!("[Search Results for '{}']\n{}", query, result.output));
-                        }
-                        Err(e) => {
-                            results.push(format!("[Search failed for '{}']: {}", query, e));
-                        }
-                    }
-                }
-                
-                // Execute safe commands
-                for cmd in &commands {
-                    let danger = classify_command(cmd);
-                    match danger {
-                        DangerLevel::Safe => {
-                            match execute_command(cmd, 30).await {
-                                Ok(result) => {
-                                    results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
-                                }
-                                Err(e) => {
-                                    results.push(format!("[Command failed: {}]: {}", cmd, e));
-                                }
-                            }
-                        }
-                        DangerLevel::Blocked => {
-                            results.push(format!("[Command blocked for safety: {}]", cmd));
-                        }
-                        _ => {
-                            // Commands needing confirmation - tell the AI
-                            results.push(format!("[Command '{}' needs user confirmation - skipping for now]", cmd));
-                        }
-                    }
-                }
-                
-                // Add results back to conversation
-                if !results.is_empty() {
-                    msgs.push(ApiChatMessage {
-                        role: "user".to_string(),
-                        content: results.join("\n\n"),
-                    });
-                }
-            }
-            
-            Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview))
+        let settings = self.settings.model.clone();
+        
+        // Spawn background thread for AI work
+        std::thread::spawn(move || {
+            run_ai_generation(messages, settings, tx);
         });
-
-        match result {
-            Ok((response, preview_file)) => {
-                // Store file to preview (will be opened in UI update)
-                self.pending_preview = preview_file;
-                
-                // Clean up the response - remove action tags for display
-                let clean_response = response
-                    .replace(|c: char| c == '<', " <")  // Add space before tags
-                    .split("<preview>").next().unwrap_or(&response)
-                    .split("<search>").next().unwrap_or(&response)
-                    .split("<command>").next().unwrap_or(&response)
-                    .trim()
-                    .to_string();
-                
-                let assistant_msg = ChatMessage {
-                    role: "assistant".to_string(),
-                    content: if clean_response.is_empty() { response } else { clean_response },
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                };
-                self.chat_history.push(assistant_msg);
-            }
-            Err(e) => {
-                let error_msg = ChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!("Sorry, I ran into an issue: {}", e),
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                };
-                self.chat_history.push(error_msg);
-            }
-        }
-
-        self.is_thinking = false;
-        self.thinking_status.clear();
     }
-
+    
     /// Open a file in the preview panel
     fn open_file(&mut self, path: &Path, ctx: &egui::Context) {
         let file_type = FileType::from_path(path);
@@ -597,6 +510,146 @@ ALWAYS:
     }
 }
 
+/// Run AI generation in background thread (non-blocking)
+fn run_ai_generation(
+    messages: Vec<ApiChatMessage>,
+    settings: shared::settings::ModelProvider,
+    tx: Sender<AiResult>,
+) {
+    use agent_host::{execute_command, web_search, classify_command, DangerLevel};
+    use providers::router::ProviderRouter;
+    
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            let _ = tx.send(AiResult {
+                response: String::new(),
+                preview_file: None,
+                error: Some(format!("Failed to start async runtime: {}", e)),
+            });
+            return;
+        }
+    };
+    
+    let router = ProviderRouter::new(settings);
+
+    // Pre-compile regexes
+    let preview_re = regex::Regex::new(r"<preview>([^<]+)</preview>").unwrap();
+    let search_re = regex::Regex::new(r"<search>([^<]+)</search>").unwrap();
+    let cmd_re = regex::Regex::new(r"<command>([^<]+)</command>").unwrap();
+    
+    let result = rt.block_on(async {
+        let mut msgs = messages;
+        let mut file_to_preview: Option<PathBuf> = None;
+        
+        // Loop for multi-turn interactions (max 5 iterations)
+        for _iteration in 0..5 {
+            // Get AI response
+            let response = router.generate(msgs.clone()).await?;
+            
+            // Check for preview tags
+            if let Some(cap) = preview_re.captures(&response) {
+                if let Some(m) = cap.get(1) {
+                    let path_str = m.as_str().trim();
+                    let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
+                        dirs::home_dir()
+                            .map(|h| h.join(stripped))
+                            .unwrap_or_else(|| PathBuf::from(path_str))
+                    } else {
+                        PathBuf::from(path_str)
+                    };
+                    if expanded.exists() {
+                        file_to_preview = Some(expanded);
+                    }
+                }
+            }
+            
+            // Check for search and command tags
+            let searches: Vec<String> = search_re.captures_iter(&response)
+                .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+                .collect();
+            
+            let commands: Vec<String> = cmd_re.captures_iter(&response)
+                .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+                .collect();
+            
+            // If no actions needed, return the response
+            if searches.is_empty() && commands.is_empty() {
+                return Ok::<(String, Option<PathBuf>), anyhow::Error>((response, file_to_preview));
+            }
+            
+            // Add assistant response to conversation
+            msgs.push(ApiChatMessage {
+                role: "assistant".to_string(),
+                content: response.clone(),
+            });
+            
+            let mut results = Vec::new();
+            
+            // Execute searches
+            for query in &searches {
+                match web_search(query).await {
+                    Ok(result) => {
+                        results.push(format!("[Search Results for '{}']\n{}", query, result.output));
+                    }
+                    Err(e) => {
+                        results.push(format!("[Search failed for '{}']: {}", query, e));
+                    }
+                }
+            }
+            
+            // Execute safe commands
+            for cmd in &commands {
+                let danger = classify_command(cmd);
+                match danger {
+                    DangerLevel::Safe => {
+                        match execute_command(cmd, 30).await {
+                            Ok(result) => {
+                                results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
+                            }
+                            Err(e) => {
+                                results.push(format!("[Command failed: {}]: {}", cmd, e));
+                            }
+                        }
+                    }
+                    DangerLevel::Blocked => {
+                        results.push(format!("[Command blocked for safety: {}]", cmd));
+                    }
+                    _ => {
+                        results.push(format!("[Command '{}' needs user confirmation - skipping for now]", cmd));
+                    }
+                }
+            }
+            
+            // Add results back to conversation
+            if !results.is_empty() {
+                msgs.push(ApiChatMessage {
+                    role: "user".to_string(),
+                    content: results.join("\n\n"),
+                });
+            }
+        }
+        
+        Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview))
+    });
+
+    // Send result back to UI
+    let ai_result = match result {
+        Ok((response, preview_file)) => AiResult {
+            response,
+            preview_file,
+            error: None,
+        },
+        Err(e) => AiResult {
+            response: String::new(),
+            preview_file: None,
+            error: Some(e.to_string()),
+        },
+    };
+    
+    let _ = tx.send(ai_result);
+}
+
 /// Extract file paths from text
 fn extract_paths(text: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -661,6 +714,71 @@ fn load_settings_or_default() -> (AppSettings, bool) {
     (default_settings, true)
 }
 
+/// Clean up AI response by removing action tags
+fn clean_ai_response(response: &str) -> String {
+    // Remove <preview>, <search>, <command> tags and their content
+    let re_preview = regex::Regex::new(r"<preview>[^<]*</preview>").unwrap();
+    let re_search = regex::Regex::new(r"<search>[^<]*</search>").unwrap();
+    let re_command = regex::Regex::new(r"<command>[^<]*</command>").unwrap();
+    
+    let cleaned = re_preview.replace_all(response, "");
+    let cleaned = re_search.replace_all(&cleaned, "");
+    let cleaned = re_command.replace_all(&cleaned, "");
+    
+    // Clean up extra whitespace
+    cleaned.trim().to_string()
+}
+
+/// Format error message with helpful troubleshooting info
+fn format_error_message(error: &str) -> String {
+    let error_lower = error.to_lowercase();
+    
+    // API key issues
+    if error_lower.contains("unauthorized") || error_lower.contains("401") || error_lower.contains("invalid api key") {
+        return format!(
+            "I couldn't connect to the AI service - there may be an issue with the API key.\n\n\
+            Error: {}\n\n\
+            If this keeps happening, please let the team know!",
+            error
+        );
+    }
+    
+    // Rate limiting
+    if error_lower.contains("rate limit") || error_lower.contains("429") || error_lower.contains("too many requests") {
+        return format!(
+            "The AI service is temporarily busy. Please wait a moment and try again.\n\n\
+            Error: {}",
+            error
+        );
+    }
+    
+    // Network issues
+    if error_lower.contains("connection") || error_lower.contains("network") || error_lower.contains("timeout") 
+       || error_lower.contains("dns") || error_lower.contains("could not resolve") {
+        return format!(
+            "I'm having trouble connecting to the internet. Please check your network connection.\n\n\
+            Error: {}",
+            error
+        );
+    }
+    
+    // Quota/billing issues
+    if error_lower.contains("quota") || error_lower.contains("billing") || error_lower.contains("insufficient") {
+        return format!(
+            "The AI service quota may have been exceeded. Please let the team know!\n\n\
+            Error: {}",
+            error
+        );
+    }
+    
+    // Generic error
+    format!(
+        "Sorry, I ran into an issue. Here's what happened:\n\n{}\n\n\
+        If this keeps happening, try restarting the app or checking your internet connection.",
+        error
+    )
+}
+
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let options = eframe::NativeOptions {
@@ -687,6 +805,14 @@ struct LittleHelperApp {
 impl eframe::App for LittleHelperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
+        
+        // Poll for AI response (non-blocking)
+        s.poll_ai_response();
+        
+        // Request repaint if we're waiting for AI (to keep polling)
+        if s.is_thinking {
+            ctx.request_repaint();
+        }
 
         // Set up theme (dark or light mode)
         let mut style = (*ctx.style()).clone();
