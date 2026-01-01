@@ -91,6 +91,12 @@ struct AppState {
     
     // Async AI response channel
     ai_result_rx: Option<Receiver<AiResult>>,
+    
+    // Slack integration
+    show_slack_dialog: bool,
+    slack_message_to_send: Option<String>,
+    slack_selected_channel: String,
+    slack_status: Option<String>,  // Status message after send attempt
 }
 
 impl Default for AppState {
@@ -135,6 +141,10 @@ impl Default for AppState {
             mascot_texture: None,
             mascot_loaded: false,
             ai_result_rx: None,
+            show_slack_dialog: false,
+            slack_message_to_send: None,
+            slack_selected_channel: "#general".to_string(),
+            slack_status: None,
         }
     }
 }
@@ -1069,6 +1079,7 @@ impl eframe::App for LittleHelperApp {
                 let chat_height = ui.available_height() - 70.0;
 
                 let mut clicked_path: Option<PathBuf> = None;
+                let mut slack_msg: Option<String> = None;
 
                 egui::ScrollArea::vertical()
                     .max_height(chat_height)
@@ -1077,8 +1088,12 @@ impl eframe::App for LittleHelperApp {
                     .show(ui, |ui| {
                         for msg in &s.chat_history {
                             ui.add_space(6.0);
-                            if let Some(path) = render_message(ui, msg, dark) {
-                                clicked_path = Some(path);
+                            let action = render_message(ui, msg, dark);
+                            if action.clicked_path.is_some() {
+                                clicked_path = action.clicked_path;
+                            }
+                            if action.send_to_slack.is_some() {
+                                slack_msg = action.send_to_slack;
                             }
                             ui.add_space(6.0);
                         }
@@ -1135,6 +1150,13 @@ impl eframe::App for LittleHelperApp {
                 if let Some(path) = s.pending_preview.take() {
                     s.open_file(&path, ctx);
                 }
+                
+                // Handle Slack send request
+                if let Some(msg) = slack_msg {
+                    s.slack_message_to_send = Some(msg);
+                    s.show_slack_dialog = true;
+                    s.slack_status = None;
+                }
 
                 ui.add_space(8.0);
 
@@ -1170,6 +1192,154 @@ impl eframe::App for LittleHelperApp {
                     }
                 });
             });
+        
+        // Slack dialog window (modal-ish)
+        if s.show_slack_dialog {
+            egui::Window::new("Send to Slack")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
+                    
+                    ui.add_space(8.0);
+                    
+                    // Channel selector
+                    ui.horizontal(|ui| {
+                        ui.label("Channel:");
+                        egui::ComboBox::from_id_source("slack_channel")
+                            .selected_text(&s.slack_selected_channel)
+                            .show_ui(ui, |ui| {
+                                // Common channel options
+                                let channels = [
+                                    "#general",
+                                    "#content",
+                                    "#drafts",
+                                    "#mcp-campaign",
+                                    "#team",
+                                    "#review",
+                                ];
+                                for channel in channels {
+                                    ui.selectable_value(&mut s.slack_selected_channel, channel.to_string(), channel);
+                                }
+                            });
+                    });
+                    
+                    ui.add_space(8.0);
+                    
+                    // Preview of message
+                    ui.label("Message preview:");
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            if let Some(msg) = &s.slack_message_to_send {
+                                let preview = if msg.len() > 500 {
+                                    format!("{}...", &msg[..500])
+                                } else {
+                                    msg.clone()
+                                };
+                                ui.label(&preview);
+                            }
+                        });
+                    
+                    ui.add_space(8.0);
+                    
+                    // Status message
+                    if let Some(status) = &s.slack_status {
+                        if status.starts_with("Error") {
+                            ui.colored_label(egui::Color32::RED, status);
+                        } else {
+                            ui.colored_label(egui::Color32::GREEN, status);
+                        }
+                        ui.add_space(8.0);
+                    }
+                    
+                    // Webhook URL check
+                    if s.settings.slack.webhook_url.is_none() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(200, 150, 50),
+                            "Slack webhook not configured. Set SLACK_WEBHOOK_URL environment variable."
+                        );
+                        ui.add_space(8.0);
+                    }
+                    
+                    // Buttons
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            s.show_slack_dialog = false;
+                            s.slack_message_to_send = None;
+                            s.slack_status = None;
+                        }
+                        
+                        let can_send = s.settings.slack.webhook_url.is_some() || std::env::var("SLACK_WEBHOOK_URL").is_ok();
+                        
+                        if ui.add_enabled(can_send, egui::Button::new("Send")).clicked() {
+                            // Send to Slack
+                            if let Some(msg) = &s.slack_message_to_send {
+                                let webhook_url = s.settings.slack.webhook_url.clone()
+                                    .or_else(|| std::env::var("SLACK_WEBHOOK_URL").ok());
+                                
+                                if let Some(url) = webhook_url {
+                                    let channel = s.slack_selected_channel.clone();
+                                    let message = msg.clone();
+                                    
+                                    // Spawn async send
+                                    let result = send_slack_message_sync(&url, &channel, &message);
+                                    match result {
+                                        Ok(_) => {
+                                            s.slack_status = Some(format!("Sent to {}", channel));
+                                            // Close after short delay would be nice, but for now just show success
+                                        }
+                                        Err(e) => {
+                                            s.slack_status = Some(format!("Error: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+        }
+    }
+}
+
+/// Send a Slack message synchronously (for UI thread)
+fn send_slack_message_sync(webhook_url: &str, channel: &str, message: &str) -> Result<(), String> {
+
+    
+    // Build JSON payload
+    let payload = serde_json::json!({
+        "channel": channel,
+        "username": "Little Helper",
+        "icon_emoji": ":robot_face:",
+        "text": message
+    });
+    
+    // Use ureq for simple sync HTTP (or we could spawn a thread)
+    // For now, use std::process to call curl as a simple solution
+    let payload_str = payload.to_string();
+    
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s", "-S",
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", &payload_str,
+            webhook_url
+        ])
+        .output()
+        .map_err(|e| format!("Failed to send: {}", e))?;
+    
+    if output.status.success() {
+        let response = String::from_utf8_lossy(&output.stdout);
+        if response.contains("ok") || response.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("Slack error: {}", response))
+        }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Request failed: {}", stderr))
     }
 }
 
@@ -1192,10 +1362,19 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
     }
 }
 
-/// Render a chat message, returning any clicked file path
-fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> Option<PathBuf> {
+/// Result from rendering a message
+struct MessageAction {
+    clicked_path: Option<PathBuf>,
+    send_to_slack: Option<String>,
+}
+
+/// Render a chat message, returning any actions taken
+fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> MessageAction {
     let is_user = msg.role == "user";
-    let mut clicked_path: Option<PathBuf> = None;
+    let mut action = MessageAction {
+        clicked_path: None,
+        send_to_slack: None,
+    };
 
     if is_user {
         // User message - right aligned, blue
@@ -1263,22 +1442,26 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> Option<Pa
                             .to_string();
 
                         if ui.link(&file_name).clicked() {
-                            clicked_path = Some(path);
+                            action.clicked_path = Some(path);
                         }
                     }
                 }
                 
-                // Copy button for assistant responses
+                // Action buttons for assistant responses
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.small_button("Copy").on_hover_text("Copy to clipboard").clicked() {
                         ui.output_mut(|o| o.copied_text = msg.content.clone());
                     }
+                    ui.add_space(8.0);
+                    if ui.small_button("Send to Slack").on_hover_text("Share this response to a Slack channel").clicked() {
+                        action.send_to_slack = Some(msg.content.clone());
+                    }
                 });
             });
     }
 
-    clicked_path
+    action
 }
 
 /// Render the onboarding screen for first-time users
