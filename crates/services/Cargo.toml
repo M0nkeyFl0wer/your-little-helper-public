@@ -12,4 +12,6 @@ walkdir = { workspace = true }
 strsim = { workspace = true }
 regex = { workspace = true }
 chrono = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
 shared = { path = "../shared" }

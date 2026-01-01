@@ -3,6 +3,7 @@
 //! Preloads knowledge for the agent:
 //! - System information for tech support
 //! - Campaign documents for content creation
+//! - Persona files for audience targeting
 //! - Project knowledge for research
 
 use std::fs;
@@ -107,6 +108,108 @@ pub fn load_campaign_context() -> String {
     ));
 
     context
+}
+
+/// Load persona files from ~/Process/personas/
+/// Returns all personas as context for content generation
+pub fn load_personas() -> String {
+    let mut context = String::new();
+
+    // Check multiple possible persona locations
+    let persona_dirs: Vec<std::path::PathBuf> = vec![
+        dirs::home_dir()
+            .map(|h| h.join("Process/personas"))
+            .unwrap_or_default(),
+        dirs::home_dir()
+            .map(|h| h.join("Projects/personas"))
+            .unwrap_or_default(),
+        dirs::home_dir()
+            .map(|h| h.join("Documents/personas"))
+            .unwrap_or_default(),
+    ];
+
+    let mut loaded_count = 0;
+    let mut all_personas = Vec::new();
+
+    for persona_dir in &persona_dirs {
+        if !persona_dir.exists() {
+            continue;
+        }
+
+        if let Ok(entries) = fs::read_dir(persona_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "md").unwrap_or(false) {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        let name = path
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Unknown".to_string());
+
+                        all_personas.push((name, content, path.display().to_string()));
+                        loaded_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if all_personas.is_empty() {
+        return "PERSONAS: No persona files found. Create .md files in ~/Process/personas/ to define target audiences.\n\n".to_string();
+    }
+
+    context.push_str("=== TARGET AUDIENCE PERSONAS ===\n\n");
+    context.push_str("Use these personas to tailor content to specific audiences.\n");
+    context.push_str("Match language, concerns, and messaging to the target persona.\n\n");
+
+    for (name, content, path) in all_personas {
+        context.push_str(&format!(
+            "=== PERSONA: {} ===\n",
+            name.to_uppercase().replace("-", " ")
+        ));
+        context.push_str(&format!("Source: {}\n\n", path));
+        context.push_str(&content);
+        context.push_str("\n\n");
+    }
+
+    context.push_str(&format!(
+        "=== END PERSONAS ({} loaded) ===\n\n",
+        loaded_count
+    ));
+
+    context
+}
+
+/// Load DDD workflow context
+pub fn load_ddd_workflow() -> String {
+    r#"=== DATA DRIVEN DESIGNS WORKFLOW ===
+
+FOLDER STRUCTURE:
+- ~/Process/drafts/     → Your generated content (syncs to Drive)
+- ~/Process/personas/   → Target audience personas
+- ~/Process/templates/  → Reusable content templates
+
+WORKFLOW:
+1. Generate content with personas
+2. Save drafts to ~/Process/drafts/
+3. Sync to Google Drive with ddd-sync
+4. Team reviews in shared Drive folder
+5. Approved content moves to posted/
+
+SECURITY:
+- Only anonymized personas go to AI
+- Never include raw survey data
+- Use segments ("Renters 25-40"), not individuals
+
+OUTPUT FORMAT:
+When generating content, save to ~/Process/drafts/ with format:
+  YYYY-MM-DD_platform_topic.md
+  Example: 2024-12-31_twitter_housing-affordability.md
+
+=== END DDD WORKFLOW ===
+
+"#
+    .to_string()
 }
 
 /// Get system information for tech support context (cross-platform)

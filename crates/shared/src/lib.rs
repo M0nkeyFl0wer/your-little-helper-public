@@ -37,6 +37,17 @@ pub mod settings {
         pub onboarding_complete: bool,
     }
 
+    /// Slack integration settings
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct SlackSettings {
+        /// Incoming webhook URL for notifications
+        pub webhook_url: Option<String>,
+        /// Default channel (optional)
+        pub default_channel: Option<String>,
+        /// Enable Slack notifications
+        pub enabled: bool,
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct AppSettings {
         pub allowed_dirs: Vec<String>,
@@ -44,6 +55,8 @@ pub mod settings {
         pub enable_internet_research: bool,
         pub max_results: usize,
         pub user_profile: UserProfile,
+        #[serde(default)]
+        pub slack: SlackSettings,
     }
 
     impl Default for ProviderAuth {
@@ -72,6 +85,7 @@ pub mod settings {
                 enable_internet_research: false,
                 max_results: 200,
                 user_profile: UserProfile::default(),
+                slack: SlackSettings::default(),
             }
         }
     }
