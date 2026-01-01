@@ -58,7 +58,7 @@ echo ""
 echo -e "${BLUE}Downloading Little Helper...${NC}"
 
 # Get latest release URL
-RELEASE_URL="https://github.com/M0nkeyFl0wer/claudia-lite/releases/latest/download/LittleHelper-macOS-arm64.zip"
+RELEASE_URL="https://github.com/M0nkeyFl0wer/your-little-helper/releases/latest/download/LittleHelper-macOS-arm64.zip"
 
 if curl -fsSL -o "LittleHelper.zip" "$RELEASE_URL" 2>/dev/null; then
     echo -e "${GREEN}Downloaded!${NC}"
@@ -72,8 +72,8 @@ else
         source "$HOME/.cargo/env"
     fi
 
-    git clone --depth 1 https://github.com/M0nkeyFl0wer/claudia-lite.git
-    cd claudia-lite
+    git clone --depth 1 https://github.com/M0nkeyFl0wer/your-little-helper.git
+    cd your-little-helper
     cargo build --release -p app
 
     mkdir -p "Little Helper.app/Contents/MacOS"
@@ -106,7 +106,7 @@ else
 EOF
 
     cd ..
-    mv claudia-lite/"Little Helper.app" ./
+    mv your-little-helper/"Little Helper.app" ./
 fi
 
 # Unzip if we downloaded

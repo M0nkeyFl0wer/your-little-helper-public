@@ -59,7 +59,7 @@ fi
 # Clone and build Little Helper
 echo "🌸 Installing Little Helper app..."
 if [ ! -d "little-helper" ]; then
-    git clone https://github.com/M0nkeyFl0wer/claudia-lite.git little-helper
+    git clone https://github.com/M0nkeyFl0wer/your-little-helper.git little-helper
 else
     cd little-helper
     git pull

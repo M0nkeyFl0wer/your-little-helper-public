@@ -40,7 +40,7 @@ fi
 
 # Verify checksums and sources
 OLLAMA_INSTALL_URL="https://ollama.com/install.sh"
-REPO_URL="https://github.com/M0nkeyFl0wer/claudia-lite.git"
+REPO_URL="https://github.com/M0nkeyFl0wer/your-little-helper.git"
 RUST_INSTALL_URL="https://sh.rustup.rs"
 
 echo -e "${BLUE}🔍 Verifying installation sources...${NC}"

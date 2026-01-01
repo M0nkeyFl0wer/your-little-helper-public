@@ -43,7 +43,7 @@ Write-Host ""
 Write-Host "Step 1/3: Downloading Little Helper..." -ForegroundColor Cyan
 
 # Download pre-built app
-$releaseUrl = "https://github.com/M0nkeyFl0wer/claudia-lite/releases/latest/download/LittleHelper-Windows.zip"
+$releaseUrl = "https://github.com/M0nkeyFl0wer/your-little-helper/releases/latest/download/LittleHelper-Windows.zip"
 $zipPath = "$env:TEMP\LittleHelper.zip"
 
 try {

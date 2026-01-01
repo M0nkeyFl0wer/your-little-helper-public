@@ -4,7 +4,7 @@ A beautiful, private AI assistant for your desktop. Chat with AI to find files, 
 
 ## Download
 
-**[Download Latest Release](https://github.com/M0nkeyFl0wer/claudia-lite/releases/latest)**
+**[Download Latest Release](https://github.com/M0nkeyFl0wer/your-little-helper/releases/latest)**
 
 | Platform | File | Requirements |
 |----------|------|--------------|
@@ -26,7 +26,7 @@ A beautiful, private AI assistant for your desktop. Chat with AI to find files, 
 
 **Or use Terminal:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/claudia-lite/main/install-easy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/main/install-easy.sh | bash
 ```
 
 ### Windows
@@ -107,8 +107,8 @@ rm ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/M0nkeyFl0wer/claudia-lite.git
-cd claudia-lite
+git clone https://github.com/M0nkeyFl0wer/your-little-helper.git
+cd your-little-helper
 cargo build --release -p app
 ```
 
