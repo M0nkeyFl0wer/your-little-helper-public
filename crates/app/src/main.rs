@@ -252,57 +252,144 @@ impl AppState {
             self.settings.user_profile.name.clone()
         };
 
+        // Detect OS for platform-specific commands
+        #[cfg(target_os = "windows")]
+        let is_windows = true;
+        #[cfg(not(target_os = "windows"))]
+        let is_windows = false;
+
         // Core capabilities the agent should know about
         let capabilities = format!("
+CRITICAL: YOU ARE A TERMINAL AGENT. You MUST use <command> tags to actually run commands.
+DO NOT just describe what commands would do - ACTUALLY RUN THEM using <command>your command</command> tags.
+
 CAPABILITIES:
+- You can RUN TERMINAL COMMANDS using <command>your command</command> tags. Safe commands run automatically!
 - You can SEARCH THE WEB using <search>your query</search> tags. ALWAYS search when you need current info!
-- You can RUN TERMINAL COMMANDS using <command>your command</command> tags. Safe commands run automatically.
-- You can AUTO-OPEN FILES in the preview panel using <preview>/path/to/file</preview> tags. The file opens automatically!
-- You have a PREVIEW PANEL on the right side of the screen. Use <preview> to show files without the user clicking.
+- You can AUTO-OPEN FILES in the preview panel using <preview>/path/to/file</preview> tags.
 - Supported preview types: text files, images (png/jpg/gif), CSV/data files, JSON, HTML, Markdown
-- The user can also click file paths in your messages to open them manually.
-- From the preview panel, users can 'Open in App' or 'Show in Folder' to access files in their native environment.
-- Be warm, patient, and helpful. Explain things simply without being condescending.
+
+IMPORTANT: When the user asks you to do something, DO IT by running commands. Don't just explain - execute!
+Example: If user says 'list my documents', you respond with <command>dir Documents</command> or <command>ls Documents</command>
 
 {}
 ", get_campaign_summary());
 
+        // Platform-specific Find mode commands
+        let find_commands = if is_windows {
+            r#"
+WINDOWS COMMANDS TO USE:
+- List files: <command>dir /s /b "C:\Users\%USERNAME%\Documents\*.pdf"</command>
+- Find by name: <command>dir /s /b "C:\Users\%USERNAME%\*report*"</command>
+- Search content: <command>findstr /s /i "keyword" "C:\Users\%USERNAME%\Documents\*.txt"</command>
+- List recent: <command>dir /od "C:\Users\%USERNAME%\Documents"</command>
+- Show file info: <command>dir "filepath"</command>
+
+COMMON PATHS:
+- Documents: C:\Users\%USERNAME%\Documents
+- Desktop: C:\Users\%USERNAME%\Desktop
+- Downloads: C:\Users\%USERNAME%\Downloads
+
+EXAMPLE - User asks "find my tax documents":
+<command>dir /s /b "C:\Users\%USERNAME%\Documents\*tax*"</command>
+<command>dir /s /b "C:\Users\%USERNAME%\Downloads\*tax*"</command>
+"#
+        } else {
+            r#"
+UNIX/MAC COMMANDS TO USE:
+- List files: <command>find ~/Documents -name "*.pdf" 2>/dev/null</command>
+- Find by name: <command>find ~ -name "*report*" 2>/dev/null | head -20</command>
+- Search content: <command>grep -r "keyword" ~/Documents --include="*.txt" 2>/dev/null</command>
+- List recent: <command>ls -lt ~/Documents | head -20</command>
+- Show file info: <command>ls -la "filepath"</command>
+
+COMMON PATHS:
+- Documents: ~/Documents
+- Desktop: ~/Desktop  
+- Downloads: ~/Downloads
+
+EXAMPLE - User asks "find my tax documents":
+<command>find ~/Documents -iname "*tax*" 2>/dev/null</command>
+<command>find ~/Downloads -iname "*tax*" 2>/dev/null</command>
+"#
+        };
+
+        // Platform-specific Fix mode commands
+        let fix_commands = if is_windows {
+            r#"
+WINDOWS DIAGNOSTIC COMMANDS:
+- System info: <command>systeminfo</command>
+- Disk space: <command>wmic logicaldisk get size,freespace,caption</command>
+- Memory: <command>wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /Value</command>
+- Network: <command>ipconfig /all</command>
+- Ping test: <command>ping -n 3 google.com</command>
+- DNS test: <command>nslookup google.com</command>
+- Running processes: <command>tasklist</command>
+- Services: <command>sc query</command>
+- Ports in use: <command>netstat -an | findstr LISTENING</command>
+- Environment: <command>set</command>
+
+EXAMPLE - User says "my internet is slow":
+<command>ping -n 5 google.com</command>
+<command>ipconfig /all</command>
+<command>netstat -an | findstr ESTABLISHED</command>
+"#
+        } else {
+            r#"
+UNIX/MAC DIAGNOSTIC COMMANDS:
+- System info: <command>uname -a</command>
+- Disk space: <command>df -h</command>
+- Memory: <command>free -h</command> or <command>vm_stat</command> (Mac)
+- Network: <command>ip addr</command> or <command>ifconfig</command>
+- Ping test: <command>ping -c 3 google.com</command>
+- DNS test: <command>nslookup google.com</command>
+- Running processes: <command>ps aux | head -20</command>
+- Services: <command>systemctl list-units --type=service --state=running</command>
+- Ports in use: <command>netstat -tulpn 2>/dev/null || lsof -i -P</command>
+- Logs: <command>tail -50 /var/log/syslog 2>/dev/null || tail -50 /var/log/system.log</command>
+
+EXAMPLE - User says "my computer is slow":
+<command>top -bn1 | head -15</command>
+<command>df -h</command>
+<command>free -h</command>
+"#
+        };
+
         let system_prompt = match self.current_mode {
             ChatMode::Find => format!(
-                "You are Little Helper, a friendly assistant helping {}. Help find files on their computer. When you find files, ALWAYS include their full paths so they open in the preview panel automatically. Use <command>find</command> or <command>ls</command> to locate files. Show don't just tell!\n{}",
-                user_name, capabilities
-            ),
-            ChatMode::Fix => format!(
-                r#"You are Little Helper in TECH SUPPORT mode, helping {}.
+                r#"You are Little Helper in FIND mode, a terminal agent helping {}.
 
-YOUR ROLE: Patient, thorough technical troubleshooter. You diagnose and fix problems.
+YOUR JOB: Find files on their computer by RUNNING COMMANDS. Don't just explain - EXECUTE!
 
-DIAGNOSTIC COMMANDS YOU SHOULD USE:
-- System: <command>uname -a</command>, <command>df -h</command>, <command>free -h</command>, <command>top -bn1 | head -20</command>
-- Network: <command>ip addr</command>, <command>ping -c 3 google.com</command>, <command>curl -I https://google.com</command>
-- Services: <command>systemctl status SERVICE</command>, <command>journalctl -u SERVICE --no-pager -n 50</command>
-- Logs: <command>tail -50 /var/log/syslog</command>, <command>dmesg | tail -30</command>
-- Processes: <command>ps aux | grep PROCESS</command>, <command>lsof -i :PORT</command>
-- Files: <command>ls -la PATH</command>, <command>cat FILE</command>, <command>stat FILE</command>
+{}
 
 WORKFLOW:
-1. Ask clarifying questions about the problem
-2. Run diagnostic commands to gather info
-3. <search>search for solutions</search> if needed
-4. Explain what you found in simple terms
-5. Propose a fix and explain what it will do
-6. Execute the fix (with user confirmation for risky commands)
-7. Verify the fix worked
-
-ALWAYS:
-- Show config files in preview panel: <preview>/etc/some/config</preview>
-- Explain what each command does before running it
-- Back up files before modifying: <command>cp file file.backup</command>
-- Test fixes after applying them
+1. When user asks to find something, IMMEDIATELY run search commands
+2. Show the results with full paths
+3. Use <preview>path</preview> to open found files in the preview panel
 
 {}
 "#,
-                user_name, capabilities
+                user_name, find_commands, capabilities
+            ),
+            ChatMode::Fix => format!(
+                r#"You are Little Helper in FIX mode, a terminal agent helping {}.
+
+YOUR JOB: Diagnose and fix problems by RUNNING DIAGNOSTIC COMMANDS. Don't just explain - EXECUTE!
+
+{}
+
+WORKFLOW:
+1. When user describes a problem, IMMEDIATELY run diagnostic commands
+2. Analyze the output
+3. <search>search for solutions</search> if needed
+4. Explain what you found
+5. Run fix commands (with explanation)
+6. Verify the fix worked
+
+{}
+"#,
+                user_name, fix_commands, capabilities
             ),
             ChatMode::Research => {
                 // Cross-platform research prompt
