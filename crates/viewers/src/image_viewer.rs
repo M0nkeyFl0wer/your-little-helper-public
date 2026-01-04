@@ -3,6 +3,8 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
+use crate::Zoomable;
+
 /// Image viewer state
 pub struct ImageViewer {
     path: Option<PathBuf>,
@@ -16,6 +18,17 @@ pub struct ImageViewer {
 impl Default for ImageViewer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Zoomable for ImageViewer {
+    fn set_zoom(&mut self, zoom: f32) {
+        self.zoom = Self::clamp_zoom(zoom);
+        self.fit_to_window = false;
+    }
+
+    fn zoom(&self) -> f32 {
+        self.zoom
     }
 }
 

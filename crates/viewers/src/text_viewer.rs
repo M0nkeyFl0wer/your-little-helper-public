@@ -4,6 +4,8 @@ use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::Zoomable;
+
 /// Text viewer state
 pub struct TextViewer {
     path: Option<PathBuf>,
@@ -11,11 +13,22 @@ pub struct TextViewer {
     line_numbers: bool,
     wrap_lines: bool,
     scroll_offset: f32,
+    zoom: f32,
 }
 
 impl Default for TextViewer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Zoomable for TextViewer {
+    fn set_zoom(&mut self, zoom: f32) {
+        self.zoom = Self::clamp_zoom(zoom);
+    }
+
+    fn zoom(&self) -> f32 {
+        self.zoom
     }
 }
 
@@ -27,6 +40,7 @@ impl TextViewer {
             line_numbers: true,
             wrap_lines: true,
             scroll_offset: 0.0,
+            zoom: 1.0,
         }
     }
 

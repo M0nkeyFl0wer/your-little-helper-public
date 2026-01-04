@@ -130,3 +130,52 @@ pub trait Viewer {
     /// Check if content is loaded
     fn is_loaded(&self) -> bool;
 }
+
+/// Trait for viewers that support zoom functionality
+pub trait Zoomable {
+    /// Zoom range constants
+    const MIN_ZOOM: f32 = 0.25;
+    const MAX_ZOOM: f32 = 4.0;
+    const ZOOM_STEP: f32 = 0.25;
+
+    /// Set zoom level (will be clamped to valid range)
+    fn set_zoom(&mut self, zoom: f32);
+
+    /// Get current zoom level
+    fn zoom(&self) -> f32;
+
+    /// Reset zoom to 100%
+    fn reset_zoom(&mut self) {
+        self.set_zoom(1.0);
+    }
+
+    /// Zoom in by one step
+    fn zoom_in(&mut self) {
+        let new_zoom = (self.zoom() + Self::ZOOM_STEP).min(Self::MAX_ZOOM);
+        self.set_zoom(new_zoom);
+    }
+
+    /// Zoom out by one step
+    fn zoom_out(&mut self) {
+        let new_zoom = (self.zoom() - Self::ZOOM_STEP).max(Self::MIN_ZOOM);
+        self.set_zoom(new_zoom);
+    }
+
+    /// Clamp zoom value to valid range
+    fn clamp_zoom(zoom: f32) -> f32 {
+        zoom.clamp(Self::MIN_ZOOM, Self::MAX_ZOOM)
+    }
+
+    /// Handle zoom input from scroll wheel
+    fn handle_zoom_input(&mut self, ui: &egui::Ui) {
+        // Check for Ctrl+scroll
+        if ui.input(|i| i.modifiers.ctrl) {
+            let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll_delta.abs() > 0.0 {
+                let zoom_delta = scroll_delta * 0.01; // Scale scroll to zoom
+                let new_zoom = Self::clamp_zoom(self.zoom() + zoom_delta);
+                self.set_zoom(new_zoom);
+            }
+        }
+    }
+}
