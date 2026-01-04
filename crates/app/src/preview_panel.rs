@@ -85,6 +85,25 @@ impl PreviewPanel {
         self.show_content(PreviewContent::Ascii { state });
     }
 
+    /// Show a web preview (with optional metadata)
+    pub fn show_web_preview(&mut self, url: &str, title: Option<String>, snippet: Option<String>) {
+        self.show_content(PreviewContent::Web {
+            url: url.to_string(),
+            title,
+            screenshot: None,
+            og_image: None,
+            snippet,
+        });
+    }
+
+    /// Show an error state
+    pub fn show_error(&mut self, message: &str, source: &str) {
+        self.show_content(PreviewContent::Error {
+            message: message.to_string(),
+            source: source.to_string(),
+        });
+    }
+
     /// Hide the preview panel
     pub fn hide(&mut self) {
         self.state.visible = false;
@@ -414,17 +433,71 @@ impl PreviewPanel {
                 ui.label(format!("Type: {:?}", file_type));
                 // TODO: Use viewers crate to render file content
             }
-            Some(PreviewContent::Web { url, title, snippet, .. }) => {
+            Some(PreviewContent::Web { url, title, snippet, og_image, .. }) => {
                 ui.vertical(|ui| {
+                    // Web preview header
+                    ui.horizontal(|ui| {
+                        ui.colored_label(accent_color, "🌐");
+                        ui.label(
+                            egui::RichText::new("Web Preview")
+                                .strong()
+                                .size(14.0)
+                        );
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Title (if available)
                     if let Some(title) = title {
-                        ui.heading(title);
+                        ui.heading(
+                            egui::RichText::new(title)
+                                .color(text_color)
+                        );
+                        ui.add_space(4.0);
                     }
-                    ui.hyperlink(url);
+
+                    // URL as clickable link
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Source:").small().weak());
+                        ui.hyperlink(url);
+                    });
+
+                    ui.add_space(12.0);
+
+                    // Description/snippet
                     if let Some(snippet) = snippet {
-                        ui.add_space(10.0);
-                        ui.label(snippet);
+                        egui::Frame::none()
+                            .fill(if is_dark_mode {
+                                egui::Color32::from_rgb(40, 40, 48)
+                            } else {
+                                egui::Color32::from_rgb(248, 248, 250)
+                            })
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(12.0))
+                            .show(ui, |ui| {
+                                ui.label(snippet);
+                            });
                     }
-                    // TODO: Show screenshot or OG image
+
+                    // OG image URL hint (if available but not loaded)
+                    if let Some(og_url) = og_image {
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Image:").small().weak());
+                            ui.label(
+                                egui::RichText::new(og_url)
+                                    .small()
+                                    .weak()
+                            );
+                        });
+                    }
+
+                    ui.add_space(16.0);
+
+                    // Action button to open in browser
+                    if ui.button("🔗 Open in Browser").clicked() {
+                        let _ = open::that(url);
+                    }
                 });
             }
             Some(PreviewContent::Image { source }) => {

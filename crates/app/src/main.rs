@@ -2,6 +2,7 @@ use agent_host::AgentHost;
 use eframe::egui;
 use parking_lot::Mutex;
 use shared::agent_api::ChatMessage as ApiChatMessage;
+use shared::preview_types::{parse_preview_tag, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -246,12 +247,44 @@ impl AppState {
                         });
                     }
                     
-                    // Clean up response - remove action tags
+                    // Parse for new-style preview tags (<preview type="..." ...>)
+                    if let Some(tag) = parse_preview_tag(&result.response) {
+                        if let Some(content) = tag.to_content() {
+                            // For web previews, update the preview panel
+                            match &content {
+                                PreviewContent::Web { url, .. } => {
+                                    // Show web preview with basic info (async fetch happens separately)
+                                    self.preview_panel.show_content(PreviewContent::Web {
+                                        url: url.clone(),
+                                        title: None,
+                                        screenshot: None,
+                                        og_image: None,
+                                        snippet: Some(tag.caption.clone()),
+                                    });
+                                }
+                                PreviewContent::File { path, file_type } => {
+                                    // Show file preview
+                                    self.preview_panel.show_content(PreviewContent::File {
+                                        path: path.clone(),
+                                        file_type: file_type.clone(),
+                                    });
+                                }
+                                _ => {
+                                    // Show any other content type directly
+                                    self.preview_panel.show_content(content);
+                                }
+                            }
+                        }
+                    }
+
+                    // Clean up response - remove action tags (both old and new style)
                     let clean_response = clean_ai_response(&result.response);
-                    
+                    // Also strip new-style preview tags
+                    let clean_response = strip_preview_tags(&clean_response);
+
                     let assistant_msg = ChatMessage {
                         role: "assistant".to_string(),
-                        content: if clean_response.is_empty() { result.response } else { clean_response },
+                        content: if clean_response.is_empty() { result.response.clone() } else { clean_response },
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     self.chat_history.push(assistant_msg);
