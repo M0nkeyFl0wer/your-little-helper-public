@@ -132,6 +132,7 @@ impl Default for AppState {
         // Apply preloaded user info if available (bespoke builds)
         if PRELOAD_SKIP_ONBOARDING {
             settings.user_profile.onboarding_complete = true;
+            settings.user_profile.terminal_permission_granted = true;
             if !PRELOAD_USER_NAME.is_empty() {
                 settings.user_profile.name = PRELOAD_USER_NAME.to_string();
             }
@@ -379,8 +380,11 @@ impl AppState {
         #[cfg(not(target_os = "windows"))]
         let is_windows = false;
 
-        // Core capabilities the agent should know about
-        let capabilities = format!("
+        // Core capabilities the agent should know about (terminal access controlled by permission)
+        let terminal_enabled = self.settings.user_profile.terminal_permission_granted;
+
+        let capabilities = if terminal_enabled {
+            format!("
 CRITICAL: YOU ARE A TERMINAL AGENT. You MUST use <command> tags to actually run commands.
 DO NOT just describe what commands would do - ACTUALLY RUN THEM using <command>your command</command> tags.
 
@@ -394,7 +398,20 @@ IMPORTANT: When the user asks you to do something, DO IT by running commands. Do
 Example: If user says 'list my documents', you respond with <command>dir Documents</command> or <command>ls Documents</command>
 
 {}
-", get_campaign_summary());
+", get_campaign_summary())
+        } else {
+            format!("
+CAPABILITIES (Limited Mode - Terminal Disabled):
+- You can SEARCH THE WEB using <search>your query</search> tags. ALWAYS search when you need current info!
+- You can reference files in the preview panel using <preview>/path/to/file</preview> tags.
+- Supported preview types: text files, images (png/jpg/gif), CSV/data files, JSON, HTML, Markdown
+
+NOTE: Terminal command execution is disabled. You cannot run <command> tags.
+Instead, provide instructions the user can run manually.
+
+{}
+", get_campaign_summary())
+        };
 
         // Platform-specific Find mode commands
         let find_commands = if is_windows {
@@ -2264,6 +2281,8 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                     s.settings.user_profile.name = s.onboarding_name.trim().to_string();
                                 }
                                 s.settings.user_profile.onboarding_complete = true;
+                                // Grant terminal permission by default for engaged users
+                                s.settings.user_profile.terminal_permission_granted = true;
 
                                 // Update welcome message with user's name - warm and friendly
                                 let user_name = if s.settings.user_profile.name.is_empty() {
