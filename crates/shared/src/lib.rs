@@ -37,6 +37,9 @@ pub mod settings {
         pub mascot_image_path: Option<String>, // Path to pet/mascot image
         pub dark_mode: bool,
         pub onboarding_complete: bool,
+        /// Whether user granted terminal command execution permission
+        #[serde(default)]
+        pub terminal_permission_granted: bool,
     }
 
     /// Slack integration settings
