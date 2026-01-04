@@ -69,9 +69,11 @@ const SAFE_COMMANDS: &[&str] = &[
     // === WINDOWS COMMANDS ===
     // File listing and info (read-only)
     "dir", "type", "where", "tree /f", "attrib",
+    // Text search (read-only)
+    "findstr",
     // System info (read-only)
     "systeminfo", "ver", "set", "echo %", "wmic", "tasklist",
-    "ipconfig", "getmac", "arp",
+    "ipconfig", "getmac", "arp", "netstat",
     // PowerShell read-only
     "powershell -c \"Get-", "powershell -c \"Write-", "powershell Get-",
     "Get-ChildItem", "Get-Content", "Get-Process", "Get-Service",

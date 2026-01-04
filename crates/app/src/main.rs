@@ -18,14 +18,16 @@ struct AiResult {
     response: String,
     preview_file: Option<PathBuf>,
     error: Option<String>,
+    /// Commands that were executed (for transparency)
+    executed_commands: Vec<(String, String, bool)>,  // (command, output, success)
 }
 
 // Default mascot image (boss's dog!)
 const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
-// Pre-loaded API key (gitignored secrets.rs, or empty for CI builds)
+// Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
 mod secrets;
-use secrets::OPENAI_API_KEY;
+use secrets::{OPENAI_API_KEY, PRELOAD_USER_NAME, PRELOAD_SKIP_ONBOARDING};
 
 // Campaign context loader
 mod context;
@@ -39,11 +41,10 @@ enum AppScreen {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChatMode {
-    Find,     // Help me find something
-    Fix,      // Help me fix something
-    Research, // Deep research session
+    Fix,      // Tech support - diagnose and fix problems
+    Research, // Deep research with citations
     Data,     // Work with data and files
-    Content,  // Content creation/management
+    Content,  // Content creation with personas
 }
 
 #[derive(Clone)]
@@ -56,13 +57,16 @@ struct ChatMessage {
 
 /// Active viewer in the preview panel
 enum ActiveViewer {
-    None,
+    Welcome,  // Default welcome/tips view
+    Matrix,   // Matrix rain animation while processing
+    RickRoll, // Easter egg!
     Text(TextViewer),
     Image(ImageViewer),
     Csv(CsvViewer),
     Json(JsonViewer),
     Html(HtmlViewer),
     Pdf(PdfViewer),
+    CommandOutput(String, String),  // (command, output) for showing command results
 }
 
 struct AppState {
@@ -101,7 +105,16 @@ struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        let (settings, _) = load_settings_or_default();
+        let (mut settings, _) = load_settings_or_default();
+        
+        // Apply preloaded user info if available (bespoke builds)
+        if PRELOAD_SKIP_ONBOARDING {
+            settings.user_profile.onboarding_complete = true;
+            if !PRELOAD_USER_NAME.is_empty() {
+                settings.user_profile.name = PRELOAD_USER_NAME.to_string();
+            }
+        }
+        
         let needs_onboarding = !settings.user_profile.onboarding_complete;
 
         let user_name = if settings.user_profile.name.is_empty() {
@@ -127,15 +140,15 @@ impl Default for AppState {
             } else {
                 AppScreen::Chat
             },
-            current_mode: ChatMode::Find,
+            current_mode: ChatMode::Fix,
             input_text: String::new(),
             chat_history: vec![welcome_msg],
             is_thinking: false,
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
-            show_preview: false,
+            show_preview: true,  // Preview visible by default
             preview_path: None,
-            active_viewer: ActiveViewer::None,
+            active_viewer: ActiveViewer::Welcome,  // Start with welcome view
             pending_preview: None,
             onboarding_name: String::new(),
             mascot_texture: None,
@@ -159,6 +172,11 @@ impl AppState {
                 self.thinking_status.clear();
                 self.ai_result_rx = None;
                 
+                // Return to welcome view (unless Rick Roll is showing)
+                if matches!(self.active_viewer, ActiveViewer::Matrix) {
+                    self.active_viewer = ActiveViewer::Welcome;
+                }
+                
                 if let Some(error) = result.error {
                     // Format error message with helpful info
                     let error_content = format_error_message(&error);
@@ -171,6 +189,35 @@ impl AppState {
                 } else {
                     // Store file to preview
                     self.pending_preview = result.preview_file;
+                    
+                    // Show executed commands in preview panel if any ran
+                    if !result.executed_commands.is_empty() {
+                        // Show last command output in preview
+                        if let Some((cmd, output, _)) = result.executed_commands.last() {
+                            self.active_viewer = ActiveViewer::CommandOutput(cmd.clone(), output.clone());
+                        }
+                        
+                        // Also add summary to chat
+                        let mut cmd_summary = String::from("**Commands executed:**\n");
+                        for (cmd, output, success) in &result.executed_commands {
+                            let status = if *success { "[OK]" } else { "[FAILED]" };
+                            cmd_summary.push_str(&format!("\n`{}` {}\n", cmd, status));
+                            // Show truncated output
+                            let output_preview = if output.len() > 300 {
+                                format!("{}...", &output[..300])
+                            } else {
+                                output.clone()
+                            };
+                            if !output_preview.trim().is_empty() {
+                                cmd_summary.push_str(&format!("```\n{}\n```\n", output_preview.trim()));
+                            }
+                        }
+                        self.chat_history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: cmd_summary,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    }
                     
                     // Clean up response - remove action tags
                     let clean_response = clean_ai_response(&result.response);
@@ -231,6 +278,14 @@ impl AppState {
         if self.input_text.trim().is_empty() {
             return;
         }
+        
+        // Easter egg: Rick Roll when asking about Ben West
+        let input_lower = self.input_text.to_lowercase();
+        if input_lower.contains("ben west") || input_lower.contains("benwest") {
+            self.active_viewer = ActiveViewer::RickRoll;
+            self.show_preview = true;
+            // Still process the message normally, but show the meme
+        }
 
         // Add user message to chat
         let user_msg = ChatMessage {
@@ -244,6 +299,12 @@ impl AppState {
         let _query = self.input_text.clone();
         self.input_text.clear();
         self.is_thinking = true;
+        
+        // Show Matrix animation while processing (unless Rick Roll is showing)
+        if !matches!(self.active_viewer, ActiveViewer::RickRoll) {
+            self.active_viewer = ActiveViewer::Matrix;
+        }
+        self.show_preview = true;
 
         // Prepare context based on current mode
         let user_name = if self.settings.user_profile.name.is_empty() {
@@ -356,40 +417,28 @@ EXAMPLE - User says "my computer is slow":
         };
 
         let system_prompt = match self.current_mode {
-            ChatMode::Find => format!(
-                r#"You are Little Helper in FIND mode, a terminal agent helping {}.
-
-YOUR JOB: Find files on their computer by RUNNING COMMANDS. Don't just explain - EXECUTE!
-
-{}
-
-WORKFLOW:
-1. When user asks to find something, IMMEDIATELY run search commands
-2. Show the results with full paths
-3. Use <preview>path</preview> to open found files in the preview panel
-
-{}
-"#,
-                user_name, find_commands, capabilities
-            ),
             ChatMode::Fix => format!(
                 r#"You are Little Helper in FIX mode, a terminal agent helping {}.
 
-YOUR JOB: Diagnose and fix problems by RUNNING DIAGNOSTIC COMMANDS. Don't just explain - EXECUTE!
+YOUR JOB: Tech support! Diagnose problems, find files, fix issues. EXECUTE COMMANDS - don't just explain!
 
+FILE FINDING:
+{}
+
+DIAGNOSTICS:
 {}
 
 WORKFLOW:
 1. When user describes a problem, IMMEDIATELY run diagnostic commands
-2. Analyze the output
+2. If they need to find files, run search commands
 3. <search>search for solutions</search> if needed
-4. Explain what you found
+4. Analyze output, explain findings
 5. Run fix commands (with explanation)
-6. Verify the fix worked
+6. Use <preview>path</preview> to show files in preview panel
 
 {}
 "#,
-                user_name, fix_commands, capabilities
+                user_name, find_commands, fix_commands, capabilities
             ),
             ChatMode::Research => {
                 // Cross-platform research prompt
@@ -618,7 +667,7 @@ ALWAYS:
     fn close_preview(&mut self) {
         self.show_preview = false;
         self.preview_path = None;
-        self.active_viewer = ActiveViewer::None;
+        self.active_viewer = ActiveViewer::Welcome;
     }
 }
 
@@ -638,6 +687,7 @@ fn run_ai_generation(
                 response: String::new(),
                 preview_file: None,
                 error: Some(format!("Failed to start async runtime: {}", e)),
+                executed_commands: Vec::new(),
             });
             return;
         }
@@ -653,6 +703,7 @@ fn run_ai_generation(
     let result = rt.block_on(async {
         let mut msgs = messages;
         let mut file_to_preview: Option<PathBuf> = None;
+        let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
         
         // Loop for multi-turn interactions (max 5 iterations)
         for _iteration in 0..5 {
@@ -687,7 +738,7 @@ fn run_ai_generation(
             
             // If no actions needed, return the response
             if searches.is_empty() && commands.is_empty() {
-                return Ok::<(String, Option<PathBuf>), anyhow::Error>((response, file_to_preview));
+                return Ok::<(String, Option<PathBuf>, Vec<(String, String, bool)>), anyhow::Error>((response, file_to_preview, all_executed_commands));
             }
             
             // Add assistant response to conversation
@@ -710,24 +761,28 @@ fn run_ai_generation(
                 }
             }
             
-            // Execute safe commands
+            // Execute safe commands and track them
             for cmd in &commands {
                 let danger = classify_command(cmd);
                 match danger {
                     DangerLevel::Safe => {
                         match execute_command(cmd, 30).await {
                             Ok(result) => {
+                                all_executed_commands.push((cmd.clone(), result.output.clone(), result.success));
                                 results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
                             }
                             Err(e) => {
+                                all_executed_commands.push((cmd.clone(), e.to_string(), false));
                                 results.push(format!("[Command failed: {}]: {}", cmd, e));
                             }
                         }
                     }
                     DangerLevel::Blocked => {
+                        all_executed_commands.push((cmd.clone(), "Blocked for safety".to_string(), false));
                         results.push(format!("[Command blocked for safety: {}]", cmd));
                     }
                     _ => {
+                        all_executed_commands.push((cmd.clone(), "Needs user confirmation".to_string(), false));
                         results.push(format!("[Command '{}' needs user confirmation - skipping for now]", cmd));
                     }
                 }
@@ -742,20 +797,22 @@ fn run_ai_generation(
             }
         }
         
-        Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview))
+        Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview, all_executed_commands))
     });
 
     // Send result back to UI
     let ai_result = match result {
-        Ok((response, preview_file)) => AiResult {
+        Ok((response, preview_file, executed_commands)) => AiResult {
             response,
             preview_file,
             error: None,
+            executed_commands,
         },
         Err(e) => AiResult {
             response: String::new(),
             preview_file: None,
             error: Some(e.to_string()),
+            executed_commands: Vec::new(),
         },
     };
     
@@ -976,8 +1033,7 @@ impl eframe::App for LittleHelperApp {
 
                     ui.add_space(32.0);
 
-                    // Mode buttons
-                    mode_button(ui, "Find", ChatMode::Find, &mut s.current_mode);
+                    // Mode buttons (4 tabs: Fix, Research, Data, Content)
                     mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode);
                     mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode);
                     mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode);
@@ -1063,29 +1119,32 @@ impl eframe::App for LittleHelperApp {
                         .inner_margin(egui::Margin::same(12.0)),
                 )
                 .show(ctx, |ui| {
-                    // Header with file name and actions
+                    // Header - context-aware
                     ui.horizontal(|ui| {
-                        if let Some(path) = &s.preview_path {
-                            ui.label(
-                                egui::RichText::new(
-                                    path.file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string(),
-                                )
-                                .size(16.0)
-                                .strong(),
-                            );
-                        }
+                        let title = match &s.active_viewer {
+                            ActiveViewer::Welcome => "Preview Panel".to_string(),
+                            ActiveViewer::CommandOutput(cmd, _) => format!("Output: {}", cmd.chars().take(30).collect::<String>()),
+                            _ => s.preview_path.as_ref()
+                                .and_then(|p| p.file_name())
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "Preview".to_string()),
+                        };
+                        
+                        ui.label(egui::RichText::new(title).size(16.0).strong());
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("X").clicked() {
-                                s.close_preview();
+                            // Only show close button if not the welcome view
+                            if !matches!(s.active_viewer, ActiveViewer::Welcome) {
+                                if ui.small_button("X").clicked() {
+                                    // Go back to welcome instead of hiding
+                                    s.active_viewer = ActiveViewer::Welcome;
+                                    s.preview_path = None;
+                                }
                             }
                         });
                     });
                     
-                    // Action buttons
+                    // File action buttons (only for actual files)
                     if let Some(path) = s.preview_path.clone() {
                         ui.horizontal(|ui| {
                             if ui.small_button("Open in App").on_hover_text("Open with default application").clicked() {
@@ -1096,7 +1155,6 @@ impl eframe::App for LittleHelperApp {
                                     let _ = open::that(parent);
                                 }
                             }
-                            // Show full path on hover
                             ui.label(
                                 egui::RichText::new(path.to_string_lossy().to_string())
                                     .size(10.0)
@@ -1108,10 +1166,17 @@ impl eframe::App for LittleHelperApp {
 
                     // Render active viewer
                     match &mut s.active_viewer {
-                        ActiveViewer::None => {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("No file open");
-                            });
+                        ActiveViewer::Welcome => {
+                            render_welcome_panel(ui, dark, &s.current_mode);
+                        }
+                        ActiveViewer::Matrix => {
+                            render_matrix_rain(ui, ctx);
+                        }
+                        ActiveViewer::RickRoll => {
+                            render_rick_roll(ui, dark);
+                        }
+                        ActiveViewer::CommandOutput(cmd, output) => {
+                            render_command_output(ui, dark, cmd, output);
                         }
                         ActiveViewer::Text(viewer) => viewer.ui(ui),
                         ActiveViewer::Image(viewer) => viewer.ui(ui),
@@ -1250,8 +1315,7 @@ impl eframe::App for LittleHelperApp {
                 // Input area
                 ui.horizontal(|ui| {
                     let hint = match s.current_mode {
-                        ChatMode::Find => "What would you like me to find?",
-                        ChatMode::Fix => "What needs fixing?",
+                        ChatMode::Fix => "What's broken? Need to find a file?",
                         ChatMode::Research => "What should I research?",
                         ChatMode::Data => "What data would you like to work with?",
                         ChatMode::Content => "What content would you like to create?",
@@ -1447,6 +1511,271 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
     if ui.add_sized([80.0, 32.0], btn).clicked() {
         *current = mode;
     }
+}
+
+/// Render the welcome panel shown by default
+fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) {
+    let text_color = if dark {
+        egui::Color32::from_rgb(200, 200, 210)
+    } else {
+        egui::Color32::from_rgb(60, 60, 70)
+    };
+    
+    let accent_color = if dark {
+        egui::Color32::from_rgb(100, 160, 220)
+    } else {
+        egui::Color32::from_rgb(70, 130, 180)
+    };
+    
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(20.0);
+        
+        // Mode-specific tips
+        let (mode_name, tips) = match current_mode {
+            ChatMode::Fix => ("Fix Mode", vec![
+                "Tell me what's broken - I'll diagnose it",
+                "Need a file? I can find that too",
+                "Diagnostics and logs show up here",
+                "Try: \"my wifi keeps disconnecting\"",
+                "Try: \"find my tax documents\"",
+            ]),
+            ChatMode::Research => ("Research Mode", vec![
+                "Ask me to research any topic",
+                "I'll search multiple sources with citations",
+                "Results and sources shown here",
+                "Try: \"research the latest on Alberta politics\"",
+            ]),
+            ChatMode::Data => ("Data Mode", vec![
+                "Work with CSV, JSON, Excel files",
+                "Data tables render right here",
+                "I can analyze and transform data",
+                "Try: \"analyze this spreadsheet\" + drop a file",
+            ]),
+            ChatMode::Content => ("Content Mode", vec![
+                "Create content for any platform",
+                "I know your campaign personas",
+                "Drafts preview here before saving",
+                "Try: \"write a tweet about healthcare\"",
+            ]),
+        };
+        
+        ui.label(egui::RichText::new(format!("📋 {}", mode_name)).size(18.0).color(accent_color).strong());
+        ui.add_space(12.0);
+        
+        ui.label(egui::RichText::new("This panel shows live previews:").size(14.0).color(text_color));
+        ui.add_space(8.0);
+        
+        for tip in tips {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("•").color(accent_color));
+                ui.label(egui::RichText::new(tip).size(13.0).color(text_color));
+            });
+            ui.add_space(4.0);
+        }
+        
+        ui.add_space(20.0);
+        ui.separator();
+        ui.add_space(12.0);
+        
+        // Capabilities reminder
+        ui.label(egui::RichText::new("🛠 I can:").size(14.0).color(accent_color));
+        ui.add_space(8.0);
+        
+        let capabilities = [
+            ("⌨️", "Run terminal commands", "Safe commands execute automatically"),
+            ("🔍", "Search the web", "With sources and citations"),
+            ("📄", "Preview files", "Text, images, CSV, JSON, HTML, PDF"),
+            ("💬", "Send to Slack", "Share responses to your channels"),
+        ];
+        
+        for (icon, name, desc) in capabilities {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(icon).size(14.0));
+                ui.label(egui::RichText::new(name).size(13.0).strong().color(text_color));
+                ui.label(egui::RichText::new(format!("- {}", desc)).size(12.0).weak());
+            });
+            ui.add_space(2.0);
+        }
+    });
+}
+
+/// Render command output in the preview panel
+fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str) {
+    let bg_color = if dark {
+        egui::Color32::from_rgb(20, 20, 25)
+    } else {
+        egui::Color32::from_rgb(245, 245, 250)
+    };
+    
+    let text_color = if dark {
+        egui::Color32::from_rgb(200, 220, 200)
+    } else {
+        egui::Color32::from_rgb(40, 60, 40)
+    };
+    
+    ui.add_space(8.0);
+    
+    // Command that was run
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("$").size(14.0).color(egui::Color32::from_rgb(100, 200, 100)).strong());
+        ui.label(egui::RichText::new(cmd).size(13.0).color(text_color).monospace());
+    });
+    
+    ui.add_space(8.0);
+    
+    // Output in a scrollable code block
+    egui::Frame::none()
+        .fill(bg_color)
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::same(12.0))
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(ui.available_height() - 20.0)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(output)
+                            .size(12.0)
+                            .color(text_color)
+                            .monospace()
+                    );
+                });
+        });
+}
+
+/// Render Matrix-style rain animation while processing
+fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
+    let rect = ui.available_rect_before_wrap();
+    let time = ui.input(|i| i.time);
+    
+    // Matrix green
+    let matrix_green = egui::Color32::from_rgb(0, 255, 65);
+    
+    // Fill background black
+    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(0, 0, 0));
+    
+    // Matrix characters
+    let chars: Vec<char> = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789".chars().collect();
+    
+    let col_width = 14.0;
+    let row_height = 16.0;
+    let cols = (rect.width() / col_width) as i32;
+    let rows = (rect.height() / row_height) as i32;
+    
+    for col in 0..cols {
+        // Each column has its own speed and offset
+        let col_seed = (col as f64 * 7.3).sin() * 1000.0;
+        let speed = 2.0 + (col_seed.cos() * 1.5);
+        let offset = (col_seed * 3.7) % (rows as f64 * 2.0);
+        
+        for row in 0..rows {
+            let y_pos = ((time * speed + offset + row as f64) % (rows as f64 * 1.5)) - rows as f64 * 0.25;
+            
+            if y_pos >= 0.0 && y_pos < rows as f64 {
+                let char_idx = ((time * 10.0 + col as f64 * 3.0 + row as f64) as usize) % chars.len();
+                let ch = chars[char_idx];
+                
+                // Fade based on position in trail
+                let fade = (1.0 - (y_pos / rows as f64)).max(0.0).min(1.0);
+                let alpha = (fade * 255.0) as u8;
+                
+                let color = if row as f64 == y_pos.floor() {
+                    egui::Color32::from_rgba_unmultiplied(200, 255, 200, alpha) // Bright head
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(0, 255, 65, alpha / 2)
+                };
+                
+                let pos = egui::pos2(
+                    rect.left() + col as f32 * col_width,
+                    rect.top() + y_pos as f32 * row_height,
+                );
+                
+                ui.painter().text(
+                    pos,
+                    egui::Align2::LEFT_TOP,
+                    ch.to_string(),
+                    egui::FontId::monospace(14.0),
+                    color,
+                );
+            }
+        }
+    }
+    
+    // "PROCESSING..." text in center
+    let center = rect.center();
+    ui.painter().text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        "PROCESSING...",
+        egui::FontId::monospace(24.0),
+        matrix_green,
+    );
+    
+    // Request repaint for animation
+    ctx.request_repaint();
+}
+
+/// Render Rick Roll easter egg
+fn render_rick_roll(ui: &mut egui::Ui, _dark: bool) {
+    let rect = ui.available_rect_before_wrap();
+    
+    // Fun gradient background
+    ui.painter().rect_filled(
+        rect,
+        12.0,
+        egui::Color32::from_rgb(30, 30, 50),
+    );
+    
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(40.0);
+        
+        ui.vertical_centered(|ui| {
+            // Big emoji
+            ui.label(egui::RichText::new("🕺💃🎵").size(60.0));
+            
+            ui.add_space(20.0);
+            
+            // The reveal
+            ui.label(
+                egui::RichText::new("Never Gonna Give You Up!")
+                    .size(28.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(255, 100, 100))
+            );
+            
+            ui.add_space(10.0);
+            
+            ui.label(
+                egui::RichText::new("Never Gonna Let You Down!")
+                    .size(22.0)
+                    .color(egui::Color32::from_rgb(255, 150, 100))
+            );
+            
+            ui.add_space(30.0);
+            
+            // The message
+            ui.label(
+                egui::RichText::new("You just got Rick Rolled! 🎤")
+                    .size(18.0)
+                    .italics()
+                    .color(egui::Color32::from_rgb(200, 200, 255))
+            );
+            
+            ui.add_space(20.0);
+            
+            ui.label(
+                egui::RichText::new("(Nice try searching for Ben West though)")
+                    .size(14.0)
+                    .weak()
+            );
+            
+            ui.add_space(40.0);
+            
+            // Link to the real thing
+            if ui.link("🔗 Watch the classic").clicked() {
+                let _ = open::that("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+            }
+        });
+    });
 }
 
 /// Result from rendering a message
