@@ -19,8 +19,7 @@ pub mod fix;
 pub mod research;
 pub mod data;
 pub mod content;
-// Build mode skills will be added in future
-// pub mod build;
+pub mod build;
 
 /// Registry managing all available skills
 pub struct SkillRegistry {
@@ -242,8 +241,8 @@ pub fn init_registry(file_index: Arc<FileIndexService>) -> SkillRegistry {
     // Register Content mode skills
     content::register_skills(&mut registry);
 
-    // Build mode skills will be registered when implemented
-    // build::register_skills(&mut registry);
+    // Register Build mode skills (spec-kit integration)
+    build::register_build_skills(&mut registry);
 
     registry
 }
