@@ -161,6 +161,37 @@ fn format_examples(items: &[&str]) -> String {
     items.iter().map(|s| format!("  - \"{}\"", s)).collect::<Vec<_>>().join("\n")
 }
 
+/// Get introduction text for displaying in the preview panel when switching modes
+pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
+    let prompt = get_mode_prompt(mode);
+    ModeIntroduction {
+        agent_name: prompt.name,
+        mode_name: prompt.mode,
+        greeting: match mode.to_lowercase().as_str() {
+            "find" => "Ready to track down anything!",
+            "fix" => "Let's figure this out together.",
+            "research" => "Curious minds unite!",
+            "data" => "Let's uncover the story in your data.",
+            "content" => "Ready to bring your ideas to life!",
+            _ => "How can I help?",
+        },
+        description: prompt.personality,
+        capabilities: prompt.expertise,
+        example_prompts: prompt.example_questions,
+    }
+}
+
+/// Mode introduction content for the preview panel
+#[derive(Clone, Debug)]
+pub struct ModeIntroduction {
+    pub agent_name: &'static str,
+    pub mode_name: &'static str,
+    pub greeting: &'static str,
+    pub description: &'static str,
+    pub capabilities: &'static [&'static str],
+    pub example_prompts: &'static [&'static str],
+}
+
 // ============================================================================
 // Mode Prompt Definitions
 // ============================================================================

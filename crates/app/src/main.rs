@@ -52,6 +52,18 @@ enum ChatMode {
     Content,  // Content creation with personas
 }
 
+impl ChatMode {
+    /// Get the mode name as a string for the agent system
+    fn as_str(&self) -> &'static str {
+        match self {
+            ChatMode::Fix => "fix",
+            ChatMode::Research => "research",
+            ChatMode::Data => "data",
+            ChatMode::Content => "content",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ChatMessage {
     role: String, // "user" or "assistant"
@@ -78,6 +90,7 @@ struct AppState {
     settings: AppSettings,
     current_screen: AppScreen,
     current_mode: ChatMode,
+    previous_mode: Option<ChatMode>,  // For detecting mode changes
     input_text: String,
     chat_history: Vec<ChatMessage>,
     is_thinking: bool,
@@ -85,7 +98,10 @@ struct AppState {
     #[allow(dead_code)] // Available for future agentic features
     agent_host: AgentHost,
 
-    // Preview panel
+    // Preview panel (new interactive preview companion)
+    preview_panel: preview_panel::PreviewPanel,
+
+    // Legacy preview panel (for file viewers)
     show_preview: bool,
     preview_path: Option<PathBuf>,
     active_viewer: ActiveViewer,
@@ -138,6 +154,10 @@ impl Default for AppState {
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
 
+        // Initialize preview panel with mode intro
+        let mut preview_panel = preview_panel::PreviewPanel::new();
+        preview_panel.show_mode_intro("fix");
+
         Self {
             settings: settings.clone(),
             current_screen: if needs_onboarding {
@@ -146,11 +166,13 @@ impl Default for AppState {
                 AppScreen::Chat
             },
             current_mode: ChatMode::Fix,
+            previous_mode: None,
             input_text: String::new(),
             chat_history: vec![welcome_msg],
             is_thinking: false,
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
+            preview_panel,
             show_preview: true,  // Preview visible by default
             preview_path: None,
             active_viewer: ActiveViewer::Welcome,  // Start with welcome view
@@ -979,13 +1001,21 @@ struct LittleHelperApp {
 impl eframe::App for LittleHelperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
-        
+
         // Poll for AI response (non-blocking)
         s.poll_ai_response();
-        
+
         // Request repaint if we're waiting for AI (to keep polling)
         if s.is_thinking {
             ctx.request_repaint();
+        }
+
+        // Detect mode change and show mode introduction
+        let mode_changed = s.previous_mode.map_or(true, |prev| prev != s.current_mode);
+        if mode_changed {
+            let mode_str = s.current_mode.as_str();
+            s.preview_panel.show_mode_intro(mode_str);
+            s.previous_mode = Some(s.current_mode);
         }
 
         // Set up theme (dark or light mode)
@@ -1172,7 +1202,8 @@ impl eframe::App for LittleHelperApp {
                     // Render active viewer
                     match &mut s.active_viewer {
                         ActiveViewer::Welcome => {
-                            render_welcome_panel(ui, dark, &s.current_mode);
+                            // Use new interactive preview panel for mode introductions
+                            s.preview_panel.ui(ui);
                         }
                         ActiveViewer::Matrix => {
                             render_matrix_rain(ui, ctx);
