@@ -286,6 +286,136 @@ impl SessionManager {
             recent.join("\n")
         )
     }
+
+    /// Get recent messages for AI context window (T111)
+    /// Returns the most recent messages from the current session, limited to max_messages
+    pub fn get_context_messages(&self, mode: ChatMode, session_id: &str, max_messages: usize) -> Vec<ChatMessage> {
+        if let Some(session) = self.get(mode, session_id) {
+            let msg_count = session.messages.len();
+            let start = msg_count.saturating_sub(max_messages);
+            session.messages[start..].to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get or load a session by ID, loading from disk if not in memory (T112)
+    pub fn get_or_load(&mut self, mode: ChatMode, id: &str) -> Option<&ChatSession> {
+        // First check if already in memory
+        if self.get(mode, id).is_some() {
+            return self.get(mode, id);
+        }
+
+        // Try to load from disk
+        let path = self.mode_dir(mode).join(format!("{}.json", id));
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(session) = serde_json::from_str::<ChatSession>(&content) {
+                self.sessions.entry(mode).or_default().push(session);
+                // Re-sort by updated_at
+                if let Some(sessions) = self.sessions.get_mut(&mode) {
+                    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                }
+                return self.get(mode, id);
+            }
+        }
+
+        None
+    }
+
+    /// Force reload sessions for a mode from disk (T113)
+    pub fn reload(&mut self, mode: ChatMode) {
+        let mut sessions = Vec::new();
+        let dir = self.mode_dir(mode);
+
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    if let Ok(session) = serde_json::from_str::<ChatSession>(&content) {
+                        sessions.push(session);
+                    }
+                }
+            }
+        }
+
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        self.sessions.insert(mode, sessions);
+    }
+
+    /// Get messages for lazy loading scrollback (T114)
+    /// Returns a slice of messages starting from offset with limit count
+    pub fn get_messages_paginated(
+        &self,
+        mode: ChatMode,
+        session_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Vec<ChatMessage> {
+        if let Some(session) = self.get(mode, session_id) {
+            let end = offset.min(session.messages.len());
+            let start = end.saturating_sub(limit);
+            session.messages[start..end].to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Clear all sessions for a mode (T118)
+    pub fn clear_mode(&mut self, mode: ChatMode) {
+        let dir = self.mode_dir(mode);
+
+        // Delete all files in the mode directory
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+
+        // Clear from memory
+        self.sessions.insert(mode, Vec::new());
+    }
+
+    /// Get the current active session ID for a mode, creating one if none exists
+    pub fn ensure_current(&mut self, mode: ChatMode, user_name: &str) -> String {
+        if let Some(session) = self.current(mode) {
+            session.id.clone()
+        } else {
+            self.create(mode, user_name)
+        }
+    }
+
+    /// Get brief context from current session for system prompt
+    /// Includes last topic discussed and any pending tasks mentioned
+    pub fn get_brief_context(&self, mode: ChatMode, session_id: &str) -> String {
+        if let Some(session) = self.get(mode, session_id) {
+            if session.messages.len() <= 1 {
+                return String::new();
+            }
+
+            // Get last few exchanges
+            let recent: Vec<_> = session.messages.iter().rev().take(4).collect();
+
+            let mut context_parts = Vec::new();
+
+            // Extract last user message topic
+            if let Some(last_user) = recent.iter().find(|m| m.role == "user") {
+                let topic: String = last_user.content.chars().take(100).collect();
+                context_parts.push(format!("Last topic: {}", topic.trim()));
+            }
+
+            // Check if session title gives context
+            if session.title != "New conversation" {
+                context_parts.push(format!("Session topic: {}", session.title));
+            }
+
+            if context_parts.is_empty() {
+                String::new()
+            } else {
+                context_parts.join("\n")
+            }
+        } else {
+            String::new()
+        }
+    }
 }
 
 impl Default for SessionManager {
