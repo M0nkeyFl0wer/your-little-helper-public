@@ -20,7 +20,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup secrets stub for CI
-        run: cp crates/app/src/secrets.rs.example crates/app/src/secrets.rs
+        run: |
+          cp crates/app/src/secrets.rs.example crates/app/src/secrets.rs
+          cp crates/app/src/support_info.rs.example crates/app/src/support_info.rs
 
       - name: Build app
         run: cargo build --release -p app
@@ -106,7 +108,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup secrets stub for CI
-        run: Copy-Item crates/app/src/secrets.rs.example crates/app/src/secrets.rs
+        run: |
+          Copy-Item crates/app/src/secrets.rs.example crates/app/src/secrets.rs
+          Copy-Item crates/app/src/support_info.rs.example crates/app/src/support_info.rs
 
       - name: Build app
         run: cargo build --release -p app
