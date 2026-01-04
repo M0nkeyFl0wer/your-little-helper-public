@@ -3,7 +3,10 @@
 //! This module provides the PreviewPanel struct which manages the display of
 //! contextual preview content including files, web pages, images, and ASCII art.
 
+use agent_host::get_mode_introduction;
 use shared::preview_types::{AsciiState, PreviewContent};
+
+use crate::ascii_art::{get_ascii_art, get_mode_art};
 
 /// Actions that can be performed on preview content
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -321,19 +324,89 @@ impl PreviewPanel {
 
     /// Render the actual content based on type
     fn render_content(&mut self, ui: &mut egui::Ui) {
+        let is_dark_mode = ui.visuals().dark_mode;
+        let text_color = if is_dark_mode {
+            egui::Color32::from_rgb(200, 200, 200)
+        } else {
+            egui::Color32::from_rgb(60, 60, 60)
+        };
+        let accent_color = if is_dark_mode {
+            egui::Color32::from_rgb(100, 180, 255)
+        } else {
+            egui::Color32::from_rgb(50, 100, 200)
+        };
+
         match &self.state.content {
             Some(PreviewContent::ModeIntro { mode }) => {
+                let intro = get_mode_introduction(mode);
+                let ascii_art = get_mode_art(mode);
+
                 ui.vertical_centered(|ui| {
-                    ui.heading(format!("Welcome to {} Mode", mode));
+                    // ASCII art mascot
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(ascii_art)
+                            .monospace()
+                            .color(text_color)
+                    ));
+
+                    ui.add_space(10.0);
+
+                    // Agent greeting
+                    ui.heading(
+                        egui::RichText::new(format!("Hi, I'm {}!", intro.agent_name))
+                            .color(accent_color)
+                    );
+
+                    ui.add_space(5.0);
+                    ui.label(
+                        egui::RichText::new(intro.greeting)
+                            .italics()
+                            .size(16.0)
+                    );
+
+                    ui.add_space(15.0);
+
+                    // Description
+                    ui.label(intro.description);
+
                     ui.add_space(20.0);
-                    // TODO: Add mode-specific intro content
-                    ui.label("Mode introduction will be displayed here.");
+
+                    // Capabilities section
+                    ui.heading(egui::RichText::new("What I can help with:").size(14.0));
+                    ui.add_space(5.0);
+
+                    for capability in intro.capabilities.iter().take(4) {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(accent_color, "•");
+                            ui.label(*capability);
+                        });
+                    }
+
+                    ui.add_space(20.0);
+
+                    // Example prompts section
+                    ui.heading(egui::RichText::new("Try asking me:").size(14.0));
+                    ui.add_space(5.0);
+
+                    for example in intro.example_prompts.iter().take(3) {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(egui::Color32::GRAY, "→");
+                            ui.label(
+                                egui::RichText::new(format!("\"{}\"", example))
+                                    .italics()
+                            );
+                        });
+                    }
                 });
             }
             Some(PreviewContent::Ascii { state }) => {
+                let ascii_art = get_ascii_art(*state);
                 ui.vertical_centered(|ui| {
-                    // TODO: Render actual ASCII art
-                    ui.monospace(format!("[{} ASCII Art]", state));
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(ascii_art)
+                            .monospace()
+                            .color(text_color)
+                    ));
                 });
             }
             Some(PreviewContent::File { path, file_type }) => {
@@ -366,9 +439,16 @@ impl PreviewPanel {
                 });
             }
             None => {
+                // Show welcome ASCII art when no content
+                let welcome_art = get_ascii_art(AsciiState::Welcome);
                 ui.vertical_centered(|ui| {
-                    ui.label("No content to display");
-                    // TODO: Show welcome ASCII art
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(welcome_art)
+                            .monospace()
+                            .color(text_color)
+                    ));
+                    ui.add_space(10.0);
+                    ui.label("Select a mode to get started!");
                 });
             }
         }

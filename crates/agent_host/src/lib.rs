@@ -9,6 +9,8 @@
 pub mod executor;
 pub mod prompts;
 
+pub use prompts::{ModePrompt, ModeIntroduction, Permissions, get_mode_prompt, get_mode_introduction, get_system_prompt};
+
 use anyhow::Result;
 use regex::Regex;
 use shared::agent_api::ChatMessage;

@@ -61,16 +61,16 @@
 
 > When user switches mode tabs, show mode introduction in preview and load specialized agent.
 
-- [ ] [T100] [P1] [S1] Create mode prompt text files: `crates/agent_host/src/prompts/find.txt`, `fix.txt`, `research.txt`, `data.txt`, `content.txt`
-- [ ] [T101] [P1] [S1] Implement `get_mode_prompt(mode: ChatMode) -> ModePrompt` in `crates/agent_host/src/prompts.rs`
-- [ ] [T102] [P1] [S1] Implement `get_system_prompt(mode, user_name, memory_summary, permissions) -> String` in `crates/agent_host/src/prompts.rs`
-- [ ] [T103] [P1] [S1] Define ModePrompt struct with mode, name, personality, expertise, example_questions, tools_description, tone
-- [ ] [T104] [P1] [S1] Create mode introduction content for PreviewContent::ModeIntro variant
-- [ ] [T105] [P1] [S1] Implement `PreviewPanel::show_mode_intro(mode: ChatMode)` method
-- [ ] [T106] [P1] [S1] Hook mode tab click to call show_mode_intro() in `crates/app/src/main.rs`
-- [ ] [T107] [P1] [S1] Hook mode tab click to update agent system prompt via agent_host
-- [ ] [T108] [P1] [S1] Verify each mode shows distinct introduction within 500ms (SC-001)
-- [ ] [T109] [P1] [S1] Verify agents respond with mode-appropriate personality (SC-002)
+- [x] [T100] [P1] [S1] Create mode prompt text files: `crates/agent_host/src/prompts/find.txt`, `fix.txt`, `research.txt`, `data.txt`, `content.txt`
+- [x] [T101] [P1] [S1] Implement `get_mode_prompt(mode: ChatMode) -> ModePrompt` in `crates/agent_host/src/prompts.rs`
+- [x] [T102] [P1] [S1] Implement `get_system_prompt(mode, user_name, memory_summary, permissions) -> String` in `crates/agent_host/src/prompts.rs`
+- [x] [T103] [P1] [S1] Define ModePrompt struct with mode, name, personality, expertise, example_questions, tools_description, tone
+- [x] [T104] [P1] [S1] Create mode introduction content for PreviewContent::ModeIntro variant
+- [x] [T105] [P1] [S1] Implement `PreviewPanel::show_mode_intro(mode: ChatMode)` method
+- [x] [T106] [P1] [S1] Hook mode tab click to call show_mode_intro() in `crates/app/src/main.rs`
+- [x] [T107] [P1] [S1] Hook mode tab click to update agent system prompt via agent_host
+- [x] [T108] [P1] [S1] Verify each mode shows distinct introduction within 500ms (SC-001)
+- [x] [T109] [P1] [S1] Verify agents respond with mode-appropriate personality (SC-002)
 
 ### Story 2: Persistent Conversation Memory
 
@@ -222,9 +222,9 @@
 
 ### Git Workflow (Commit Checkpoints)
 
-- [ ] [T700] [P1] [Git] Commit after Setup phase: `feat(preview): scaffold preview panel and type structures`
-- [ ] [T701] [P1] [Git] Commit after Foundation phase: `feat(preview): implement core preview panel with zoom/scroll`
-- [ ] [T702] [P1] [Git] Commit after Story 1: `feat(agents): add mode-specific prompts and introductions`
+- [x] [T700] [P1] [Git] Commit after Setup phase: `feat(preview): scaffold preview panel and type structures`
+- [x] [T701] [P1] [Git] Commit after Foundation phase: `feat(preview): implement core preview panel with zoom/scroll`
+- [x] [T702] [P1] [Git] Commit after Story 1: `feat(agents): add mode-specific prompts and introductions`
 - [ ] [T703] [P1] [Git] Commit after Story 2: `feat(memory): implement persistent conversation history`
 - [ ] [T704] [P1] [Git] Commit after Story 3: `feat(preview): add web search preview with screenshots`
 - [ ] [T705] [P1] [Git] Commit after Story 4: `feat(preview): add file actions and fullscreen mode`
