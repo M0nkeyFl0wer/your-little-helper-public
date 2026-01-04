@@ -1,3 +1,5 @@
+pub mod preview_types;
+
 pub mod settings {
     use serde::{Deserialize, Serialize};
 

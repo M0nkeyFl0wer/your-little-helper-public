@@ -7,6 +7,7 @@
 //! - Provide user-friendly summaries of command output
 
 pub mod executor;
+pub mod prompts;
 
 use anyhow::Result;
 use regex::Regex;
