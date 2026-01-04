@@ -1,0 +1,136 @@
+name: Build Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build Release
+        run: cargo build --release
+
+      - name: Download Inno Setup
+        run: choco install innosetup -y
+
+      - name: Create Installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows-setup.iss
+
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Windows
+          path: Output/LittleHelper-Setup.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build Release
+        run: cargo build --release
+
+      - name: Create App Bundle
+        run: |
+          mkdir -p "Little Helper.app/Contents/MacOS"
+          mkdir -p "Little Helper.app/Contents/Resources"
+          cp target/release/app "Little Helper.app/Contents/MacOS/Little Helper"
+
+          # Create Info.plist
+          cat > "Little Helper.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Little Helper</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.ben.littlehelper</string>
+              <key>CFBundleName</key>
+              <string>Little Helper</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create DMG
+        run: |
+          # Create a folder for DMG contents
+          mkdir dmg-contents
+          cp -r "Little Helper.app" dmg-contents/
+          cp "installer/READ ME FIRST (Mac).txt" dmg-contents/
+          ln -s /Applications dmg-contents/Applications
+
+          # Create DMG
+          hdiutil create -volname "Little Helper" \
+            -srcfolder dmg-contents \
+            -ov -format UDZO \
+            "LittleHelper.dmg"
+
+      - name: Upload Mac DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Mac
+          path: LittleHelper.dmg
+
+  create-release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LittleHelper-Windows
+
+      - name: Download Mac Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LittleHelper-Mac
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Little Helper ${{ github.ref_name }}
+          body: |
+            ## Little Helper ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows**: `LittleHelper-Setup.exe` - Double-click to install
+            - **Mac**: `LittleHelper.dmg` - Open and drag to Applications
+
+            ### First Time Opening
+            Since this is a beta, you might see a security warning. This is normal!
+
+            **Windows**: Click "More info" → "Run anyway"
+            **Mac**: Right-click the app → "Open" → "Open"
+
+            Have fun, and let Ben know what you think!
+          files: |
+            LittleHelper-Setup.exe
+            LittleHelper.dmg

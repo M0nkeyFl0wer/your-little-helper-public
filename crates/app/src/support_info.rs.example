@@ -1,0 +1,13 @@
+// Support contact information
+// Copy this to support_info.rs and fill in your details
+// support_info.rs is gitignored - your contact info stays private
+
+/// Your name (shown in support button)
+pub const CREATOR_NAME: &str = "Ben";
+
+/// Signal contact link (or other messaging app)
+/// Get your Signal link: Open Signal > Settings > Share Username
+pub const SUPPORT_LINK: &str = "https://signal.me/#p/+1XXXXXXXXXX";
+
+/// Support button text
+pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";

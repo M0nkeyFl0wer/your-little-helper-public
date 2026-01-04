@@ -33,6 +33,7 @@ pub fn get_mode_prompt(mode: &str) -> &'static ModePrompt {
         "research" => &RESEARCH_PROMPT,
         "data" => &DATA_PROMPT,
         "content" => &CONTENT_PROMPT,
+        "build" => &BUILD_PROMPT,
         _ => &FIND_PROMPT, // Default to Find
     }
 }
@@ -173,6 +174,7 @@ pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
             "research" => "Curious minds unite!",
             "data" => "Let's uncover the story in your data.",
             "content" => "Ready to bring your ideas to life!",
+            "build" => "Let's make something awesome!",
             _ => "How can I help?",
         },
         description: prompt.personality,
@@ -310,6 +312,29 @@ static CONTENT_PROMPT: ModePrompt = ModePrompt {
     tone: "Encouraging and creative. You celebrate good ideas and gently suggest improvements. You help people find their voice rather than imposing your own.",
 };
 
+static BUILD_PROMPT: ModePrompt = ModePrompt {
+    mode: "Build",
+    name: "Maker",
+    personality: "You're hands-on, practical, and love turning ideas into reality. Like a friendly workshop instructor, you guide people through building things step by step.",
+    expertise: &[
+        "Project scaffolding and setup",
+        "Code generation and templates",
+        "Automation scripts",
+        "Configuration and environment setup",
+        "Build systems and tooling",
+        "Simple app creation",
+    ],
+    example_questions: &[
+        "Create a new Python project with virtual environment",
+        "Set up a simple web server",
+        "Generate a config file for...",
+        "Write a script to automate...",
+        "Help me build a todo list app",
+    ],
+    tools_description: "project templates, code generation, script creation, environment setup",
+    tone: "Practical and encouraging. You break down building into manageable steps. You celebrate progress and help troubleshoot when things don't work.",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +346,7 @@ mod tests {
         assert_eq!(get_mode_prompt("research").name, "Scholar");
         assert_eq!(get_mode_prompt("data").name, "Analyst");
         assert_eq!(get_mode_prompt("content").name, "Muse");
+        assert_eq!(get_mode_prompt("build").name, "Maker");
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! contextual preview content including files, web pages, images, and ASCII art.
 
 use agent_host::get_mode_introduction;
-use shared::preview_types::{AsciiState, PreviewContent};
+use shared::preview_types::{AsciiState, PreviewContent, SearchResultItem};
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
 
@@ -36,6 +36,8 @@ pub struct PreviewState {
     pub scroll_offset: egui::Vec2,
     /// Whether in fullscreen mode
     pub fullscreen: bool,
+    /// Example prompt that was clicked (to populate chat input)
+    pub clicked_prompt: Option<String>,
 }
 
 impl Default for PreviewState {
@@ -46,6 +48,7 @@ impl Default for PreviewState {
             zoom: 1.0,
             scroll_offset: egui::Vec2::ZERO,
             fullscreen: false,
+            clicked_prompt: None,
         }
     }
 }
@@ -104,6 +107,22 @@ impl PreviewPanel {
         });
     }
 
+    /// Show search results from fuzzy file finder
+    pub fn show_search_results(
+        &mut self,
+        query: &str,
+        results: Vec<SearchResultItem>,
+        total_count: usize,
+        search_time_ms: u64,
+    ) {
+        self.show_content(PreviewContent::SearchResults {
+            query: query.to_string(),
+            results,
+            total_count,
+            search_time_ms,
+        });
+    }
+
     /// Hide the preview panel
     pub fn hide(&mut self) {
         self.state.visible = false;
@@ -154,6 +173,12 @@ impl PreviewPanel {
         self.state.fullscreen
     }
 
+    /// Take the clicked prompt (if any) and clear it
+    /// Call this after ui() to check if user clicked an example prompt
+    pub fn take_clicked_prompt(&mut self) -> Option<String> {
+        self.state.clicked_prompt.take()
+    }
+
     /// Get current content
     pub fn content(&self) -> Option<&PreviewContent> {
         self.state.content.as_ref()
@@ -182,6 +207,9 @@ impl PreviewPanel {
                 }
                 PreviewContent::Image { .. } => {
                     actions.insert(0, PreviewAction::OpenInApp);
+                }
+                PreviewContent::SearchResults { .. } => {
+                    // Search results have their own inline actions per item
                 }
                 _ => {}
             }
@@ -268,6 +296,12 @@ impl PreviewPanel {
                     PreviewContent::ModeIntro { mode } => format!("{} Mode", mode),
                     PreviewContent::Ascii { state } => format!("{}", state),
                     PreviewContent::Image { .. } => "Image".to_string(),
+                    PreviewContent::SearchResults { query, total_count, .. } => {
+                        format!("Search: \"{}\" ({} results)", query, total_count)
+                    }
+                    PreviewContent::VersionHistory { file_name, versions, .. } => {
+                        format!("Versions: {} ({} versions)", file_name, versions.len())
+                    }
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
                 };
                 ui.label(label);
@@ -403,18 +437,30 @@ impl PreviewPanel {
 
                     ui.add_space(20.0);
 
-                    // Example prompts section
+                    // Example prompts section - clickable to populate chat input
                     ui.heading(egui::RichText::new("Try asking me:").size(14.0));
                     ui.add_space(5.0);
 
                     for example in intro.example_prompts.iter().take(3) {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(egui::Color32::GRAY, "→");
-                            ui.label(
-                                egui::RichText::new(format!("\"{}\"", example))
-                                    .italics()
+                        let example_text = example.to_string();
+                        let response = ui.horizontal(|ui| {
+                            ui.colored_label(accent_color, "→");
+                            let btn = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(format!("\"{}\"", example))
+                                        .italics()
+                                )
+                                .frame(false)
                             );
-                        });
+                            btn
+                        }).inner;
+
+                        if response.clicked() {
+                            self.state.clicked_prompt = Some(example_text);
+                        }
+                        if response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
                     }
                 });
             }
@@ -504,6 +550,248 @@ impl PreviewPanel {
                 ui.label(format!("Image: {:?}", source));
                 // TODO: Load and render image
             }
+            Some(PreviewContent::VersionHistory { file_path, file_name, versions }) => {
+                ui.vertical(|ui| {
+                    // Header
+                    ui.horizontal(|ui| {
+                        ui.colored_label(accent_color, "");
+                        ui.label(
+                            egui::RichText::new(format!("Version History: {}", file_name))
+                                .strong()
+                                .size(14.0)
+                        );
+                    });
+
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} saved version{}",
+                            versions.len(),
+                            if versions.len() == 1 { "" } else { "s" }
+                        ))
+                        .small()
+                        .weak()
+                    );
+
+                    ui.add_space(12.0);
+
+                    if versions.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(
+                                egui::RichText::new("No saved versions")
+                                    .color(text_color)
+                                    .size(16.0)
+                            );
+                            ui.add_space(8.0);
+                            ui.label("Versions are automatically saved when files are modified through Little Helper.");
+                        });
+                    } else {
+                        // Display versions in reverse order (newest first)
+                        for version in versions.iter().rev() {
+                            let is_current = version.is_current;
+
+                            let bg_color = if is_dark_mode {
+                                egui::Color32::from_rgb(35, 35, 42)
+                            } else {
+                                egui::Color32::from_rgb(250, 250, 252)
+                            };
+
+                            egui::Frame::none()
+                                .fill(bg_color)
+                                .rounding(egui::Rounding::same(4.0))
+                                .inner_margin(egui::Margin::same(10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // Version badge
+                                        let badge_color = if is_current {
+                                            egui::Color32::from_rgb(100, 180, 100)
+                                        } else {
+                                            egui::Color32::from_rgb(120, 120, 140)
+                                        };
+
+                                        egui::Frame::none()
+                                            .fill(badge_color)
+                                            .rounding(egui::Rounding::same(3.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!("v{}", version.version_number))
+                                                        .small()
+                                                        .color(egui::Color32::WHITE)
+                                                );
+                                            });
+
+                                        if is_current {
+                                            ui.label(
+                                                egui::RichText::new("current")
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 180, 100))
+                                            );
+                                        }
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(
+                                                egui::RichText::new(version.formatted_size())
+                                                    .small()
+                                                    .weak()
+                                            );
+                                        });
+                                    });
+
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new(&version.description).color(text_color));
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(version.relative_time()).small().weak());
+                                    });
+                                });
+
+                            ui.add_space(6.0);
+                        }
+                    }
+
+                    ui.add_space(16.0);
+
+                    // Action buttons
+                    ui.horizontal(|ui| {
+                        if ui.button("Open File").clicked() {
+                            let _ = open::that(file_path);
+                        }
+                        if ui.button("Show in Folder").clicked() {
+                            if let Some(parent) = file_path.parent() {
+                                let _ = open::that(parent);
+                            }
+                        }
+                    });
+                });
+            }
+            Some(PreviewContent::SearchResults { query, results, total_count, search_time_ms }) => {
+                ui.vertical(|ui| {
+                    // Search header
+                    ui.horizontal(|ui| {
+                        ui.colored_label(accent_color, "🔍");
+                        ui.label(
+                            egui::RichText::new(format!("Search Results for \"{}\"", query))
+                                .strong()
+                                .size(14.0)
+                        );
+                    });
+
+                    ui.add_space(4.0);
+
+                    // Stats line
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} files found in {}ms",
+                                total_count, search_time_ms
+                            ))
+                            .small()
+                            .weak()
+                        );
+                    });
+
+                    ui.add_space(12.0);
+
+                    if results.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label(
+                                egui::RichText::new("No files found")
+                                    .weak()
+                                    .size(16.0)
+                            );
+                            ui.add_space(8.0);
+                            ui.label("Try a different search term or index more directories.");
+                        });
+                    } else {
+                        // Results list
+                        for result in results.iter() {
+                            let bg_color = if is_dark_mode {
+                                egui::Color32::from_rgb(35, 35, 42)
+                            } else {
+                                egui::Color32::from_rgb(250, 250, 252)
+                            };
+
+                            egui::Frame::none()
+                                .fill(bg_color)
+                                .rounding(egui::Rounding::same(4.0))
+                                .inner_margin(egui::Margin::same(8.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // File icon based on extension
+                                        let icon = get_file_icon(&result.path);
+                                        ui.label(egui::RichText::new(icon).size(18.0));
+
+                                        ui.vertical(|ui| {
+                                            // File name with score indicator
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(&result.name)
+                                                        .strong()
+                                                        .color(accent_color)
+                                                );
+
+                                                // Score bar
+                                                let score_color = score_to_color(result.score);
+                                                ui.add_space(8.0);
+                                                ui.label(
+                                                    egui::RichText::new(format!("{:.0}%", result.score * 100.0))
+                                                        .small()
+                                                        .color(score_color)
+                                                );
+                                            });
+
+                                            // Parent directory
+                                            ui.label(
+                                                egui::RichText::new(&result.parent)
+                                                    .small()
+                                                    .weak()
+                                            );
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            // File size
+                                            ui.label(
+                                                egui::RichText::new(format_file_size(result.size))
+                                                    .small()
+                                                    .weak()
+                                            );
+
+                                            // Action buttons
+                                            let path_clone = result.path.clone();
+                                            if ui.small_button("📂").on_hover_text("Reveal in folder").clicked() {
+                                                if let Some(parent) = path_clone.parent() {
+                                                    let _ = open::that(parent);
+                                                }
+                                            }
+
+                                            let path_clone = result.path.clone();
+                                            if ui.small_button("📄").on_hover_text("Open file").clicked() {
+                                                let _ = open::that(&path_clone);
+                                            }
+                                        });
+                                    });
+                                });
+
+                            ui.add_space(4.0);
+                        }
+
+                        // Show count if more results exist
+                        if *total_count > results.len() {
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Showing {} of {} results",
+                                    results.len(), total_count
+                                ))
+                                .small()
+                                .weak()
+                            );
+                        }
+                    }
+                });
+            }
             Some(PreviewContent::Error { message, source }) => {
                 ui.vertical_centered(|ui| {
                     ui.colored_label(egui::Color32::RED, "Error");
@@ -531,5 +819,63 @@ impl PreviewPanel {
 impl Default for PreviewPanel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Get a file icon emoji based on extension
+fn get_file_icon(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()).as_deref() {
+        // Documents
+        Some("pdf") => "📕",
+        Some("doc" | "docx") => "📘",
+        Some("xls" | "xlsx" | "csv") => "📊",
+        Some("ppt" | "pptx") => "📙",
+        Some("txt" | "md" | "markdown") => "📄",
+        // Code
+        Some("rs" | "py" | "js" | "ts" | "go" | "c" | "cpp" | "h" | "java") => "💻",
+        Some("html" | "css" | "scss" | "sass") => "🌐",
+        Some("json" | "yaml" | "yml" | "toml" | "xml") => "⚙️",
+        Some("sh" | "bash" | "zsh" | "fish") => "🐚",
+        // Images
+        Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg") => "🖼️",
+        // Audio/Video
+        Some("mp3" | "wav" | "ogg" | "flac" | "m4a") => "🎵",
+        Some("mp4" | "avi" | "mkv" | "mov" | "webm") => "🎬",
+        // Archives
+        Some("zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar") => "📦",
+        // Executables
+        Some("exe" | "msi" | "dmg" | "app") => "⚡",
+        // Directories handled elsewhere
+        _ => "📄",
+    }
+}
+
+/// Convert a score (0.0-1.0) to a color
+fn score_to_color(score: f32) -> egui::Color32 {
+    if score >= 0.8 {
+        egui::Color32::from_rgb(100, 200, 100) // Green - excellent match
+    } else if score >= 0.6 {
+        egui::Color32::from_rgb(180, 200, 100) // Yellow-green - good match
+    } else if score >= 0.4 {
+        egui::Color32::from_rgb(200, 180, 100) // Yellow - fair match
+    } else {
+        egui::Color32::from_rgb(180, 140, 100) // Orange - weak match
+    }
+}
+
+/// Format file size in human-readable form
+fn format_file_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
     }
 }
