@@ -28,30 +28,30 @@
 
 ### Preview Types & State (Shared Crate)
 
-- [ ] [T010] [P1] [Foundation] Implement `PreviewContent` enum with File, Web, Image, Ascii, ModeIntro, Error variants in `crates/shared/src/preview_types.rs`
-- [ ] [T011] [P1] [Foundation] Implement `ImageSource` enum (File, Url, Bytes) in `crates/shared/src/preview_types.rs`
-- [ ] [T012] [P1] [Foundation] Implement `ParsedPreviewTag` struct and `parse_preview_tag()` function per `contracts/preview-protocol.md`
-- [ ] [T013] [P1] [Foundation] Implement `strip_preview_tags()` function to clean agent responses for display
-- [ ] [T014] [P1] [Foundation] Add `PreviewReference` struct to `ChatMessage` in `crates/app/src/sessions.rs`
-- [ ] [T015] [P1] [Foundation] Export preview_types module from `crates/shared/src/lib.rs`
+- [x] [T010] [P1] [Foundation] Implement `PreviewContent` enum with File, Web, Image, Ascii, ModeIntro, Error variants in `crates/shared/src/preview_types.rs`
+- [x] [T011] [P1] [Foundation] Implement `ImageSource` enum (File, Url, Bytes) in `crates/shared/src/preview_types.rs`
+- [x] [T012] [P1] [Foundation] Implement `ParsedPreviewTag` struct and `parse_preview_tag()` function per `contracts/preview-protocol.md`
+- [x] [T013] [P1] [Foundation] Implement `strip_preview_tags()` function to clean agent responses for display
+- [x] [T014] [P1] [Foundation] Add `PreviewReference` struct to `ChatMessage` in `crates/app/src/sessions.rs`
+- [x] [T015] [P1] [Foundation] Export preview_types module from `crates/shared/src/lib.rs`
 
 ### Viewer Enhancements (Viewers Crate)
 
-- [ ] [T020] [P1] [Foundation] Define `Zoomable` trait with set_zoom, zoom, reset_zoom, zoom_in, zoom_out in `crates/viewers/src/lib.rs`
-- [ ] [T021] [P1] [Foundation] Implement Zoomable for ImageViewer in `crates/viewers/src/image_viewer.rs`
-- [ ] [T022] [P1] [Foundation] Implement Zoomable for TextViewer in `crates/viewers/src/text_viewer.rs`
-- [ ] [T023] [P1] [Foundation] Add zoom state (f32, 0.25-4.0 clamped) to all viewers
-- [ ] [T024] [P1] [Foundation] Implement handle_input() for Ctrl+scroll zoom in viewers
+- [x] [T020] [P1] [Foundation] Define `Zoomable` trait with set_zoom, zoom, reset_zoom, zoom_in, zoom_out in `crates/viewers/src/lib.rs`
+- [x] [T021] [P1] [Foundation] Implement Zoomable for ImageViewer in `crates/viewers/src/image_viewer.rs`
+- [x] [T022] [P1] [Foundation] Implement Zoomable for TextViewer in `crates/viewers/src/text_viewer.rs`
+- [x] [T023] [P1] [Foundation] Add zoom state (f32, 0.25-4.0 clamped) to all viewers
+- [x] [T024] [P1] [Foundation] Implement handle_input() for Ctrl+scroll zoom in viewers
 
 ### Preview Panel Core (App Crate)
 
-- [ ] [T030] [P1] [Foundation] Implement `PreviewState` struct with visible, content, zoom, scroll_offset, fullscreen fields in `crates/app/src/preview_panel.rs`
-- [ ] [T031] [P1] [Foundation] Implement `PreviewPanel::new()` and Default trait
-- [ ] [T032] [P1] [Foundation] Implement `PreviewPanel::ui()` for basic panel rendering with egui
-- [ ] [T033] [P1] [Foundation] Implement `PreviewPanel::show_content()` to display PreviewContent
-- [ ] [T034] [P1] [Foundation] Implement `PreviewPanel::hide()` and `toggle()` methods
-- [ ] [T035] [P1] [Foundation] Implement `PreviewPanel::is_visible()` and `is_fullscreen()` getters
-- [ ] [T036] [P1] [Foundation] Integrate PreviewPanel into main.rs layout alongside chat panel
+- [x] [T030] [P1] [Foundation] Implement `PreviewState` struct with visible, content, zoom, scroll_offset, fullscreen fields in `crates/app/src/preview_panel.rs`
+- [x] [T031] [P1] [Foundation] Implement `PreviewPanel::new()` and Default trait
+- [x] [T032] [P1] [Foundation] Implement `PreviewPanel::ui()` for basic panel rendering with egui
+- [x] [T033] [P1] [Foundation] Implement `PreviewPanel::show_content()` to display PreviewContent
+- [x] [T034] [P1] [Foundation] Implement `PreviewPanel::hide()` and `toggle()` methods
+- [x] [T035] [P1] [Foundation] Implement `PreviewPanel::is_visible()` and `is_fullscreen()` getters
+- [x] [T036] [P1] [Foundation] Integrate PreviewPanel into main.rs layout alongside chat panel
 
 ---
 

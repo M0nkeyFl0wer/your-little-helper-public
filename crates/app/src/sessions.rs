@@ -15,6 +15,9 @@ pub struct ChatMessage {
     pub role: String,
     pub content: String,
     pub timestamp: String,
+    /// Optional preview reference for restoring preview when scrolling back
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_ref: Option<shared::preview_types::PreviewReference>,
 }
 
 /// Chat modes - each is a distinct agent with different skills

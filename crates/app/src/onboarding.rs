@@ -234,13 +234,16 @@ impl OnboardingFlow {
 
     /// Render onboarding UI
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        // Clone step to avoid borrow conflicts
+        let step = self.state.step.clone();
+
         ui.vertical_centered(|ui| {
-            match &self.state.step {
+            match step {
                 OnboardingStep::Welcome => self.render_welcome(ui),
                 OnboardingStep::TerminalPermission => self.render_terminal_permission(ui),
                 OnboardingStep::DependencyCheck => self.render_dependency_check(ui),
                 OnboardingStep::DependencyInstall { name, status } => {
-                    self.render_dependency_install(ui, name, status)
+                    self.render_dependency_install(ui, &name, &status)
                 }
                 OnboardingStep::Verification => self.render_verification(ui),
                 OnboardingStep::Complete => self.render_complete(ui),

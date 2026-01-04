@@ -29,6 +29,11 @@ const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 mod secrets;
 use secrets::{OPENAI_API_KEY, PRELOAD_USER_NAME, PRELOAD_SKIP_ONBOARDING};
 
+// Interactive Preview Companion modules
+mod ascii_art;
+mod onboarding;
+mod preview_panel;
+
 // Campaign context loader
 mod context;
 use context::{get_campaign_summary, load_campaign_context, load_personas, load_ddd_workflow};
