@@ -1162,9 +1162,19 @@ impl eframe::App for LittleHelperApp {
 
                         ui.add_space(8.0);
 
+                        // Preview panel toggle
                         if s.show_preview {
-                            if ui.button("Close Preview").clicked() {
+                            if ui.button("Hide Preview").clicked() {
                                 s.close_preview();
+                            }
+                        } else {
+                            if ui.button("Show Preview").on_hover_text("Show the preview panel").clicked() {
+                                s.show_preview = true;
+                                // Show mode intro if no other content
+                                if matches!(s.active_viewer, ActiveViewer::Welcome) {
+                                    let mode_str = s.current_mode.as_str();
+                                    s.preview_panel.show_mode_intro(mode_str);
+                                }
                             }
                         }
                     });
