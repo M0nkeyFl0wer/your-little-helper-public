@@ -5,9 +5,12 @@
 //! - Execute shell commands safely on behalf of users
 //! - Parse and extract commands from AI responses
 //! - Provide user-friendly summaries of command output
+//! - Invoke skills with permission handling
 
 pub mod executor;
 pub mod prompts;
+pub mod skill_executor;
+pub mod skills;
 
 pub use prompts::{ModePrompt, ModeIntroduction, Permissions, get_mode_prompt, get_mode_introduction, get_system_prompt};
 

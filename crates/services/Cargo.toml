@@ -16,3 +16,9 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 directories = { workspace = true }
 shared = { path = "../shared" }
+rusqlite = { workspace = true }
+git2 = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

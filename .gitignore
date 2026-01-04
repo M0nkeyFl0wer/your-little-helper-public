@@ -1,16 +1,66 @@
+# Build outputs
 target/
-**/*.DS_Store
+dist/
+*.exe
+*.dmg
+*.app
+Output/
+
+# IDE/Editor
+.idea/
+.vscode/
 **/*.swp
-**/*.log
-/.idea/
-/.vscode/
+**/*.swo
+*~
+
+# OS files
+**/*.DS_Store
+Thumbs.db
+
+# Dependencies
 /node_modules/
-/dist/
-/target/
 Cargo.lock
 
-# API keys - NEVER commit these
+# ========================================
+# SECRETS - NEVER COMMIT THESE
+# ========================================
+
+# API keys and secrets files
 secrets.toml
+secrets.json
 .env
+.env.*
 *.key
+*.pem
+*.p12
+
+# App secrets (use secrets.rs.example as template)
 crates/app/src/secrets.rs
+
+# Support/contact info (personal)
+crates/app/src/support_info.rs
+
+# OAuth tokens and credentials
+.credentials.json
+**/credentials.json
+**/.oauth*
+
+# Settings with potential secrets
+settings.json
+config.json
+!demo-settings-template.json
+!*-example.json
+!*-template.json
+
+# Logs that might contain sensitive data
+**/*.log
+logs/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Test artifacts that might contain data
+test_output/
+*.test.json

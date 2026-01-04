@@ -25,6 +25,7 @@ regex = { workspace = true }
 dirs = "5"
 rfd = "0.14"
 open = "5"
+zeroize = { workspace = true }
 
 [package.metadata]
 description = "Little Helper - Personal AI Assistant GUI"

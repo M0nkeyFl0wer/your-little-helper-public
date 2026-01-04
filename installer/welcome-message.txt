@@ -1,0 +1,12 @@
+Welcome to Little Helper (Beta)
+
+Hey! Ben made this just for you.
+
+Since this is a beta version and isn't signed by Microsoft yet,
+Windows might show a security warning. This is totally normal!
+
+If you see a blue "Windows protected your PC" screen, just click:
+
+    "More info"  -->  "Run anyway"
+
+Have fun, and let him know what you think!

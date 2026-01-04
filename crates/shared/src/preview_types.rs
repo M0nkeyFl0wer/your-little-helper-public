@@ -36,6 +36,23 @@ impl FileType {
     }
 }
 
+/// A single file search result
+#[derive(Clone, Debug)]
+pub struct SearchResultItem {
+    /// Full path to the file
+    pub path: PathBuf,
+    /// File name for display
+    pub name: String,
+    /// Parent directory
+    pub parent: String,
+    /// File size in bytes
+    pub size: u64,
+    /// Last modified timestamp (Unix epoch)
+    pub modified: Option<i64>,
+    /// Fuzzy match score (0.0-1.0)
+    pub score: f32,
+}
+
 /// Content that can be displayed in the preview panel
 #[derive(Clone, Debug)]
 pub enum PreviewContent {
@@ -63,6 +80,19 @@ pub enum PreviewContent {
     /// Mode introduction
     ModeIntro {
         mode: String, // Mode name as string to avoid circular dependency
+    },
+    /// Search results from fuzzy file finder
+    SearchResults {
+        query: String,
+        results: Vec<SearchResultItem>,
+        total_count: usize,
+        search_time_ms: u64,
+    },
+    /// Version history for a file
+    VersionHistory {
+        file_path: PathBuf,
+        file_name: String,
+        versions: Vec<crate::version::FileVersion>,
     },
     /// Error state
     Error {

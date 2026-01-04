@@ -1,0 +1,13 @@
+{
+  "topics": ["marine conservation", "protected areas", "ocean health"],
+  "key_facts": [
+    "Marine protected areas cover approximately 8% of the ocean",
+    "MPAs help restore fish populations and biodiversity"
+  ],
+  "references": [
+    {
+      "title": "IUCN MPA Guidelines",
+      "url": "https://www.iucn.org/theme/marine-and-polar"
+    }
+  ]
+}

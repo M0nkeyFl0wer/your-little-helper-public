@@ -30,6 +30,10 @@ const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 mod secrets;
 use secrets::{OPENAI_API_KEY, PRELOAD_USER_NAME, PRELOAD_SKIP_ONBOARDING};
 
+// Support contact info (gitignored - your personal contact stays private)
+mod support_info;
+use support_info::{SUPPORT_LINK, SUPPORT_BUTTON_TEXT};
+
 // Interactive Preview Companion modules
 mod ascii_art;
 mod onboarding;
@@ -1174,6 +1178,22 @@ impl eframe::App for LittleHelperApp {
 
                         ui.add_space(12.0);
 
+                        // Support button - links to Signal
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new(format!("💬 {}", SUPPORT_BUTTON_TEXT)).size(12.0))
+                                    .fill(egui::Color32::from_rgb(60, 130, 180))
+                                    .rounding(egui::Rounding::same(4.0)),
+                            )
+                            .on_hover_text("Get help or send feedback")
+                            .clicked()
+                        {
+                            // Open Signal link in browser
+                            let _ = open::that(SUPPORT_LINK);
+                        }
+
+                        ui.add_space(12.0);
+
                         // Model indicator
                         let provider = s
                             .settings
@@ -1287,6 +1307,11 @@ impl eframe::App for LittleHelperApp {
                         ActiveViewer::Welcome => {
                             // Use new interactive preview panel for mode introductions
                             s.preview_panel.ui(ui);
+
+                            // Check if user clicked an example prompt
+                            if let Some(prompt) = s.preview_panel.take_clicked_prompt() {
+                                s.input_text = prompt;
+                            }
                         }
                         ActiveViewer::Matrix => {
                             render_matrix_rain(ui, ctx);
