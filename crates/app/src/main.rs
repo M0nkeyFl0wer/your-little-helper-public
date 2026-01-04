@@ -45,7 +45,7 @@ enum AppScreen {
     Chat,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ChatMode {
     Fix,      // Tech support - diagnose and fix problems
     Research, // Deep research with citations
@@ -93,6 +93,7 @@ struct AppState {
     current_mode: ChatMode,
     previous_mode: Option<ChatMode>,  // For detecting mode changes
     input_text: String,
+    mode_input_drafts: std::collections::HashMap<ChatMode, String>,  // Preserve input per mode
     chat_history: Vec<ChatMessage>,
     is_thinking: bool,
     thinking_status: String,  // What the agent is currently doing
@@ -170,6 +171,7 @@ impl Default for AppState {
             current_mode: ChatMode::Fix,
             previous_mode: None,
             input_text: String::new(),
+            mode_input_drafts: std::collections::HashMap::new(),
             chat_history: vec![welcome_msg],
             is_thinking: false,
             thinking_status: String::new(),
@@ -1061,14 +1063,29 @@ impl eframe::App for LittleHelperApp {
         }
 
         // Detect mode change and show mode introduction
-        let mode_changed = s.previous_mode.map_or(true, |prev| prev != s.current_mode);
+        let mode_changed = s.previous_mode.map_or(false, |prev| prev != s.current_mode);
         if mode_changed {
+            // Save current input text for the old mode
+            if let Some(prev_mode) = s.previous_mode {
+                if !s.input_text.is_empty() {
+                    let draft = s.input_text.clone();
+                    s.mode_input_drafts.insert(prev_mode, draft);
+                }
+            }
+
+            // Restore input text for the new mode (or clear it)
+            let new_mode = s.current_mode;
+            s.input_text = s.mode_input_drafts
+                .get(&new_mode)
+                .cloned()
+                .unwrap_or_default();
+
             let mode_str = s.current_mode.as_str();
             s.preview_panel.show_mode_intro(mode_str);
-            s.previous_mode = Some(s.current_mode);
         }
+        s.previous_mode = Some(s.current_mode);
 
-        // Set up theme (dark or light mode)
+        // Set up theme (dark or light mode) with accessibility enhancements
         let mut style = (*ctx.style()).clone();
         style.visuals.window_rounding = egui::Rounding::same(12.0);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
@@ -1076,8 +1093,14 @@ impl eframe::App for LittleHelperApp {
         if s.settings.user_profile.dark_mode {
             style.visuals = egui::Visuals::dark();
             style.visuals.panel_fill = egui::Color32::from_rgb(30, 30, 35);
+            // Enhanced focus states for accessibility (T502)
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
+            style.visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
         } else {
             style.visuals.panel_fill = egui::Color32::from_rgb(250, 250, 252);
+            // Enhanced focus states for accessibility (T502)
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
+            style.visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
         }
         ctx.set_style(style);
 
