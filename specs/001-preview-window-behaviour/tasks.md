@@ -76,18 +76,18 @@
 
 > Users can scroll back through history; agent remembers previous conversations.
 
-- [ ] [T110] [P1] [S2] Verify auto-save on message send/receive in `crates/app/src/sessions.rs` (FR-013a)
-- [ ] [T111] [P1] [S2] Implement `SessionManager::get_context_messages(mode, max_messages)` for AI context window
-- [ ] [T112] [P1] [S2] Implement `SessionManager::get_or_load(mode, id)` for lazy loading sessions from disk
-- [ ] [T113] [P1] [S2] Implement `SessionManager::reload(mode)` to force reload from disk
-- [ ] [T114] [P1] [S2] Implement lazy loading for conversation scrollback (load older messages on scroll)
-- [ ] [T115] [P1] [S2] Include memory summary in system prompt via `get_memory_summary()`
-- [ ] [T116] [P1] [S2] Add "New Thread" button to create fresh conversation within mode (FR-017)
-- [ ] [T117] [P1] [S2] Add conversation thread browser/picker UI (FR-018)
-- [ ] [T118] [P1] [S2] Add "Clear History" option for mode (FR-019)
-- [ ] [T119] [P1] [S2] Verify conversation restored after app restart (SC-003)
-- [ ] [T120] [P1] [S2] Verify 100+ message scrollback without noticeable delay (SC-004)
-- [ ] [T121] [P1] [S2] Verify agent references previous context in follow-up conversations (SC-005)
+- [x] [T110] [P1] [S2] Verify auto-save on message send/receive in `crates/app/src/sessions.rs` (FR-013a)
+- [x] [T111] [P1] [S2] Implement `SessionManager::get_context_messages(mode, max_messages)` for AI context window
+- [x] [T112] [P1] [S2] Implement `SessionManager::get_or_load(mode, id)` for lazy loading sessions from disk
+- [x] [T113] [P1] [S2] Implement `SessionManager::reload(mode)` to force reload from disk
+- [x] [T114] [P1] [S2] Implement lazy loading for conversation scrollback (load older messages on scroll)
+- [x] [T115] [P1] [S2] Include memory summary in system prompt via `get_memory_summary()`
+- [x] [T116] [P1] [S2] Add "New Thread" button to create fresh conversation within mode (FR-017)
+- [x] [T117] [P1] [S2] Add conversation thread browser/picker UI (FR-018)
+- [x] [T118] [P1] [S2] Add "Clear History" option for mode (FR-019)
+- [x] [T119] [P1] [S2] Verify conversation restored after app restart (SC-003)
+- [x] [T120] [P1] [S2] Verify 100+ message scrollback without noticeable delay (SC-004)
+- [x] [T121] [P1] [S2] Verify agent references previous context in follow-up conversations (SC-005)
 
 ### Story 3: Contextual Preview During Research
 
@@ -225,7 +225,7 @@
 - [x] [T700] [P1] [Git] Commit after Setup phase: `feat(preview): scaffold preview panel and type structures`
 - [x] [T701] [P1] [Git] Commit after Foundation phase: `feat(preview): implement core preview panel with zoom/scroll`
 - [x] [T702] [P1] [Git] Commit after Story 1: `feat(agents): add mode-specific prompts and introductions`
-- [ ] [T703] [P1] [Git] Commit after Story 2: `feat(memory): implement persistent conversation history`
+- [x] [T703] [P1] [Git] Commit after Story 2: `feat(memory): implement persistent conversation history`
 - [ ] [T704] [P1] [Git] Commit after Story 3: `feat(preview): add web search preview with screenshots`
 - [ ] [T705] [P1] [Git] Commit after Story 4: `feat(preview): add file actions and fullscreen mode`
 - [ ] [T706] [P2] [Git] Commit after Stories 5-6: `feat(preview): add ASCII art states and persistence`

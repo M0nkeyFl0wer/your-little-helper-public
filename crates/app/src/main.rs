@@ -1263,6 +1263,65 @@ impl eframe::App for LittleHelperApp {
                     );
                 }
 
+                // Thread controls bar (T116-T118)
+                ui.horizontal(|ui| {
+                    // New Thread button (T116)
+                    if ui.small_button("+ New Thread").on_hover_text("Start a fresh conversation").clicked() {
+                        // Clear current chat and start fresh
+                        let user_name = if s.settings.user_profile.name.is_empty() {
+                            "friend"
+                        } else {
+                            &s.settings.user_profile.name
+                        };
+                        let mode = s.current_mode;
+                        let welcome = ChatMessage {
+                            role: "assistant".to_string(),
+                            content: format!(
+                                "Starting a fresh conversation! How can I help you today, {}?",
+                                user_name
+                            ),
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        };
+                        s.chat_history = vec![welcome];
+                        // Show mode intro in preview
+                        s.preview_panel.show_mode_intro(mode.as_str());
+                    }
+
+                    ui.separator();
+
+                    // Thread count indicator
+                    let thread_count = s.chat_history.len();
+                    ui.label(
+                        egui::RichText::new(format!("{} messages", thread_count))
+                            .small()
+                            .weak()
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Clear History button (T118)
+                        if ui.small_button("🗑").on_hover_text("Clear this conversation").clicked() {
+                            let user_name = if s.settings.user_profile.name.is_empty() {
+                                "friend"
+                            } else {
+                                &s.settings.user_profile.name
+                            };
+                            let mode = s.current_mode;
+                            let welcome = ChatMessage {
+                                role: "assistant".to_string(),
+                                content: format!(
+                                    "Conversation cleared. What would you like to work on, {}?",
+                                    user_name
+                                ),
+                                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                            };
+                            s.chat_history = vec![welcome];
+                            s.preview_panel.show_mode_intro(mode.as_str());
+                        }
+                    });
+                });
+
+                ui.add_space(4.0);
+
                 // Chat messages scroll area
                 let chat_height = ui.available_height() - 70.0;
 
