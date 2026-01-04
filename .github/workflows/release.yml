@@ -17,6 +17,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-action@stable
 
+      - name: Create secrets.rs with pre-configured API key
+        shell: pwsh
+        run: |
+          $content = @"
+          // Auto-generated during build - API key pre-configured for beta testers
+          pub const OPENAI_API_KEY: &str = "${{ secrets.OPENAI_API_KEY }}";
+          pub const PRELOAD_USER_NAME: &str = "${{ secrets.PRELOAD_USER_NAME }}";
+          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
+          "@
+          Set-Content -Path "crates/app/src/secrets.rs" -Value $content
+
       - name: Build Release
         run: cargo build --release
 
@@ -40,6 +51,18 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-action@stable
+
+      - name: Create secrets.rs with pre-configured API key
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
+        run: |
+          cat > crates/app/src/secrets.rs << EOF
+          // Auto-generated during build - API key pre-configured for beta testers
+          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
+          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
+          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
+          EOF
 
       - name: Build Release
         run: cargo build --release
