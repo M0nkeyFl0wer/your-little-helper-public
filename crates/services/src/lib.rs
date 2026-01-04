@@ -3,3 +3,4 @@ pub mod organizer;
 pub mod support;
 pub mod mini_swarm;
 pub mod slack;
+pub mod web_preview;
