@@ -55,15 +55,14 @@ jobs:
           name: LittleHelper-Windows
           path: Output/LittleHelper-Setup.exe
 
-  build-mac:
-    runs-on: macos-latest
+  # Build on Intel Mac runner
+  build-mac-intel:
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust with both targets
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - name: Create secrets.rs with pre-configured API key
         env:
@@ -88,22 +87,88 @@ jobs:
           pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
           EOF
 
-      - name: Build Universal Binary (Intel + Apple Silicon)
+      - name: Build Release (Intel)
+        run: cargo build --release
+
+      - name: Upload Intel binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-intel-binary
+          path: target/release/app
+
+  # Build on Apple Silicon runner
+  build-mac-arm:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Create secrets.rs with pre-configured API key
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
         run: |
-          cargo build --release --target x86_64-apple-darwin
-          cargo build --release --target aarch64-apple-darwin
-          # Combine into universal binary
-          mkdir -p target/release
-          lipo -create \
-            target/x86_64-apple-darwin/release/app \
-            target/aarch64-apple-darwin/release/app \
-            -output target/release/app
+          cat > crates/app/src/secrets.rs << EOF
+          // Auto-generated during build - API key pre-configured for beta testers
+          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
+          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
+          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
+          EOF
+
+      - name: Create support_info.rs
+        env:
+          SUPPORT_URL: ${{ secrets.SUPPORT_LINK }}
+        run: |
+          cat > crates/app/src/support_info.rs << EOF
+          // Auto-generated during build
+          pub const CREATOR_NAME: &str = "Ben";
+          pub const SUPPORT_LINK: &str = "${SUPPORT_URL}";
+          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
+          EOF
+
+      - name: Build Release (Apple Silicon)
+        run: cargo build --release
+
+      - name: Upload ARM binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm-binary
+          path: target/release/app
+
+  # Combine Intel and ARM binaries into universal binary
+  build-mac-universal:
+    needs: [build-mac-intel, build-mac-arm]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Intel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-intel-binary
+          path: intel
+
+      - name: Download ARM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-arm-binary
+          path: arm
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p universal
+          lipo -create intel/app arm/app -output universal/app
+          # Verify it's universal
+          file universal/app
 
       - name: Create App Bundle
         run: |
           mkdir -p "Little Helper.app/Contents/MacOS"
           mkdir -p "Little Helper.app/Contents/Resources"
-          cp target/release/app "Little Helper.app/Contents/MacOS/Little Helper"
+          cp universal/app "Little Helper.app/Contents/MacOS/Little Helper"
+          chmod +x "Little Helper.app/Contents/MacOS/Little Helper"
 
           # Create Info.plist
           cat > "Little Helper.app/Contents/Info.plist" << 'EOF'
@@ -152,7 +217,7 @@ jobs:
           path: LittleHelper.dmg
 
   create-release:
-    needs: [build-windows, build-mac]
+    needs: [build-windows, build-mac-universal]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -177,7 +242,7 @@ jobs:
 
             ### Downloads
             - **Windows**: `LittleHelper-Setup.exe` - Double-click to install
-            - **Mac**: `LittleHelper.dmg` - Open and drag to Applications
+            - **Mac (Universal)**: `LittleHelper.dmg` - Works on both Intel and Apple Silicon Macs
 
             ### First Time Opening
             Since this is a beta, you might see a security warning. This is normal!
