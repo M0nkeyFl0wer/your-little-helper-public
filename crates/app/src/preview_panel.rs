@@ -4,7 +4,13 @@
 //! contextual preview content including files, web pages, images, and ASCII art.
 
 use agent_host::get_mode_introduction;
-use shared::preview_types::{AsciiState, PreviewContent, SearchResultItem};
+use anyhow::Result;
+use shared::preview_types::{AsciiState, FileType, ImageSource, PreviewContent, SearchResultItem};
+use std::path::{Path, PathBuf};
+use viewers::{
+    csv_viewer::CsvViewer, html_viewer::HtmlViewer, image_viewer::ImageViewer,
+    json_viewer::JsonViewer, pdf_viewer::PdfViewer, text_viewer::TextViewer,
+};
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
 
@@ -56,6 +62,9 @@ impl Default for PreviewState {
 /// The preview panel component
 pub struct PreviewPanel {
     state: PreviewState,
+    file_viewer: Option<FileViewer>,
+    file_error: Option<String>,
+    current_file_path: Option<PathBuf>,
 }
 
 impl PreviewPanel {
@@ -63,17 +72,29 @@ impl PreviewPanel {
     pub fn new() -> Self {
         Self {
             state: PreviewState::default(),
+            file_viewer: None,
+            file_error: None,
+            current_file_path: None,
         }
     }
 
     /// Show content in the preview panel
     /// Automatically makes panel visible if hidden
     pub fn show_content(&mut self, content: PreviewContent) {
+        if !matches!(content, PreviewContent::File { .. }) {
+            self.file_viewer = None;
+            self.file_error = None;
+            self.current_file_path = None;
+        }
         self.state.content = Some(content);
         self.state.visible = true;
         // Reset zoom/scroll when showing new content
         self.state.zoom = 1.0;
         self.state.scroll_offset = egui::Vec2::ZERO;
+
+        if let Some(PreviewContent::File { path, .. }) = &self.state.content {
+            self.current_file_path = Some(path.clone());
+        }
     }
 
     /// Show mode introduction
@@ -182,6 +203,35 @@ impl PreviewPanel {
     /// Get current content
     pub fn content(&self) -> Option<&PreviewContent> {
         self.state.content.as_ref()
+    }
+
+    pub fn current_file_path(&self) -> Option<PathBuf> {
+        self.current_file_path.clone()
+    }
+
+    pub fn current_web_url(&self) -> Option<String> {
+        if let Some(PreviewContent::Web { url, .. }) = &self.state.content {
+            Some(url.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn open_file(&mut self, path: &Path, ctx: &egui::Context) {
+        let file_type = FileType::from_path(path);
+        let path_buf = path.to_path_buf();
+        self.state.content = Some(PreviewContent::File {
+            path: path_buf.clone(),
+            file_type: file_type.clone(),
+        });
+        self.state.visible = true;
+        self.state.zoom = 1.0;
+        self.state.scroll_offset = egui::Vec2::ZERO;
+        self.current_file_path = Some(path_buf);
+        self.file_error = None;
+        if let Err(err) = self.prepare_file_viewer(path, &file_type, ctx) {
+            self.file_error = Some(err.to_string());
+        }
     }
 
     /// Get actions available for current content
@@ -394,10 +444,10 @@ impl PreviewPanel {
             egui::Color32::from_rgb(50, 100, 200)
         };
 
-        match &self.state.content {
+        match self.state.content.clone() {
             Some(PreviewContent::ModeIntro { mode }) => {
-                let intro = get_mode_introduction(mode);
-                let ascii_art = get_mode_art(mode);
+                let intro = get_mode_introduction(&mode);
+                let ascii_art = get_mode_art(&mode);
 
                 ui.vertical_centered(|ui| {
                     // ASCII art mascot
@@ -465,7 +515,7 @@ impl PreviewPanel {
                 });
             }
             Some(PreviewContent::Ascii { state }) => {
-                let ascii_art = get_ascii_art(*state);
+                let ascii_art = get_ascii_art(state);
                 ui.vertical_centered(|ui| {
                     ui.add(egui::Label::new(
                         egui::RichText::new(ascii_art).monospace().color(text_color),
@@ -473,9 +523,7 @@ impl PreviewPanel {
                 });
             }
             Some(PreviewContent::File { path, file_type }) => {
-                ui.label(format!("File: {:?}", path));
-                ui.label(format!("Type: {:?}", file_type));
-                // TODO: Use viewers crate to render file content
+                self.render_file(&path, &file_type, ui);
             }
             Some(PreviewContent::Web {
                 url,
@@ -502,7 +550,7 @@ impl PreviewPanel {
                     // URL as clickable link
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Source:").small().weak());
-                        ui.hyperlink(url);
+                        ui.hyperlink(&url);
                     });
 
                     ui.add_space(12.0);
@@ -535,14 +583,27 @@ impl PreviewPanel {
 
                     // Action button to open in browser
                     if ui.button("🔗 Open in Browser").clicked() {
-                        let _ = open::that(url);
+                        let _ = open::that(&url);
                     }
                 });
             }
-            Some(PreviewContent::Image { source }) => {
-                ui.label(format!("Image: {:?}", source));
-                // TODO: Load and render image
-            }
+            Some(PreviewContent::Image { source }) => match source {
+                ImageSource::File(path) => {
+                    self.render_file(&path, &FileType::Image, ui);
+                }
+                ImageSource::Url(url) => {
+                    ui.vertical_centered(|ui| {
+                        ui.label("Image from URL:");
+                        ui.hyperlink(url);
+                    });
+                }
+                ImageSource::Bytes(_) => {
+                    ui.colored_label(
+                        egui::Color32::YELLOW,
+                        "Image bytes provided but inline rendering is not supported yet.",
+                    );
+                }
+            },
             Some(PreviewContent::VersionHistory {
                 file_path,
                 file_name,
@@ -651,11 +712,11 @@ impl PreviewPanel {
 
                     // Action buttons
                     ui.horizontal(|ui| {
-                        if ui.button("Open File").clicked() {
-                            let _ = open::that(file_path);
-                        }
-                        if ui.button("Show in Folder").clicked() {
-                            if let Some(parent) = file_path.parent() {
+                    if ui.button("Open File").clicked() {
+                        let _ = open::that(&file_path);
+                    }
+                    if ui.button("Show in Folder").clicked() {
+                        if let Some(parent) = file_path.parent() {
                                 let _ = open::that(parent);
                             }
                         }
@@ -781,6 +842,16 @@ impl PreviewPanel {
                                                 {
                                                     let _ = open::that(&path_clone);
                                                 }
+
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("👁")
+                                                    .on_hover_text("Preview in side panel")
+                                                    .clicked()
+                                                {
+                                                    self.open_file(path_clone.as_path(), ui.ctx());
+                                                    return;
+                                                }
                                             },
                                         );
                                     });
@@ -790,7 +861,7 @@ impl PreviewPanel {
                         }
 
                         // Show count if more results exist
-                        if *total_count > results.len() {
+                        if total_count > results.len() {
                             ui.add_space(8.0);
                             ui.label(
                                 egui::RichText::new(format!(
@@ -827,11 +898,101 @@ impl PreviewPanel {
             }
         }
     }
+
+    fn render_file(&mut self, path: &Path, file_type: &FileType, ui: &mut egui::Ui) {
+        let needs_reload = self
+            .current_file_path
+            .as_ref()
+            .map(|existing| existing != path)
+            .unwrap_or(true);
+
+        if needs_reload {
+            self.current_file_path = Some(path.to_path_buf());
+            self.file_error = None;
+            if let Err(err) = self.prepare_file_viewer(path, file_type, ui.ctx()) {
+                self.file_error = Some(err.to_string());
+            }
+        }
+
+        if let Some(err) = &self.file_error {
+            ui.colored_label(egui::Color32::RED, err);
+        } else if let Some(viewer) = &mut self.file_viewer {
+            viewer.ui(ui);
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label("Loading preview…");
+            });
+        }
+    }
+
+    fn prepare_file_viewer(
+        &mut self,
+        path: &Path,
+        file_type: &FileType,
+        ctx: &egui::Context,
+    ) -> Result<()> {
+        let viewer = match file_type {
+            FileType::Image => {
+                let mut v = ImageViewer::new();
+                v.load(path, ctx)?;
+                FileViewer::Image(v)
+            }
+            FileType::Csv => {
+                let mut v = CsvViewer::new();
+                v.load(path)?;
+                FileViewer::Csv(v)
+            }
+            FileType::Json => {
+                let mut v = JsonViewer::new();
+                v.load(path)?;
+                FileViewer::Json(v)
+            }
+            FileType::Html => {
+                let mut v = HtmlViewer::new();
+                v.load(path)?;
+                FileViewer::Html(v)
+            }
+            FileType::Pdf => {
+                let mut v = PdfViewer::new();
+                v.load(path)?;
+                FileViewer::Pdf(v)
+            }
+            FileType::Text | FileType::Markdown | FileType::Unknown => {
+                let mut v = TextViewer::new();
+                v.load(path)?;
+                FileViewer::Text(v)
+            }
+        };
+        self.file_viewer = Some(viewer);
+        Ok(())
+    }
 }
 
 impl Default for PreviewPanel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+enum FileViewer {
+    Text(TextViewer),
+    Image(ImageViewer),
+    Csv(CsvViewer),
+    Json(JsonViewer),
+    Html(HtmlViewer),
+    Pdf(PdfViewer),
+}
+
+impl FileViewer {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        match self {
+            FileViewer::Text(viewer) => viewer.ui(ui),
+            FileViewer::Image(viewer) => viewer.ui(ui),
+            FileViewer::Csv(viewer) => viewer.ui(ui),
+            FileViewer::Json(viewer) => viewer.ui(ui),
+            FileViewer::Html(viewer) => viewer.ui(ui),
+            FileViewer::Pdf(viewer) => viewer.ui(ui),
+        }
     }
 }
 

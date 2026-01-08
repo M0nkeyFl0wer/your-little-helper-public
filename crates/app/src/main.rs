@@ -8,11 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use viewers::{
-    csv_viewer::CsvViewer, html_viewer::HtmlViewer, image_viewer::ImageViewer,
-    json_viewer::JsonViewer, pdf_viewer::PdfViewer, text_viewer::TextViewer, FileType,
-};
-
 /// Result from background AI generation
 struct AiResult {
     response: String,
@@ -84,15 +79,9 @@ struct ChatMessage {
 
 /// Active viewer in the preview panel
 enum ActiveViewer {
-    Welcome,  // Default welcome/tips view
-    Matrix,   // Matrix rain animation while processing
-    RickRoll, // Easter egg!
-    Text(TextViewer),
-    Image(ImageViewer),
-    Csv(CsvViewer),
-    Json(JsonViewer),
-    Html(HtmlViewer),
-    Pdf(PdfViewer),
+    Panel,                         // Default preview panel content (mode intro, files, etc)
+    Matrix,                        // Matrix rain animation while processing
+    RickRoll,                      // Easter egg!
     CommandOutput(String, String), // (command, output) for showing command results
 }
 
@@ -114,7 +103,6 @@ struct AppState {
 
     // Legacy preview panel (for file viewers)
     show_preview: bool,
-    preview_path: Option<PathBuf>,
     active_viewer: ActiveViewer,
     pending_preview: Option<PathBuf>, // File to auto-open after response
 
@@ -192,9 +180,8 @@ impl Default for AppState {
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
             preview_panel,
-            show_preview: true, // Preview visible by default
-            preview_path: None,
-            active_viewer: ActiveViewer::Welcome, // Start with welcome view
+            show_preview: true,                 // Preview visible by default
+            active_viewer: ActiveViewer::Panel, // Start with panel intro
             pending_preview: None,
             onboarding_name: String::new(),
             pending_commands: Vec::new(),
@@ -226,7 +213,7 @@ impl AppState {
 
                 // Return to welcome view (unless Rick Roll is showing)
                 if matches!(self.active_viewer, ActiveViewer::Matrix) {
-                    self.active_viewer = ActiveViewer::Welcome;
+                    self.active_viewer = ActiveViewer::Panel;
                 }
 
                 if let Some(error) = result.error {
@@ -288,12 +275,9 @@ impl AppState {
                                         snippet: Some(tag.caption.clone()),
                                     });
                                 }
-                                PreviewContent::File { path, file_type } => {
+                                PreviewContent::File { path, .. } => {
                                     if self.is_path_permitted(path) {
-                                        self.preview_panel.show_content(PreviewContent::File {
-                                            path: path.clone(),
-                                            file_type: file_type.clone(),
-                                        });
+                                        self.pending_preview = Some(path.clone());
                                     }
                                 }
                                 _ => {
@@ -784,73 +768,18 @@ ALWAYS:
 
     /// Open a file in the preview panel
     fn open_file(&mut self, path: &Path, ctx: &egui::Context) {
-        let file_type = FileType::from_path(path);
-
-        match file_type {
-            FileType::Text | FileType::Markdown | FileType::Unknown => {
-                let mut viewer = TextViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Text(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            FileType::Image => {
-                let mut viewer = ImageViewer::new();
-                if viewer.load(path, ctx).is_ok() {
-                    self.active_viewer = ActiveViewer::Image(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            FileType::Csv => {
-                let mut viewer = CsvViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Csv(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            FileType::Json => {
-                let mut viewer = JsonViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Json(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            FileType::Html => {
-                let mut viewer = HtmlViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Html(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            FileType::Pdf => {
-                let mut viewer = PdfViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Pdf(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
-            _ => {
-                // Unsupported type - try as text
-                let mut viewer = TextViewer::new();
-                if viewer.load(path).is_ok() {
-                    self.active_viewer = ActiveViewer::Text(viewer);
-                    self.preview_path = Some(path.to_path_buf());
-                    self.show_preview = true;
-                }
-            }
+        if !self.is_path_permitted(path) {
+            return;
         }
+        self.preview_panel.open_file(path, ctx);
+        self.active_viewer = ActiveViewer::Panel;
+        self.show_preview = true;
     }
 
     fn close_preview(&mut self) {
         self.show_preview = false;
-        self.preview_path = None;
-        self.active_viewer = ActiveViewer::Welcome;
+        self.preview_panel.hide();
+        self.active_viewer = ActiveViewer::Panel;
     }
 }
 
@@ -890,7 +819,6 @@ fn run_ai_generation(
         let mut msgs = messages;
         let mut file_to_preview: Option<PathBuf> = None;
         let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
-        let mut pending_commands: Vec<String> = Vec::new();
         let mut pending_commands: Vec<String> = Vec::new();
 
         // Loop for multi-turn interactions (max 5 iterations)
@@ -1447,7 +1375,7 @@ impl eframe::App for LittleHelperApp {
                             {
                                 s.show_preview = true;
                                 // Show mode intro if no other content
-                                if matches!(s.active_viewer, ActiveViewer::Welcome) {
+                                if matches!(s.active_viewer, ActiveViewer::Panel) {
                                     let mode_str = s.current_mode.as_str();
                                     s.preview_panel.show_mode_intro(mode_str);
                                 }
@@ -1476,34 +1404,30 @@ impl eframe::App for LittleHelperApp {
                     // Header - context-aware
                     ui.horizontal(|ui| {
                         let title = match &s.active_viewer {
-                            ActiveViewer::Welcome => "Preview Panel".to_string(),
+                            ActiveViewer::Panel => "Preview Panel".to_string(),
                             ActiveViewer::CommandOutput(cmd, _) => {
                                 format!("Output: {}", cmd.chars().take(30).collect::<String>())
                             }
-                            _ => s
-                                .preview_path
-                                .as_ref()
-                                .and_then(|p| p.file_name())
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "Preview".to_string()),
+                            ActiveViewer::Matrix => "Processing...".to_string(),
+                            ActiveViewer::RickRoll => "Never Gonna Give You Up".to_string(),
                         };
 
                         ui.label(egui::RichText::new(title).size(16.0).strong());
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // Only show close button if not the welcome view
-                            if !matches!(s.active_viewer, ActiveViewer::Welcome) {
+                            if !matches!(s.active_viewer, ActiveViewer::Panel) {
                                 if ui.small_button("X").clicked() {
-                                    // Go back to welcome instead of hiding
-                                    s.active_viewer = ActiveViewer::Welcome;
-                                    s.preview_path = None;
+                                    let mode_name = s.current_mode.as_str().to_string();
+                                    s.active_viewer = ActiveViewer::Panel;
+                                    s.preview_panel.show_mode_intro(&mode_name);
                                 }
                             }
                         });
                     });
 
-                    // File action buttons (only for actual files)
-                    if let Some(path) = s.preview_path.clone() {
+                    // File/web action buttons
+                    if let Some(path) = s.preview_panel.current_file_path() {
                         ui.horizontal(|ui| {
                             if ui
                                 .small_button("Open in App")
@@ -1521,6 +1445,13 @@ impl eframe::App for LittleHelperApp {
                                     let _ = open::that(parent);
                                 }
                             }
+                            if ui
+                                .small_button("Copy Path")
+                                .on_hover_text("Copy full path to clipboard")
+                                .clicked()
+                            {
+                                ui.output_mut(|o| o.copied_text = path.display().to_string());
+                            }
                             ui.label(
                                 egui::RichText::new(path.to_string_lossy().to_string())
                                     .size(10.0)
@@ -1528,16 +1459,27 @@ impl eframe::App for LittleHelperApp {
                             )
                             .on_hover_text("Full path");
                         });
+                        ui.separator();
+                    } else if let Some(url) = s.preview_panel.current_web_url() {
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Open in Browser").clicked() {
+                                let _ = open::that(&url);
+                            }
+                            if ui.small_button("Copy URL").clicked() {
+                                ui.output_mut(|o| o.copied_text = url.clone());
+                            }
+                            ui.label(egui::RichText::new(url).size(10.0).weak());
+                        });
+                        ui.separator();
+                    } else {
+                        ui.separator();
                     }
-                    ui.separator();
 
                     // Render active viewer
                     match &mut s.active_viewer {
-                        ActiveViewer::Welcome => {
-                            // Use new interactive preview panel for mode introductions
+                        ActiveViewer::Panel => {
                             s.preview_panel.ui(ui);
 
-                            // Check if user clicked an example prompt
                             if let Some(prompt) = s.preview_panel.take_clicked_prompt() {
                                 s.input_text = prompt;
                             }
@@ -1551,12 +1493,6 @@ impl eframe::App for LittleHelperApp {
                         ActiveViewer::CommandOutput(cmd, output) => {
                             render_command_output(ui, dark, cmd, output);
                         }
-                        ActiveViewer::Text(viewer) => viewer.ui(ui),
-                        ActiveViewer::Image(viewer) => viewer.ui(ui),
-                        ActiveViewer::Csv(viewer) => viewer.ui(ui),
-                        ActiveViewer::Json(viewer) => viewer.ui(ui),
-                        ActiveViewer::Html(viewer) => viewer.ui(ui),
-                        ActiveViewer::Pdf(viewer) => viewer.ui(ui),
                     }
                 });
         }
