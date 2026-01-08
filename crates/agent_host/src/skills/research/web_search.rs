@@ -7,8 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
-    Citation,
+    Citation, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Web search skill for research.
@@ -121,7 +120,7 @@ impl Skill for WebSearch {
         if input.query.trim().is_empty() {
             return Ok(SkillOutput::text(
                 "What would you like to search for?\n\n\
-                 Example: \"What are the benefits of renewable energy?\""
+                 Example: \"What are the benefits of renewable energy?\"",
             ));
         }
 
@@ -129,14 +128,15 @@ impl Skill for WebSearch {
         let formatted = Self::format_results(&input.query, &results);
 
         // Convert results to citations
-        let citations: Vec<Citation> = results.iter().map(|r| {
-            Citation {
+        let citations: Vec<Citation> = results
+            .iter()
+            .map(|r| Citation {
                 text: format!("{}: {}", r.title, r.snippet),
                 url: r.url.clone(),
                 accessed_at: Utc::now(),
                 verified: false,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(SkillOutput {
             result_type: ResultType::Text,

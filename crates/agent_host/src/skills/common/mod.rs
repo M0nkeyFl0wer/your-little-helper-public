@@ -16,9 +16,9 @@ pub use safe_file_ops::SafeFileOps;
 pub use version_history::VersionHistory;
 pub use version_restore::VersionRestore;
 
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use anyhow::Result;
 
 /// Initialize common skill infrastructure.
 ///

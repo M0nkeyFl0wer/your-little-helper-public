@@ -3,12 +3,12 @@
 //! This module defines the core abstractions for skills that agents can invoke.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use parking_lot::RwLock;
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Permission level for skills
@@ -47,7 +47,14 @@ pub enum Mode {
 
 impl Mode {
     pub fn all() -> &'static [Mode] {
-        &[Mode::Find, Mode::Fix, Mode::Research, Mode::Data, Mode::Content, Mode::Build]
+        &[
+            Mode::Find,
+            Mode::Fix,
+            Mode::Research,
+            Mode::Data,
+            Mode::Content,
+            Mode::Build,
+        ]
     }
 
     pub fn display_name(&self) -> &'static str {
@@ -363,8 +370,8 @@ mod tests {
 
     #[test]
     fn test_skill_input_builder() {
-        let input = SkillInput::from_query("test query")
-            .with_param("key", serde_json::json!("value"));
+        let input =
+            SkillInput::from_query("test query").with_param("key", serde_json::json!("value"));
 
         assert_eq!(input.query, "test query");
         assert!(input.params.contains_key("key"));
@@ -372,13 +379,12 @@ mod tests {
 
     #[test]
     fn test_skill_output_builder() {
-        let output = SkillOutput::text("Hello")
-            .with_citation(Citation {
-                text: "Source".into(),
-                url: "https://example.com".into(),
-                accessed_at: Utc::now(),
-                verified: true,
-            });
+        let output = SkillOutput::text("Hello").with_citation(Citation {
+            text: "Source".into(),
+            url: "https://example.com".into(),
+            accessed_at: Utc::now(),
+            verified: true,
+        });
 
         assert_eq!(output.citations.len(), 1);
     }
@@ -389,8 +395,12 @@ mod tests {
         let actions = vec![
             FileAction::Created,
             FileAction::Modified,
-            FileAction::Moved { from: PathBuf::from("/old") },
-            FileAction::Archived { to: PathBuf::from("/archive") },
+            FileAction::Moved {
+                from: PathBuf::from("/old"),
+            },
+            FileAction::Archived {
+                to: PathBuf::from("/archive"),
+            },
         ];
 
         for action in actions {
@@ -398,8 +408,7 @@ mod tests {
                 FileAction::Created => {}
                 FileAction::Modified => {}
                 FileAction::Moved { .. } => {}
-                FileAction::Archived { .. } => {}
-                // No Delete variant exists - this is by design
+                FileAction::Archived { .. } => {} // No Delete variant exists - this is by design
             }
         }
     }

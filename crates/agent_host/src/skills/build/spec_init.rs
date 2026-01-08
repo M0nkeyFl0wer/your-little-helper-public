@@ -2,11 +2,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-};
-use std::process::Command;
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Initialize a new spec-driven project with spec-kit
 pub struct SpecInitSkill;
@@ -35,19 +33,25 @@ impl Skill for SpecInitSkill {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         // Extract project name from query or params
-        let project_name = input.params.get("project_name")
+        let project_name = input
+            .params
+            .get("project_name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
                 // Try to extract from query like "init project myapp"
-                input.query.split_whitespace()
+                input
+                    .query
+                    .split_whitespace()
                     .skip_while(|w| *w != "project" && *w != "init")
                     .nth(1)
                     .unwrap_or("my-project")
                     .to_string()
             });
 
-        let directory = input.params.get("directory")
+        let directory = input
+            .params
+            .get("directory")
             .and_then(|v| v.as_str())
             .map(|s| PathBuf::from(s))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -106,9 +110,7 @@ impl Skill for SpecInitSkill {
                     )))
                 }
             }
-            Err(e) => {
-                Ok(SkillOutput::text(format!("Failed to run spec-kit: {}", e)))
-            }
+            Err(e) => Ok(SkillOutput::text(format!("Failed to run spec-kit: {}", e))),
         }
     }
 }

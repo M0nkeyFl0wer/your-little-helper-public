@@ -8,7 +8,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use services::version_control::VersionControlService;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::path::PathBuf;
 
@@ -57,7 +57,14 @@ impl Skill for VersionRestore {
 
     fn modes(&self) -> &'static [Mode] {
         // Available in all modes
-        &[Mode::Find, Mode::Fix, Mode::Research, Mode::Data, Mode::Content, Mode::Build]
+        &[
+            Mode::Find,
+            Mode::Fix,
+            Mode::Research,
+            Mode::Data,
+            Mode::Content,
+            Mode::Build,
+        ]
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
@@ -88,7 +95,7 @@ impl Skill for VersionRestore {
                 return Ok(SkillOutput::text(
                     "Please provide a file path to restore.\n\n\
                      Example: \"restore report.docx to version 2\"\n\
-                     Or: \"go back to the previous version of config.json\""
+                     Or: \"go back to the previous version of config.json\"",
                 ));
             }
         };
@@ -134,9 +141,7 @@ impl Skill for VersionRestore {
         }
 
         // Find the requested version
-        let target_version = versions
-            .iter()
-            .find(|v| v.version_number == version_num);
+        let target_version = versions.iter().find(|v| v.version_number == version_num);
 
         let target = match target_version {
             Some(v) => v,
@@ -203,16 +208,22 @@ impl Skill for VersionRestore {
                 shared::skill::SuggestedAction {
                     label: "View all versions".to_string(),
                     skill_id: "version_history".to_string(),
-                    params: [("path".to_string(), serde_json::json!(path.to_string_lossy()))]
-                        .into_iter()
-                        .collect(),
+                    params: [(
+                        "path".to_string(),
+                        serde_json::json!(path.to_string_lossy()),
+                    )]
+                    .into_iter()
+                    .collect(),
                 },
                 shared::skill::SuggestedAction {
                     label: "Open file".to_string(),
                     skill_id: "file_preview".to_string(),
-                    params: [("path".to_string(), serde_json::json!(path.to_string_lossy()))]
-                        .into_iter()
-                        .collect(),
+                    params: [(
+                        "path".to_string(),
+                        serde_json::json!(path.to_string_lossy()),
+                    )]
+                    .into_iter()
+                    .collect(),
                 },
             ],
         })
@@ -258,7 +269,8 @@ fn parse_restore_query(query: &str) -> (Option<String>, Option<u32>) {
 fn extract_file_path(query: &str) -> Option<String> {
     // Look for words with file extensions
     for word in query.split_whitespace() {
-        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\');
+        let clean =
+            word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\');
         if clean.contains('.') && !clean.starts_with('.') {
             // Likely a file path
             return Some(clean.to_string());
@@ -288,7 +300,13 @@ mod tests {
 
     #[test]
     fn test_extract_file_path() {
-        assert_eq!(extract_file_path("restore test.txt"), Some("test.txt".to_string()));
-        assert_eq!(extract_file_path("go back to \"my file.doc\""), Some("my file.doc".to_string()));
+        assert_eq!(
+            extract_file_path("restore test.txt"),
+            Some("test.txt".to_string())
+        );
+        assert_eq!(
+            extract_file_path("go back to \"my file.doc\""),
+            Some("my file.doc".to_string())
+        );
     }
 }

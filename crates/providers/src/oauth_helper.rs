@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
-use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, Scope, TokenResponse, TokenUrl,
-};
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
+use oauth2::{
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
+    Scope, TokenResponse, TokenUrl,
+};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use url::Url;
@@ -28,7 +28,9 @@ impl OAuthFlow {
             AuthUrl::new(auth_url)?,
             Some(TokenUrl::new(token_url)?),
         )
-        .set_redirect_uri(RedirectUrl::new("http://localhost:8765/callback".to_string())?);
+        .set_redirect_uri(RedirectUrl::new(
+            "http://localhost:8765/callback".to_string(),
+        )?);
 
         Ok(Self { client, scopes })
     }
@@ -38,7 +40,8 @@ impl OAuthFlow {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
         // Build authorization URL
-        let mut auth_request = self.client
+        let mut auth_request = self
+            .client
             .authorize_url(CsrfToken::new_random)
             .set_pkce_challenge(pkce_challenge);
 
@@ -70,7 +73,8 @@ impl OAuthFlow {
         }
 
         // Exchange authorization code for access token
-        let token_result = self.client
+        let token_result = self
+            .client
             .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(pkce_verifier)
             .request_async(async_http_client)

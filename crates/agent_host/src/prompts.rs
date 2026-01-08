@@ -118,9 +118,11 @@ fn get_capabilities_section(permissions: &Permissions) -> String {
     let mut capabilities: Vec<String> = Vec::new();
 
     if permissions.terminal_enabled {
-        capabilities.push("- You CAN execute shell commands using <command>...</command> tags".to_string());
+        capabilities
+            .push("- You CAN execute shell commands using <command>...</command> tags".to_string());
     } else {
-        capabilities.push("- Terminal access is DISABLED. Do not attempt to run commands.".to_string());
+        capabilities
+            .push("- Terminal access is DISABLED. Do not attempt to run commands.".to_string());
     }
 
     if permissions.web_search_enabled {
@@ -128,7 +130,8 @@ fn get_capabilities_section(permissions: &Permissions) -> String {
     }
 
     if !permissions.file_access_dirs.is_empty() {
-        let dirs: Vec<String> = permissions.file_access_dirs
+        let dirs: Vec<String> = permissions
+            .file_access_dirs
             .iter()
             .map(|p| p.display().to_string())
             .collect();
@@ -155,11 +158,19 @@ The preview will appear alongside your response, helping the user see what you'r
 }
 
 fn format_list(items: &[&str]) -> String {
-    items.iter().map(|s| format!("- {}", s)).collect::<Vec<_>>().join("\n")
+    items
+        .iter()
+        .map(|s| format!("- {}", s))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn format_examples(items: &[&str]) -> String {
-    items.iter().map(|s| format!("  - \"{}\"", s)).collect::<Vec<_>>().join("\n")
+    items
+        .iter()
+        .map(|s| format!("  - \"{}\"", s))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Get introduction text for displaying in the preview panel when switching modes

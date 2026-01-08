@@ -166,13 +166,9 @@ pub fn render_ascii_art(ui: &mut egui::Ui, art: &str, is_dark_mode: bool) {
     };
 
     ui.vertical_centered(|ui| {
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(art)
-                    .monospace()
-                    .color(text_color)
-            )
-        );
+        ui.add(egui::Label::new(
+            egui::RichText::new(art).monospace().color(text_color),
+        ));
     });
 }
 

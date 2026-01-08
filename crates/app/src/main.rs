@@ -1,4 +1,4 @@
-use agent_host::AgentHost;
+use agent_host::{AgentHost, CommandResult};
 use eframe::egui;
 use parking_lot::Mutex;
 use shared::agent_api::ChatMessage as ApiChatMessage;
@@ -6,12 +6,11 @@ use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewConte
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use viewers::{
-    csv_viewer::CsvViewer, image_viewer::ImageViewer, json_viewer::JsonViewer,
-    text_viewer::TextViewer, html_viewer::HtmlViewer, pdf_viewer::PdfViewer,
-    FileType,
+    csv_viewer::CsvViewer, html_viewer::HtmlViewer, image_viewer::ImageViewer,
+    json_viewer::JsonViewer, pdf_viewer::PdfViewer, text_viewer::TextViewer, FileType,
 };
 
 /// Result from background AI generation
@@ -20,7 +19,13 @@ struct AiResult {
     preview_file: Option<PathBuf>,
     error: Option<String>,
     /// Commands that were executed (for transparency)
-    executed_commands: Vec<(String, String, bool)>,  // (command, output, success)
+    executed_commands: Vec<(String, String, bool)>, // (command, output, success)
+    pending_commands: Vec<String>,
+}
+
+struct CommandExecResult {
+    command: String,
+    output: Result<CommandResult, String>,
 }
 
 // Default mascot image (boss's dog!)
@@ -28,11 +33,11 @@ const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
 // Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
 mod secrets;
-use secrets::{OPENAI_API_KEY, PRELOAD_USER_NAME, PRELOAD_SKIP_ONBOARDING};
+use secrets::{OPENAI_API_KEY, PRELOAD_SKIP_ONBOARDING, PRELOAD_USER_NAME};
 
 // Support contact info (gitignored - your personal contact stays private)
 mod support_info;
-use support_info::{SUPPORT_LINK, SUPPORT_BUTTON_TEXT};
+use support_info::{SUPPORT_BUTTON_TEXT, SUPPORT_LINK};
 
 // Interactive Preview Companion modules
 mod ascii_art;
@@ -41,7 +46,7 @@ mod preview_panel;
 
 // Campaign context loader
 mod context;
-use context::{get_campaign_summary, load_campaign_context, load_personas, load_ddd_workflow};
+use context::{get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
@@ -88,19 +93,19 @@ enum ActiveViewer {
     Json(JsonViewer),
     Html(HtmlViewer),
     Pdf(PdfViewer),
-    CommandOutput(String, String),  // (command, output) for showing command results
+    CommandOutput(String, String), // (command, output) for showing command results
 }
 
 struct AppState {
     settings: AppSettings,
     current_screen: AppScreen,
     current_mode: ChatMode,
-    previous_mode: Option<ChatMode>,  // For detecting mode changes
+    previous_mode: Option<ChatMode>, // For detecting mode changes
     input_text: String,
-    mode_input_drafts: std::collections::HashMap<ChatMode, String>,  // Preserve input per mode
+    mode_input_drafts: std::collections::HashMap<ChatMode, String>, // Preserve input per mode
     chat_history: Vec<ChatMessage>,
     is_thinking: bool,
-    thinking_status: String,  // What the agent is currently doing
+    thinking_status: String, // What the agent is currently doing
     #[allow(dead_code)] // Available for future agentic features
     agent_host: AgentHost,
 
@@ -111,29 +116,35 @@ struct AppState {
     show_preview: bool,
     preview_path: Option<PathBuf>,
     active_viewer: ActiveViewer,
-    pending_preview: Option<PathBuf>,  // File to auto-open after response
+    pending_preview: Option<PathBuf>, // File to auto-open after response
 
     // Onboarding
     onboarding_name: String,
 
+    // Pending command approvals
+    pending_commands: Vec<String>,
+
+    // Background command execution channel
+    command_result_rx: Option<Receiver<CommandExecResult>>,
+
     // Background mascot texture
     mascot_texture: Option<egui::TextureHandle>,
     mascot_loaded: bool,
-    
+
     // Async AI response channel
     ai_result_rx: Option<Receiver<AiResult>>,
-    
+
     // Slack integration
     show_slack_dialog: bool,
     slack_message_to_send: Option<String>,
     slack_selected_channel: String,
-    slack_status: Option<String>,  // Status message after send attempt
+    slack_status: Option<String>, // Status message after send attempt
 }
 
 impl Default for AppState {
     fn default() -> Self {
         let (mut settings, _) = load_settings_or_default();
-        
+
         // Apply preloaded user info if available (bespoke builds)
         if PRELOAD_SKIP_ONBOARDING {
             settings.user_profile.onboarding_complete = true;
@@ -142,7 +153,7 @@ impl Default for AppState {
                 settings.user_profile.name = PRELOAD_USER_NAME.to_string();
             }
         }
-        
+
         let needs_onboarding = !settings.user_profile.onboarding_complete;
 
         let user_name = if settings.user_profile.name.is_empty() {
@@ -181,11 +192,13 @@ impl Default for AppState {
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
             preview_panel,
-            show_preview: true,  // Preview visible by default
+            show_preview: true, // Preview visible by default
             preview_path: None,
-            active_viewer: ActiveViewer::Welcome,  // Start with welcome view
+            active_viewer: ActiveViewer::Welcome, // Start with welcome view
             pending_preview: None,
             onboarding_name: String::new(),
+            pending_commands: Vec::new(),
+            command_result_rx: None,
             mascot_texture: None,
             mascot_loaded: false,
             ai_result_rx: None,
@@ -198,6 +211,10 @@ impl Default for AppState {
 }
 
 impl AppState {
+    fn is_path_permitted(&self, path: &Path) -> bool {
+        is_path_in_allowed_dirs(path, &self.settings.allowed_dirs)
+    }
+
     /// Check for completed AI responses (called each frame)
     fn poll_ai_response(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
@@ -206,13 +223,14 @@ impl AppState {
                 self.is_thinking = false;
                 self.thinking_status.clear();
                 self.ai_result_rx = None;
-                
+
                 // Return to welcome view (unless Rick Roll is showing)
                 if matches!(self.active_viewer, ActiveViewer::Matrix) {
                     self.active_viewer = ActiveViewer::Welcome;
                 }
-                
+
                 if let Some(error) = result.error {
+                    self.pending_commands.clear();
                     // Format error message with helpful info
                     let error_content = format_error_message(&error);
                     let error_msg = ChatMessage {
@@ -224,14 +242,16 @@ impl AppState {
                 } else {
                     // Store file to preview
                     self.pending_preview = result.preview_file;
-                    
+                    self.pending_commands = result.pending_commands.clone();
+
                     // Show executed commands in preview panel if any ran
                     if !result.executed_commands.is_empty() {
                         // Show last command output in preview
                         if let Some((cmd, output, _)) = result.executed_commands.last() {
-                            self.active_viewer = ActiveViewer::CommandOutput(cmd.clone(), output.clone());
+                            self.active_viewer =
+                                ActiveViewer::CommandOutput(cmd.clone(), output.clone());
                         }
-                        
+
                         // Also add summary to chat
                         let mut cmd_summary = String::from("**Commands executed:**\n");
                         for (cmd, output, success) in &result.executed_commands {
@@ -244,7 +264,8 @@ impl AppState {
                                 output.clone()
                             };
                             if !output_preview.trim().is_empty() {
-                                cmd_summary.push_str(&format!("```\n{}\n```\n", output_preview.trim()));
+                                cmd_summary
+                                    .push_str(&format!("```\n{}\n```\n", output_preview.trim()));
                             }
                         }
                         self.chat_history.push(ChatMessage {
@@ -253,7 +274,7 @@ impl AppState {
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                     }
-                    
+
                     // Parse for preview tags (<preview type="..." ...>)
                     for tag in parse_preview_tags(&result.response) {
                         if let Some(content) = tag.to_content() {
@@ -268,10 +289,12 @@ impl AppState {
                                     });
                                 }
                                 PreviewContent::File { path, file_type } => {
-                                    self.preview_panel.show_content(PreviewContent::File {
-                                        path: path.clone(),
-                                        file_type: file_type.clone(),
-                                    });
+                                    if self.is_path_permitted(path) {
+                                        self.preview_panel.show_content(PreviewContent::File {
+                                            path: path.clone(),
+                                            file_type: file_type.clone(),
+                                        });
+                                    }
                                 }
                                 _ => {
                                     self.preview_panel.show_content(content);
@@ -287,15 +310,79 @@ impl AppState {
 
                     let assistant_msg = ChatMessage {
                         role: "assistant".to_string(),
-                        content: if clean_response.is_empty() { result.response.clone() } else { clean_response },
+                        content: if clean_response.is_empty() {
+                            result.response.clone()
+                        } else {
+                            clean_response
+                        },
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     self.chat_history.push(assistant_msg);
+
+                    if !self.pending_commands.is_empty() {
+                        let mut summary =
+                            String::from("I need your approval before running these commands:\n");
+                        for cmd in &self.pending_commands {
+                            summary.push_str(&format!("\n`{}`", cmd));
+                        }
+                        self.chat_history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: summary,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    }
                 }
             }
         }
     }
-    
+
+    fn poll_command_result(&mut self) {
+        if let Some(rx) = &self.command_result_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.command_result_rx = None;
+                self.is_thinking = false;
+                self.thinking_status.clear();
+
+                match result.output {
+                    Ok(cmd_result) => {
+                        self.active_viewer = ActiveViewer::CommandOutput(
+                            result.command.clone(),
+                            cmd_result.output.clone(),
+                        );
+                        self.chat_history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: format!(
+                                "Command `{}` completed.\n\n```\n{}\n```",
+                                result.command, cmd_result.output
+                            ),
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    }
+                    Err(err) => {
+                        self.chat_history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: format!("Command `{}` failed to run: {}", result.command, err),
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn approve_command(&mut self, command: String) {
+        self.pending_commands.retain(|c| c != &command);
+        let (tx, rx) = channel::<CommandExecResult>();
+        self.command_result_rx = Some(rx);
+        self.is_thinking = true;
+        self.thinking_status = format!("Running {}", command);
+
+        std::thread::spawn(move || {
+            let output = run_user_command(&command);
+            let _ = tx.send(CommandExecResult { command, output });
+        });
+    }
+
     /// Load the mascot image as a texture (custom or default)
     fn load_mascot_texture(&mut self, ctx: &egui::Context) {
         if self.mascot_loaded {
@@ -341,7 +428,7 @@ impl AppState {
         if self.input_text.trim().is_empty() {
             return;
         }
-        
+
         // Easter egg: Rick Roll when asking about Ben West
         let input_lower = self.input_text.to_lowercase();
         if input_lower.contains("ben west") || input_lower.contains("benwest") {
@@ -362,7 +449,7 @@ impl AppState {
         let _query = self.input_text.clone();
         self.input_text.clear();
         self.is_thinking = true;
-        
+
         // Show Matrix animation while processing (unless Rick Roll is showing)
         if !matches!(self.active_viewer, ActiveViewer::RickRoll) {
             self.active_viewer = ActiveViewer::Matrix;
@@ -445,7 +532,7 @@ UNIX/MAC COMMANDS TO USE:
 
 COMMON PATHS:
 - Documents: ~/Documents
-- Desktop: ~/Desktop  
+- Desktop: ~/Desktop
 - Downloads: ~/Downloads
 
 EXAMPLE - User asks "find my tax documents":
@@ -557,7 +644,7 @@ API RESEARCH (when needed):
 
 AVAILABLE TOOLS:
 - python3, pip (can install packages)
-- curl, wget (HTTP requests)  
+- curl, wget (HTTP requests)
 - jq (JSON processing)
 - Standard Unix tools"#;
 
@@ -597,7 +684,7 @@ ALWAYS:
                 let campaign_docs = load_campaign_context();
                 let personas = load_personas();
                 let ddd_workflow = load_ddd_workflow();
-                
+
                 format!(
                     r#"You are Little Helper in CONTENT CREATION mode, helping {}.
 
@@ -678,15 +765,23 @@ ALWAYS:
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
         self.thinking_status = "Thinking...".to_string();
-        
+
         let settings = self.settings.model.clone();
-        
+        let allowed_dirs = self.settings.allowed_dirs.clone();
+
         // Spawn background thread for AI work
         std::thread::spawn(move || {
-            run_ai_generation(messages, settings, allow_terminal, allow_web, tx);
+            run_ai_generation(
+                messages,
+                settings,
+                allow_terminal,
+                allow_web,
+                allowed_dirs,
+                tx,
+            );
         });
     }
-    
+
     /// Open a file in the preview panel
     fn open_file(&mut self, path: &Path, ctx: &egui::Context) {
         let file_type = FileType::from_path(path);
@@ -765,11 +860,12 @@ fn run_ai_generation(
     settings: shared::settings::ModelProvider,
     allow_terminal: bool,
     allow_web: bool,
+    allowed_dirs: Vec<String>,
     tx: Sender<AiResult>,
 ) {
-    use agent_host::{execute_command, web_search, classify_command, DangerLevel};
+    use agent_host::{classify_command, execute_command, web_search, DangerLevel};
     use providers::router::ProviderRouter;
-    
+
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -778,69 +874,79 @@ fn run_ai_generation(
                 preview_file: None,
                 error: Some(format!("Failed to start async runtime: {}", e)),
                 executed_commands: Vec::new(),
+                pending_commands: Vec::new(),
             });
             return;
         }
     };
-    
+
     let router = ProviderRouter::new(settings);
 
     // Pre-compile regexes
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
     let cmd_re = regex::Regex::new(r"(?s)<command>(.*?)</command>").unwrap();
-    
+
     let result = rt.block_on(async {
         let mut msgs = messages;
         let mut file_to_preview: Option<PathBuf> = None;
         let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
-        
+        let mut pending_commands: Vec<String> = Vec::new();
+        let mut pending_commands: Vec<String> = Vec::new();
+
         // Loop for multi-turn interactions (max 5 iterations)
         for _iteration in 0..5 {
             // Get AI response
             let response = router.generate(msgs.clone()).await?;
-            
+
             // Check for preview tags
             for tag in shared::preview_types::parse_preview_tags(&response) {
                 if tag.content_type == "file" {
                     if let Some(path_str) = tag.path {
-                        let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
-                            dirs::home_dir()
-                                .map(|h| h.join(stripped))
-                                .unwrap_or_else(|| PathBuf::from(path_str))
-                        } else {
-                            PathBuf::from(path_str)
-                        };
-                        if expanded.exists() {
+                        let expanded = expand_user_path(&path_str);
+                        if expanded.exists() && is_path_in_allowed_dirs(&expanded, &allowed_dirs) {
                             file_to_preview = Some(expanded);
                         }
                     }
                 }
             }
-            
+
             // Check for search and command tags
             let searches: Vec<String> = search_re
                 .captures_iter(&response)
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
-            
+
             let commands: Vec<String> = cmd_re
                 .captures_iter(&response)
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
-            
+
             // If no actions needed, return the response
             if searches.is_empty() && commands.is_empty() {
-                return Ok::<(String, Option<PathBuf>, Vec<(String, String, bool)>), anyhow::Error>((response, file_to_preview, all_executed_commands));
+                return Ok::<
+                    (
+                        String,
+                        Option<PathBuf>,
+                        Vec<(String, String, bool)>,
+                        Vec<String>,
+                    ),
+                    anyhow::Error,
+                >((
+                    response,
+                    file_to_preview,
+                    all_executed_commands,
+                    pending_commands,
+                ));
             }
-            
+
             // Add assistant response to conversation
             msgs.push(ApiChatMessage {
                 role: "assistant".to_string(),
                 content: response.clone(),
             });
-            
+
             let mut results = Vec::new();
-            
+
             // Execute searches
             for query in &searches {
                 if !allow_web {
@@ -852,14 +958,17 @@ fn run_ai_generation(
                 }
                 match web_search(query).await {
                     Ok(result) => {
-                        results.push(format!("[Search Results for '{}']\n{}", query, result.output));
+                        results.push(format!(
+                            "[Search Results for '{}']\n{}",
+                            query, result.output
+                        ));
                     }
                     Err(e) => {
                         results.push(format!("[Search failed for '{}']: {}", query, e));
                     }
                 }
             }
-            
+
             // Execute safe commands and track them
             for cmd in &commands {
                 if !allow_terminal {
@@ -876,29 +985,45 @@ fn run_ai_generation(
                 }
                 let danger = classify_command(cmd);
                 match danger {
-                    DangerLevel::Safe => {
-                        match execute_command(cmd, 30).await {
-                            Ok(result) => {
-                                all_executed_commands.push((cmd.clone(), result.output.clone(), result.success));
-                                results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
-                            }
-                            Err(e) => {
-                                all_executed_commands.push((cmd.clone(), e.to_string(), false));
-                                results.push(format!("[Command failed: {}]: {}", cmd, e));
-                            }
+                    DangerLevel::Safe => match execute_command(cmd, 30).await {
+                        Ok(result) => {
+                            all_executed_commands.push((
+                                cmd.clone(),
+                                result.output.clone(),
+                                result.success,
+                            ));
+                            results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
                         }
-                    }
+                        Err(e) => {
+                            all_executed_commands.push((cmd.clone(), e.to_string(), false));
+                            results.push(format!("[Command failed: {}]: {}", cmd, e));
+                        }
+                    },
                     DangerLevel::Blocked => {
-                        all_executed_commands.push((cmd.clone(), "Blocked for safety".to_string(), false));
+                        all_executed_commands.push((
+                            cmd.clone(),
+                            "Blocked for safety".to_string(),
+                            false,
+                        ));
                         results.push(format!("[Command blocked for safety: {}]", cmd));
                     }
                     _ => {
-                        all_executed_commands.push((cmd.clone(), "Needs user confirmation".to_string(), false));
-                        results.push(format!("[Command '{}' needs user confirmation - skipping for now]", cmd));
+                        all_executed_commands.push((
+                            cmd.clone(),
+                            "Needs user confirmation".to_string(),
+                            false,
+                        ));
+                        results.push(format!(
+                            "[Command '{}' needs user confirmation - skipping for now]",
+                            cmd
+                        ));
+                        if !pending_commands.iter().any(|c| c == cmd) {
+                            pending_commands.push(cmd.clone());
+                        }
                     }
                 }
             }
-            
+
             // Add results back to conversation
             if !results.is_empty() {
                 msgs.push(ApiChatMessage {
@@ -907,31 +1032,39 @@ fn run_ai_generation(
                 });
             }
         }
-        
-        Ok(("I've done several steps of research. Let me know if you need more details!".to_string(), file_to_preview, all_executed_commands))
+
+        Ok((
+            "I've done several steps of research. Let me know if you need more details!"
+                .to_string(),
+            file_to_preview,
+            all_executed_commands,
+            pending_commands,
+        ))
     });
 
     // Send result back to UI
     let ai_result = match result {
-        Ok((response, preview_file, executed_commands)) => AiResult {
+        Ok((response, preview_file, executed_commands, pending_commands)) => AiResult {
             response,
             preview_file,
             error: None,
             executed_commands,
+            pending_commands,
         },
         Err(e) => AiResult {
             response: String::new(),
             preview_file: None,
             error: Some(e.to_string()),
             executed_commands: Vec::new(),
+            pending_commands: Vec::new(),
         },
     };
-    
+
     let _ = tx.send(ai_result);
 }
 
 /// Extract file paths from text
-fn extract_paths(text: &str) -> Vec<PathBuf> {
+fn extract_paths(text: &str, allowed_dirs: &[String]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     // Match absolute paths like /home/user/file.txt or ~/file.txt
@@ -942,23 +1075,54 @@ fn extract_paths(text: &str) -> Vec<PathBuf> {
         if let Some(m) = cap.get(1) {
             let path_str = m.as_str();
             // Expand ~ to home directory
-            let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
-                if let Some(home) = dirs::home_dir() {
-                    home.join(stripped)
-                } else {
-                    PathBuf::from(path_str)
-                }
-            } else {
-                PathBuf::from(path_str)
-            };
+            let expanded = expand_user_path(path_str);
 
-            if expanded.exists() {
+            if expanded.exists() && is_path_in_allowed_dirs(&expanded, allowed_dirs) {
                 paths.push(expanded);
             }
         }
     }
 
     paths
+}
+
+fn expand_user_path(path_str: &str) -> PathBuf {
+    if let Some(stripped) = path_str.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(stripped);
+        }
+    }
+    PathBuf::from(path_str)
+}
+
+fn is_path_in_allowed_dirs(path: &Path, allowed_dirs: &[String]) -> bool {
+    if allowed_dirs.is_empty() {
+        return true;
+    }
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    allowed_dirs.iter().any(|allowed| {
+        let expanded = expand_user_path(allowed);
+        let allow_canon = expanded.canonicalize().unwrap_or(expanded);
+        canonical.starts_with(&allow_canon)
+    })
+}
+
+fn run_user_command(command: &str) -> Result<CommandResult, String> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    runtime
+        .block_on(agent_host::execute_command(command, 60))
+        .map_err(|e| e.to_string())
+}
+
+fn preload_openai_enabled() -> bool {
+    match std::env::var("LH_DISABLE_PRELOAD_OPENAI") {
+        Ok(val) => {
+            let v = val.trim().to_ascii_lowercase();
+            !(v == "1" || v == "true" || v == "yes")
+        }
+        Err(_) => true,
+    }
 }
 
 fn config_path() -> Option<std::path::PathBuf> {
@@ -976,21 +1140,19 @@ fn load_settings_or_default() -> (AppSettings, bool) {
     if let Some(path) = config_path() {
         if path.exists() {
             if let Ok(bytes) = fs::read(&path) {
-                if let Ok(mut s) = serde_json::from_slice::<AppSettings>(&bytes) {
-                    // Force OpenAI as primary provider with pre-loaded key
-                    s.model.provider_preference = vec!["openai".to_string()];
-                    s.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
+                if let Ok(s) = serde_json::from_slice::<AppSettings>(&bytes) {
                     return (s, false);
                 }
             }
         }
     }
-    // Fresh install - use OpenAI with pre-loaded key
+    // Fresh install - honor app defaults, optionally seed OpenAI key for bespoke builds
     let mut default_settings = AppSettings::default();
-    default_settings.allowed_dirs = vec![];
     default_settings.enable_internet_research = true;
     default_settings.model.provider_preference = vec!["openai".to_string()];
-    default_settings.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
+    if preload_openai_enabled() && !OPENAI_API_KEY.is_empty() {
+        default_settings.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
+    }
     (default_settings, true)
 }
 
@@ -1000,11 +1162,11 @@ fn clean_ai_response(response: &str) -> String {
     let re_preview = regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap();
     let re_search = regex::Regex::new(r"(?s)<search>.*?</search>").unwrap();
     let re_command = regex::Regex::new(r"(?s)<command>.*?</command>").unwrap();
-    
+
     let cleaned = re_preview.replace_all(response, "");
     let cleaned = re_search.replace_all(&cleaned, "");
     let cleaned = re_command.replace_all(&cleaned, "");
-    
+
     // Clean up extra whitespace
     cleaned.trim().to_string()
 }
@@ -1012,9 +1174,12 @@ fn clean_ai_response(response: &str) -> String {
 /// Format error message with helpful troubleshooting info
 fn format_error_message(error: &str) -> String {
     let error_lower = error.to_lowercase();
-    
+
     // API key issues
-    if error_lower.contains("unauthorized") || error_lower.contains("401") || error_lower.contains("invalid api key") {
+    if error_lower.contains("unauthorized")
+        || error_lower.contains("401")
+        || error_lower.contains("invalid api key")
+    {
         return format!(
             "I couldn't connect to the AI service - there may be an issue with the API key.\n\n\
             Error: {}\n\n\
@@ -1022,35 +1187,45 @@ fn format_error_message(error: &str) -> String {
             error
         );
     }
-    
+
     // Rate limiting
-    if error_lower.contains("rate limit") || error_lower.contains("429") || error_lower.contains("too many requests") {
+    if error_lower.contains("rate limit")
+        || error_lower.contains("429")
+        || error_lower.contains("too many requests")
+    {
         return format!(
             "The AI service is temporarily busy. Please wait a moment and try again.\n\n\
             Error: {}",
             error
         );
     }
-    
+
     // Network issues
-    if error_lower.contains("connection") || error_lower.contains("network") || error_lower.contains("timeout") 
-       || error_lower.contains("dns") || error_lower.contains("could not resolve") {
+    if error_lower.contains("connection")
+        || error_lower.contains("network")
+        || error_lower.contains("timeout")
+        || error_lower.contains("dns")
+        || error_lower.contains("could not resolve")
+    {
         return format!(
             "I'm having trouble connecting to the internet. Please check your network connection.\n\n\
             Error: {}",
             error
         );
     }
-    
+
     // Quota/billing issues
-    if error_lower.contains("quota") || error_lower.contains("billing") || error_lower.contains("insufficient") {
+    if error_lower.contains("quota")
+        || error_lower.contains("billing")
+        || error_lower.contains("insufficient")
+    {
         return format!(
             "The AI service quota may have been exceeded. Please let the team know!\n\n\
             Error: {}",
             error
         );
     }
-    
+
     // Generic error
     format!(
         "Sorry, I ran into an issue. Here's what happened:\n\n{}\n\n\
@@ -1088,6 +1263,7 @@ impl eframe::App for LittleHelperApp {
 
         // Poll for AI response (non-blocking)
         s.poll_ai_response();
+        s.poll_command_result();
 
         // Request repaint if we're waiting for AI (to keep polling)
         if s.is_thinking {
@@ -1107,7 +1283,8 @@ impl eframe::App for LittleHelperApp {
 
             // Restore input text for the new mode (or clear it)
             let new_mode = s.current_mode;
-            s.input_text = s.mode_input_drafts
+            s.input_text = s
+                .mode_input_drafts
                 .get(&new_mode)
                 .cloned()
                 .unwrap_or_default();
@@ -1126,13 +1303,17 @@ impl eframe::App for LittleHelperApp {
             style.visuals = egui::Visuals::dark();
             style.visuals.panel_fill = egui::Color32::from_rgb(30, 30, 35);
             // Enhanced focus states for accessibility (T502)
-            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
-            style.visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
+            style.visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
+            style.visuals.selection.stroke =
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 180, 255));
         } else {
             style.visuals.panel_fill = egui::Color32::from_rgb(250, 250, 252);
             // Enhanced focus states for accessibility (T502)
-            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
-            style.visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
+            style.visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
+            style.visuals.selection.stroke =
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 100, 200));
         }
         ctx.set_style(style);
 
@@ -1209,9 +1390,12 @@ impl eframe::App for LittleHelperApp {
                         // Support button - links to Signal
                         if ui
                             .add(
-                                egui::Button::new(egui::RichText::new(format!("💬 {}", SUPPORT_BUTTON_TEXT)).size(12.0))
-                                    .fill(egui::Color32::from_rgb(60, 130, 180))
-                                    .rounding(egui::Rounding::same(4.0)),
+                                egui::Button::new(
+                                    egui::RichText::new(format!("💬 {}", SUPPORT_BUTTON_TEXT))
+                                        .size(12.0),
+                                )
+                                .fill(egui::Color32::from_rgb(60, 130, 180))
+                                .rounding(egui::Rounding::same(4.0)),
                             )
                             .on_hover_text("Get help or send feedback")
                             .clicked()
@@ -1256,7 +1440,11 @@ impl eframe::App for LittleHelperApp {
                                 s.close_preview();
                             }
                         } else {
-                            if ui.button("Show Preview").on_hover_text("Show the preview panel").clicked() {
+                            if ui
+                                .button("Show Preview")
+                                .on_hover_text("Show the preview panel")
+                                .clicked()
+                            {
                                 s.show_preview = true;
                                 // Show mode intro if no other content
                                 if matches!(s.active_viewer, ActiveViewer::Welcome) {
@@ -1289,13 +1477,17 @@ impl eframe::App for LittleHelperApp {
                     ui.horizontal(|ui| {
                         let title = match &s.active_viewer {
                             ActiveViewer::Welcome => "Preview Panel".to_string(),
-                            ActiveViewer::CommandOutput(cmd, _) => format!("Output: {}", cmd.chars().take(30).collect::<String>()),
-                            _ => s.preview_path.as_ref()
+                            ActiveViewer::CommandOutput(cmd, _) => {
+                                format!("Output: {}", cmd.chars().take(30).collect::<String>())
+                            }
+                            _ => s
+                                .preview_path
+                                .as_ref()
                                 .and_then(|p| p.file_name())
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_else(|| "Preview".to_string()),
                         };
-                        
+
                         ui.label(egui::RichText::new(title).size(16.0).strong());
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1309,14 +1501,22 @@ impl eframe::App for LittleHelperApp {
                             }
                         });
                     });
-                    
+
                     // File action buttons (only for actual files)
                     if let Some(path) = s.preview_path.clone() {
                         ui.horizontal(|ui| {
-                            if ui.small_button("Open in App").on_hover_text("Open with default application").clicked() {
+                            if ui
+                                .small_button("Open in App")
+                                .on_hover_text("Open with default application")
+                                .clicked()
+                            {
                                 let _ = open::that(&path);
                             }
-                            if ui.small_button("Show in Folder").on_hover_text("Open containing folder").clicked() {
+                            if ui
+                                .small_button("Show in Folder")
+                                .on_hover_text("Open containing folder")
+                                .clicked()
+                            {
                                 if let Some(parent) = path.parent() {
                                     let _ = open::that(parent);
                                 }
@@ -1324,8 +1524,9 @@ impl eframe::App for LittleHelperApp {
                             ui.label(
                                 egui::RichText::new(path.to_string_lossy().to_string())
                                     .size(10.0)
-                                    .weak()
-                            ).on_hover_text("Full path");
+                                    .weak(),
+                            )
+                            .on_hover_text("Full path");
                         });
                     }
                     ui.separator();
@@ -1402,7 +1603,11 @@ impl eframe::App for LittleHelperApp {
                 // Thread controls bar (T116-T118)
                 ui.horizontal(|ui| {
                     // New Thread button (T116)
-                    if ui.small_button("+ New Thread").on_hover_text("Start a fresh conversation").clicked() {
+                    if ui
+                        .small_button("+ New Thread")
+                        .on_hover_text("Start a fresh conversation")
+                        .clicked()
+                    {
                         // Clear current chat and start fresh
                         let user_name = if s.settings.user_profile.name.is_empty() {
                             "friend"
@@ -1430,12 +1635,16 @@ impl eframe::App for LittleHelperApp {
                     ui.label(
                         egui::RichText::new(format!("{} messages", thread_count))
                             .small()
-                            .weak()
+                            .weak(),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Clear History button (T118)
-                        if ui.small_button("🗑").on_hover_text("Clear this conversation").clicked() {
+                        if ui
+                            .small_button("🗑")
+                            .on_hover_text("Clear this conversation")
+                            .clicked()
+                        {
                             let user_name = if s.settings.user_profile.name.is_empty() {
                                 "friend"
                             } else {
@@ -1471,7 +1680,7 @@ impl eframe::App for LittleHelperApp {
                     .show(ui, |ui| {
                         for msg in &s.chat_history {
                             ui.add_space(6.0);
-                            let action = render_message(ui, msg, dark);
+                            let action = render_message(ui, msg, dark, &s.settings.allowed_dirs);
                             if action.clicked_path.is_some() {
                                 clicked_path = action.clicked_path;
                             }
@@ -1501,13 +1710,13 @@ impl eframe::App for LittleHelperApp {
                                             2 => ".. ",
                                             _ => "...",
                                         };
-                                        
+
                                         let status = if s.thinking_status.is_empty() {
                                             "Thinking".to_string()
                                         } else {
                                             s.thinking_status.clone()
                                         };
-                                        
+
                                         ui.label(
                                             egui::RichText::new(format!("{}{}", status, dots))
                                                 .color(if dark {
@@ -1528,12 +1737,12 @@ impl eframe::App for LittleHelperApp {
                 if let Some(path) = clicked_path {
                     s.open_file(&path, ctx);
                 }
-                
+
                 // Handle pending preview from agent (auto-open)
                 if let Some(path) = s.pending_preview.take() {
                     s.open_file(&path, ctx);
                 }
-                
+
                 // Handle Slack send request
                 if let Some(msg) = slack_msg {
                     s.slack_message_to_send = Some(msg);
@@ -1542,6 +1751,30 @@ impl eframe::App for LittleHelperApp {
                 }
 
                 ui.add_space(8.0);
+
+                if !s.pending_commands.is_empty() {
+                    ui.group(|ui| {
+                        ui.label(
+                            egui::RichText::new("Commands awaiting approval")
+                                .strong()
+                                .color(egui::Color32::from_rgb(200, 150, 80)),
+                        );
+                        ui.add_space(6.0);
+                        let pending = s.pending_commands.clone();
+                        for cmd in pending {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(format!("$ {}", cmd)).monospace());
+                                if ui.button("Run").clicked() {
+                                    s.approve_command(cmd.clone());
+                                }
+                                if ui.button("Dismiss").clicked() {
+                                    s.pending_commands.retain(|c| c != &cmd);
+                                }
+                            });
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
 
                 // Input area
                 ui.horizontal(|ui| {
@@ -1574,7 +1807,7 @@ impl eframe::App for LittleHelperApp {
                     }
                 });
             });
-        
+
         // Slack dialog window (modal-ish)
         if s.show_slack_dialog {
             egui::Window::new("Send to Slack")
@@ -1583,9 +1816,9 @@ impl eframe::App for LittleHelperApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.set_min_width(400.0);
-                    
+
                     ui.add_space(8.0);
-                    
+
                     // Channel selector
                     ui.horizontal(|ui| {
                         ui.label("Channel:");
@@ -1606,9 +1839,9 @@ impl eframe::App for LittleHelperApp {
                                 }
                             });
                     });
-                    
+
                     ui.add_space(8.0);
-                    
+
                     // Preview of message
                     ui.label("Message preview:");
                     egui::ScrollArea::vertical()
@@ -1623,9 +1856,9 @@ impl eframe::App for LittleHelperApp {
                                 ui.label(&preview);
                             }
                         });
-                    
+
                     ui.add_space(8.0);
-                    
+
                     // Status message
                     if let Some(status) = &s.slack_status {
                         if status.starts_with("Error") {
@@ -1635,7 +1868,7 @@ impl eframe::App for LittleHelperApp {
                         }
                         ui.add_space(8.0);
                     }
-                    
+
                     // Webhook URL check
                     if s.settings.slack.webhook_url.is_none() {
                         ui.colored_label(
@@ -1644,7 +1877,7 @@ impl eframe::App for LittleHelperApp {
                         );
                         ui.add_space(8.0);
                     }
-                    
+
                     // Buttons
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() {
@@ -1652,19 +1885,19 @@ impl eframe::App for LittleHelperApp {
                             s.slack_message_to_send = None;
                             s.slack_status = None;
                         }
-                        
+
                         let can_send = s.settings.slack.webhook_url.is_some() || std::env::var("SLACK_WEBHOOK_URL").is_ok();
-                        
+
                         if ui.add_enabled(can_send, egui::Button::new("Send")).clicked() {
                             // Send to Slack
                             if let Some(msg) = &s.slack_message_to_send {
                                 let webhook_url = s.settings.slack.webhook_url.clone()
                                     .or_else(|| std::env::var("SLACK_WEBHOOK_URL").ok());
-                                
+
                                 if let Some(url) = webhook_url {
                                     let channel = s.slack_selected_channel.clone();
                                     let message = msg.clone();
-                                    
+
                                     // Spawn async send
                                     let result = send_slack_message_sync(&url, &channel, &message);
                                     match result {
@@ -1687,8 +1920,6 @@ impl eframe::App for LittleHelperApp {
 
 /// Send a Slack message synchronously (for UI thread)
 fn send_slack_message_sync(webhook_url: &str, channel: &str, message: &str) -> Result<(), String> {
-
-    
     // Build JSON payload
     let payload = serde_json::json!({
         "channel": channel,
@@ -1696,22 +1927,26 @@ fn send_slack_message_sync(webhook_url: &str, channel: &str, message: &str) -> R
         "icon_emoji": ":robot_face:",
         "text": message
     });
-    
+
     // Use ureq for simple sync HTTP (or we could spawn a thread)
     // For now, use std::process to call curl as a simple solution
     let payload_str = payload.to_string();
-    
+
     let output = std::process::Command::new("curl")
         .args([
-            "-s", "-S",
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-d", &payload_str,
-            webhook_url
+            "-s",
+            "-S",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload_str,
+            webhook_url,
         ])
         .output()
         .map_err(|e| format!("Failed to send: {}", e))?;
-    
+
     if output.status.success() {
         let response = String::from_utf8_lossy(&output.stdout);
         if response.contains("ok") || response.is_empty() {
@@ -1751,51 +1986,72 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
     } else {
         egui::Color32::from_rgb(60, 60, 70)
     };
-    
+
     let accent_color = if dark {
         egui::Color32::from_rgb(100, 160, 220)
     } else {
         egui::Color32::from_rgb(70, 130, 180)
     };
-    
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(20.0);
-        
+
         // Mode-specific tips
         let (mode_name, tips) = match current_mode {
-            ChatMode::Fix => ("Fix Mode", vec![
-                "Tell me what's broken - I'll diagnose it",
-                "Need a file? I can find that too",
-                "Diagnostics and logs show up here",
-                "Try: \"my wifi keeps disconnecting\"",
-                "Try: \"find my tax documents\"",
-            ]),
-            ChatMode::Research => ("Research Mode", vec![
-                "Ask me to research any topic",
-                "I'll search multiple sources with citations",
-                "Results and sources shown here",
-                "Try: \"research the latest on Alberta politics\"",
-            ]),
-            ChatMode::Data => ("Data Mode", vec![
-                "Work with CSV, JSON, Excel files",
-                "Data tables render right here",
-                "I can analyze and transform data",
-                "Try: \"analyze this spreadsheet\" + drop a file",
-            ]),
-            ChatMode::Content => ("Content Mode", vec![
-                "Create content for any platform",
-                "I know your campaign personas",
-                "Drafts preview here before saving",
-                "Try: \"write a tweet about healthcare\"",
-            ]),
+            ChatMode::Fix => (
+                "Fix Mode",
+                vec![
+                    "Tell me what's broken - I'll diagnose it",
+                    "Need a file? I can find that too",
+                    "Diagnostics and logs show up here",
+                    "Try: \"my wifi keeps disconnecting\"",
+                    "Try: \"find my tax documents\"",
+                ],
+            ),
+            ChatMode::Research => (
+                "Research Mode",
+                vec![
+                    "Ask me to research any topic",
+                    "I'll search multiple sources with citations",
+                    "Results and sources shown here",
+                    "Try: \"research the latest on Alberta politics\"",
+                ],
+            ),
+            ChatMode::Data => (
+                "Data Mode",
+                vec![
+                    "Work with CSV, JSON, Excel files",
+                    "Data tables render right here",
+                    "I can analyze and transform data",
+                    "Try: \"analyze this spreadsheet\" + drop a file",
+                ],
+            ),
+            ChatMode::Content => (
+                "Content Mode",
+                vec![
+                    "Create content for any platform",
+                    "I know your campaign personas",
+                    "Drafts preview here before saving",
+                    "Try: \"write a tweet about healthcare\"",
+                ],
+            ),
         };
-        
-        ui.label(egui::RichText::new(format!("📋 {}", mode_name)).size(18.0).color(accent_color).strong());
+
+        ui.label(
+            egui::RichText::new(format!("📋 {}", mode_name))
+                .size(18.0)
+                .color(accent_color)
+                .strong(),
+        );
         ui.add_space(12.0);
-        
-        ui.label(egui::RichText::new("This panel shows live previews:").size(14.0).color(text_color));
+
+        ui.label(
+            egui::RichText::new("This panel shows live previews:")
+                .size(14.0)
+                .color(text_color),
+        );
         ui.add_space(8.0);
-        
+
         for tip in tips {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("•").color(accent_color));
@@ -1803,26 +2059,39 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
             });
             ui.add_space(4.0);
         }
-        
+
         ui.add_space(20.0);
         ui.separator();
         ui.add_space(12.0);
-        
+
         // Capabilities reminder
-        ui.label(egui::RichText::new("🛠 I can:").size(14.0).color(accent_color));
+        ui.label(
+            egui::RichText::new("🛠 I can:")
+                .size(14.0)
+                .color(accent_color),
+        );
         ui.add_space(8.0);
-        
+
         let capabilities = [
-            ("⌨️", "Run terminal commands", "Safe commands execute automatically"),
+            (
+                "⌨️",
+                "Run terminal commands",
+                "Safe commands execute automatically",
+            ),
             ("🔍", "Search the web", "With sources and citations"),
             ("📄", "Preview files", "Text, images, CSV, JSON, HTML, PDF"),
             ("💬", "Send to Slack", "Share responses to your channels"),
         ];
-        
+
         for (icon, name, desc) in capabilities {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(icon).size(14.0));
-                ui.label(egui::RichText::new(name).size(13.0).strong().color(text_color));
+                ui.label(
+                    egui::RichText::new(name)
+                        .size(13.0)
+                        .strong()
+                        .color(text_color),
+                );
                 ui.label(egui::RichText::new(format!("- {}", desc)).size(12.0).weak());
             });
             ui.add_space(2.0);
@@ -1837,23 +2106,33 @@ fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str)
     } else {
         egui::Color32::from_rgb(245, 245, 250)
     };
-    
+
     let text_color = if dark {
         egui::Color32::from_rgb(200, 220, 200)
     } else {
         egui::Color32::from_rgb(40, 60, 40)
     };
-    
+
     ui.add_space(8.0);
-    
+
     // Command that was run
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("$").size(14.0).color(egui::Color32::from_rgb(100, 200, 100)).strong());
-        ui.label(egui::RichText::new(cmd).size(13.0).color(text_color).monospace());
+        ui.label(
+            egui::RichText::new("$")
+                .size(14.0)
+                .color(egui::Color32::from_rgb(100, 200, 100))
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(cmd)
+                .size(13.0)
+                .color(text_color)
+                .monospace(),
+        );
     });
-    
+
     ui.add_space(8.0);
-    
+
     // Output in a scrollable code block
     egui::Frame::none()
         .fill(bg_color)
@@ -1867,7 +2146,7 @@ fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str)
                         egui::RichText::new(output)
                             .size(12.0)
                             .color(text_color)
-                            .monospace()
+                            .monospace(),
                     );
                 });
         });
@@ -1877,49 +2156,52 @@ fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str)
 fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
     let rect = ui.available_rect_before_wrap();
     let time = ui.input(|i| i.time);
-    
+
     // Matrix green
     let matrix_green = egui::Color32::from_rgb(0, 255, 65);
-    
+
     // Fill background black
-    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(0, 0, 0));
-    
+    ui.painter()
+        .rect_filled(rect, 0.0, egui::Color32::from_rgb(0, 0, 0));
+
     // Matrix characters
     let chars: Vec<char> = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789".chars().collect();
-    
+
     let col_width = 14.0;
     let row_height = 16.0;
     let cols = (rect.width() / col_width) as i32;
     let rows = (rect.height() / row_height) as i32;
-    
+
     for col in 0..cols {
         // Each column has its own speed and offset
         let col_seed = (col as f64 * 7.3).sin() * 1000.0;
         let speed = 2.0 + (col_seed.cos() * 1.5);
         let offset = (col_seed * 3.7) % (rows as f64 * 2.0);
-        
+
         for row in 0..rows {
-            let y_pos = ((time * speed + offset + row as f64) % (rows as f64 * 1.5)) - rows as f64 * 0.25;
-            
+            let y_pos =
+                ((time * speed + offset + row as f64) % (rows as f64 * 1.5)) - rows as f64 * 0.25;
+
             if y_pos >= 0.0 && y_pos < rows as f64 {
-                let char_idx = ((time * 10.0 + col as f64 * 3.0 + row as f64) as usize) % chars.len();
+                let char_idx =
+                    ((time * 10.0 + col as f64 * 3.0 + row as f64) as usize) % chars.len();
                 let ch = chars[char_idx];
-                
+
                 // Fade based on position in trail
                 let fade = (1.0 - (y_pos / rows as f64)).max(0.0).min(1.0);
                 let alpha = (fade * 255.0) as u8;
-                
+
                 let color = if row as f64 == y_pos.floor() {
                     egui::Color32::from_rgba_unmultiplied(200, 255, 200, alpha) // Bright head
                 } else {
                     egui::Color32::from_rgba_unmultiplied(0, 255, 65, alpha / 2)
                 };
-                
+
                 let pos = egui::pos2(
                     rect.left() + col as f32 * col_width,
                     rect.top() + y_pos as f32 * row_height,
                 );
-                
+
                 ui.painter().text(
                     pos,
                     egui::Align2::LEFT_TOP,
@@ -1930,7 +2212,7 @@ fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
             }
         }
     }
-    
+
     // "PROCESSING..." text in center
     let center = rect.center();
     ui.painter().text(
@@ -1940,7 +2222,7 @@ fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::FontId::monospace(24.0),
         matrix_green,
     );
-    
+
     // Request repaint for animation
     ctx.request_repaint();
 }
@@ -1948,59 +2230,56 @@ fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
 /// Render Rick Roll easter egg
 fn render_rick_roll(ui: &mut egui::Ui, _dark: bool) {
     let rect = ui.available_rect_before_wrap();
-    
+
     // Fun gradient background
-    ui.painter().rect_filled(
-        rect,
-        12.0,
-        egui::Color32::from_rgb(30, 30, 50),
-    );
-    
+    ui.painter()
+        .rect_filled(rect, 12.0, egui::Color32::from_rgb(30, 30, 50));
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(40.0);
-        
+
         ui.vertical_centered(|ui| {
             // Big emoji
             ui.label(egui::RichText::new("🕺💃🎵").size(60.0));
-            
+
             ui.add_space(20.0);
-            
+
             // The reveal
             ui.label(
                 egui::RichText::new("Never Gonna Give You Up!")
                     .size(28.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(255, 100, 100))
+                    .color(egui::Color32::from_rgb(255, 100, 100)),
             );
-            
+
             ui.add_space(10.0);
-            
+
             ui.label(
                 egui::RichText::new("Never Gonna Let You Down!")
                     .size(22.0)
-                    .color(egui::Color32::from_rgb(255, 150, 100))
+                    .color(egui::Color32::from_rgb(255, 150, 100)),
             );
-            
+
             ui.add_space(30.0);
-            
+
             // The message
             ui.label(
                 egui::RichText::new("You just got Rick Rolled! 🎤")
                     .size(18.0)
                     .italics()
-                    .color(egui::Color32::from_rgb(200, 200, 255))
+                    .color(egui::Color32::from_rgb(200, 200, 255)),
             );
-            
+
             ui.add_space(20.0);
-            
+
             ui.label(
                 egui::RichText::new("(Nice try searching for Ben West though)")
                     .size(14.0)
-                    .weak()
+                    .weak(),
             );
-            
+
             ui.add_space(40.0);
-            
+
             // Link to the real thing
             if ui.link("🔗 Watch the classic").clicked() {
                 let _ = open::that("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
@@ -2016,7 +2295,12 @@ struct MessageAction {
 }
 
 /// Render a chat message, returning any actions taken
-fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> MessageAction {
+fn render_message(
+    ui: &mut egui::Ui,
+    msg: &ChatMessage,
+    dark: bool,
+    allowed_dirs: &[String],
+) -> MessageAction {
     let is_user = msg.role == "user";
     let mut action = MessageAction {
         clicked_path: None,
@@ -2054,7 +2338,7 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> MessageAc
                 ui.set_max_width(600.0);
 
                 // Check for file paths in the message
-                let paths = extract_paths(&msg.content);
+                let paths = extract_paths(&msg.content, allowed_dirs);
 
                 let text_color = if dark {
                     egui::Color32::from_rgb(220, 220, 230)
@@ -2093,15 +2377,23 @@ fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, dark: bool) -> MessageAc
                         }
                     }
                 }
-                
+
                 // Action buttons for assistant responses
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.small_button("Copy").on_hover_text("Copy to clipboard").clicked() {
+                    if ui
+                        .small_button("Copy")
+                        .on_hover_text("Copy to clipboard")
+                        .clicked()
+                    {
                         ui.output_mut(|o| o.copied_text = msg.content.clone());
                     }
                     ui.add_space(8.0);
-                    if ui.small_button("Send to Slack").on_hover_text("Share this response to a Slack channel").clicked() {
+                    if ui
+                        .small_button("Send to Slack")
+                        .on_hover_text("Share this response to a Slack channel")
+                        .clicked()
+                    {
                         action.send_to_slack = Some(msg.content.clone());
                     }
                 });
@@ -2178,7 +2470,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                     ("Deep research", "thorough answers with real sources"),
                     ("Content creation", "drafting, scheduling, and managing"),
                 ];
-                
+
                 for (title, desc) in features {
                     ui.horizontal(|ui| {
                         ui.add_space(40.0);
@@ -2296,7 +2588,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 )
                                 .fill(egui::Color32::from_rgb(255, 240, 220))
                                 .rounding(egui::Rounding::same(8.0));
-                                
+
                                 if ui.add(btn).clicked() {
                                     if let Some(path) = rfd::FileDialog::new()
                                         .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
@@ -2306,7 +2598,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                             Some(path.to_string_lossy().to_string());
                                     }
                                 }
-                                
+
                                 ui.add_space(8.0);
                                 ui.label(
                                     egui::RichText::new("(or skip - there's a cute default!)")
@@ -2337,7 +2629,42 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ));
                         });
 
-                        ui.add_space(36.0);
+                        ui.add_space(24.0);
+
+                        ui.group(|ui| {
+                            ui.label(
+                                egui::RichText::new("Can I run terminal commands for you?")
+                                    .size(14.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(220, 210, 200)
+                                    } else {
+                                        warm_brown
+                                    }),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "This lets me list files, gather diagnostics, and fix issues automatically."
+                                )
+                                .size(12.0)
+                                .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
+                            );
+                            ui.add_space(6.0);
+                            let mut permission = s.settings.user_profile.terminal_permission_granted;
+                            if ui
+                                .checkbox(&mut permission, "Yes, allow terminal access (recommended)")
+                                .changed()
+                            {
+                                s.settings.user_profile.terminal_permission_granted = permission;
+                            }
+                            ui.label(
+                                egui::RichText::new("You can change this later from settings.")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_gray(120)),
+                            );
+                        });
+
+                        ui.add_space(24.0);
 
                         // Get Started button - warm orange
                         ui.vertical_centered(|ui| {
@@ -2357,8 +2684,6 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                     s.settings.user_profile.name = s.onboarding_name.trim().to_string();
                                 }
                                 s.settings.user_profile.onboarding_complete = true;
-                                // Grant terminal permission by default for engaged users
-                                s.settings.user_profile.terminal_permission_granted = true;
 
                                 // Update welcome message with user's name - warm and friendly
                                 let user_name = if s.settings.user_profile.name.is_empty() {

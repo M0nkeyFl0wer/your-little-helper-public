@@ -45,7 +45,11 @@ pub struct GeminiClient {
 impl GeminiClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("GEMINI_API_KEY").map_err(|_| anyhow!("GEMINI_API_KEY not set"))?;
-        Ok(Self { http: Client::new(), auth_token: key, model: model.to_string() })
+        Ok(Self {
+            http: Client::new(),
+            auth_token: key,
+            model: model.to_string(),
+        })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
@@ -55,7 +59,8 @@ impl GeminiClient {
             oauth.access_token.clone()
         } else {
             // Try environment variable as fallback
-            env::var("GEMINI_API_KEY").map_err(|_| anyhow!("No Gemini authentication configured"))?
+            env::var("GEMINI_API_KEY")
+                .map_err(|_| anyhow!("No Gemini authentication configured"))?
         };
 
         Ok(Self {
@@ -66,14 +71,22 @@ impl GeminiClient {
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.auth_token);
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.auth_token
+        );
         let contents: Vec<GeminiContent> = messages
             .into_iter()
-            .map(|m| GeminiContent { role: m.role, parts: vec![GeminiPart { text: m.content }] })
+            .map(|m| GeminiContent {
+                role: m.role,
+                parts: vec![GeminiPart { text: m.content }],
+            })
             .collect();
         let req = GeminiRequest { contents };
         let resp = self.http.post(url).json(&req).send().await?;
-        if !resp.status().is_success() { return Err(anyhow!("gemini error: {}", resp.status())); }
+        if !resp.status().is_success() {
+            return Err(anyhow!("gemini error: {}", resp.status()));
+        }
         let body: GeminiResponse = resp.json().await?;
         let text = body
             .candidates

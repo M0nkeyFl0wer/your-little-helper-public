@@ -36,7 +36,11 @@ pub struct OpenAIClient {
 impl OpenAIClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("OPENAI_API_KEY").map_err(|_| anyhow!("OPENAI_API_KEY not set"))?;
-        Ok(Self { http: Client::new(), auth_token: key, model: model.to_string() })
+        Ok(Self {
+            http: Client::new(),
+            auth_token: key,
+            model: model.to_string(),
+        })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
@@ -46,7 +50,8 @@ impl OpenAIClient {
             oauth.access_token.clone()
         } else {
             // Try environment variable as fallback
-            env::var("OPENAI_API_KEY").map_err(|_| anyhow!("No OpenAI authentication configured"))?
+            env::var("OPENAI_API_KEY")
+                .map_err(|_| anyhow!("No OpenAI authentication configured"))?
         };
 
         Ok(Self {
@@ -60,10 +65,17 @@ impl OpenAIClient {
         let url = "https://api.openai.com/v1/chat/completions";
         let openai_messages: Vec<OpenAIMessage> = messages
             .into_iter()
-            .map(|m| OpenAIMessage { role: m.role, content: m.content })
+            .map(|m| OpenAIMessage {
+                role: m.role,
+                content: m.content,
+            })
             .collect();
-        let req = OpenAIRequest { model: self.model.clone(), messages: openai_messages };
-        let resp = self.http
+        let req = OpenAIRequest {
+            model: self.model.clone(),
+            messages: openai_messages,
+        };
+        let resp = self
+            .http
             .post(url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .header("Content-Type", "application/json")

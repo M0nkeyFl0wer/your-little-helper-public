@@ -1,6 +1,6 @@
+pub mod events;
 pub mod preview_types;
 pub mod skill;
-pub mod events;
 pub mod version;
 
 pub mod settings {

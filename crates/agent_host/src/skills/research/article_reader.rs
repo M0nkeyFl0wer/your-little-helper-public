@@ -7,8 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
-    Citation,
+    Citation, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Article reader skill.
@@ -104,7 +103,10 @@ impl ArticleReader {
         }
 
         // Source
-        output.push_str(&format!("\n**Source**: [{}]({})\n", article.url, article.url));
+        output.push_str(&format!(
+            "\n**Source**: [{}]({})\n",
+            article.url, article.url
+        ));
 
         output
     }
@@ -153,7 +155,9 @@ impl Skill for ArticleReader {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         // Try to extract URL from query or params
-        let url = input.params.get("url")
+        let url = input
+            .params
+            .get("url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| Self::extract_url(&input.query));
@@ -164,7 +168,7 @@ impl Skill for ArticleReader {
                 return Ok(SkillOutput::text(
                     "Please provide a URL to read.\n\n\
                      Example: \"Read https://example.com/article\"\n\n\
-                     I'll extract the main content and provide a summary."
+                     I'll extract the main content and provide a summary.",
                 ));
             }
         };

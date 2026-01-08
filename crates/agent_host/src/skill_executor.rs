@@ -5,9 +5,7 @@
 
 use anyhow::Result;
 use shared::events::SkillEvent;
-use shared::skill::{
-    ExecutionStatus, Skill, SkillContext, SkillError, SkillExecution, SkillInput,
-};
+use shared::skill::{ExecutionStatus, Skill, SkillContext, SkillError, SkillExecution, SkillInput};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -223,9 +221,9 @@ impl SkillExecutor {
                     } else {
                         failed.push((
                             skill_id,
-                            SkillError::ExecutionFailed(anyhow::anyhow!(
-                                execution.error.unwrap_or_else(|| "Unknown error".to_string())
-                            )),
+                            SkillError::ExecutionFailed(anyhow::anyhow!(execution
+                                .error
+                                .unwrap_or_else(|| "Unknown error".to_string()))),
                         ));
                     }
                 }
@@ -275,9 +273,9 @@ impl SkillExecutor {
                     } else {
                         failed.push((
                             skill_id,
-                            SkillError::ExecutionFailed(anyhow::anyhow!(
-                                execution.error.unwrap_or_else(|| "Unknown error".to_string())
-                            )),
+                            SkillError::ExecutionFailed(anyhow::anyhow!(execution
+                                .error
+                                .unwrap_or_else(|| "Unknown error".to_string()))),
                         ));
                     }
                 }

@@ -6,13 +6,13 @@
 //! - Error message explanation
 //! - Log analysis (future)
 
-pub mod system_diagnostics;
-pub mod process_monitor;
 pub mod error_explainer;
+pub mod process_monitor;
+pub mod system_diagnostics;
 
-pub use system_diagnostics::SystemDiagnostics;
-pub use process_monitor::ProcessMonitor;
 pub use error_explainer::ErrorExplainer;
+pub use process_monitor::ProcessMonitor;
+pub use system_diagnostics::SystemDiagnostics;
 
 use crate::skills::SkillRegistry;
 use std::sync::Arc;
