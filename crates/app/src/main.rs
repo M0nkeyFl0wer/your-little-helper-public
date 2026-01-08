@@ -2,7 +2,7 @@ use agent_host::AgentHost;
 use eframe::egui;
 use parking_lot::Mutex;
 use shared::agent_api::ChatMessage as ApiChatMessage;
-use shared::preview_types::{parse_preview_tag, strip_preview_tags, PreviewContent};
+use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -254,13 +254,11 @@ impl AppState {
                         });
                     }
                     
-                    // Parse for new-style preview tags (<preview type="..." ...>)
-                    if let Some(tag) = parse_preview_tag(&result.response) {
+                    // Parse for preview tags (<preview type="..." ...>)
+                    for tag in parse_preview_tags(&result.response) {
                         if let Some(content) = tag.to_content() {
-                            // For web previews, update the preview panel
                             match &content {
                                 PreviewContent::Web { url, .. } => {
-                                    // Show web preview with basic info (async fetch happens separately)
                                     self.preview_panel.show_content(PreviewContent::Web {
                                         url: url.clone(),
                                         title: None,
@@ -270,14 +268,12 @@ impl AppState {
                                     });
                                 }
                                 PreviewContent::File { path, file_type } => {
-                                    // Show file preview
                                     self.preview_panel.show_content(PreviewContent::File {
                                         path: path.clone(),
                                         file_type: file_type.clone(),
                                     });
                                 }
                                 _ => {
-                                    // Show any other content type directly
                                     self.preview_panel.show_content(content);
                                 }
                             }
@@ -790,9 +786,8 @@ fn run_ai_generation(
     let router = ProviderRouter::new(settings);
 
     // Pre-compile regexes
-    let preview_re = regex::Regex::new(r"<preview>([^<]+)</preview>").unwrap();
-    let search_re = regex::Regex::new(r"<search>([^<]+)</search>").unwrap();
-    let cmd_re = regex::Regex::new(r"<command>([^<]+)</command>").unwrap();
+    let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
+    let cmd_re = regex::Regex::new(r"(?s)<command>(.*?)</command>").unwrap();
     
     let result = rt.block_on(async {
         let mut msgs = messages;
@@ -805,28 +800,31 @@ fn run_ai_generation(
             let response = router.generate(msgs.clone()).await?;
             
             // Check for preview tags
-            if let Some(cap) = preview_re.captures(&response) {
-                if let Some(m) = cap.get(1) {
-                    let path_str = m.as_str().trim();
-                    let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
-                        dirs::home_dir()
-                            .map(|h| h.join(stripped))
-                            .unwrap_or_else(|| PathBuf::from(path_str))
-                    } else {
-                        PathBuf::from(path_str)
-                    };
-                    if expanded.exists() {
-                        file_to_preview = Some(expanded);
+            for tag in shared::preview_types::parse_preview_tags(&response) {
+                if tag.content_type == "file" {
+                    if let Some(path_str) = tag.path {
+                        let expanded = if let Some(stripped) = path_str.strip_prefix("~/") {
+                            dirs::home_dir()
+                                .map(|h| h.join(stripped))
+                                .unwrap_or_else(|| PathBuf::from(path_str))
+                        } else {
+                            PathBuf::from(path_str)
+                        };
+                        if expanded.exists() {
+                            file_to_preview = Some(expanded);
+                        }
                     }
                 }
             }
             
             // Check for search and command tags
-            let searches: Vec<String> = search_re.captures_iter(&response)
+            let searches: Vec<String> = search_re
+                .captures_iter(&response)
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
             
-            let commands: Vec<String> = cmd_re.captures_iter(&response)
+            let commands: Vec<String> = cmd_re
+                .captures_iter(&response)
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
             
@@ -999,9 +997,9 @@ fn load_settings_or_default() -> (AppSettings, bool) {
 /// Clean up AI response by removing action tags
 fn clean_ai_response(response: &str) -> String {
     // Remove <preview>, <search>, <command> tags and their content
-    let re_preview = regex::Regex::new(r"<preview>[^<]*</preview>").unwrap();
-    let re_search = regex::Regex::new(r"<search>[^<]*</search>").unwrap();
-    let re_command = regex::Regex::new(r"<command>[^<]*</command>").unwrap();
+    let re_preview = regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap();
+    let re_search = regex::Regex::new(r"(?s)<search>.*?</search>").unwrap();
+    let re_command = regex::Regex::new(r"(?s)<command>.*?</command>").unwrap();
     
     let cleaned = re_preview.replace_all(response, "");
     let cleaned = re_search.replace_all(&cleaned, "");

@@ -23,8 +23,15 @@ pub enum FileType {
 impl FileType {
     /// Detect file type from path extension
     pub fn from_path(path: &std::path::Path) -> Self {
-        match path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()).as_deref() {
-            Some("txt" | "log" | "rs" | "py" | "js" | "ts" | "sh" | "toml" | "yaml" | "yml") => FileType::Text,
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
+            Some("txt" | "log" | "rs" | "py" | "js" | "ts" | "sh" | "toml" | "yaml" | "yml") => {
+                FileType::Text
+            }
             Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg") => FileType::Image,
             Some("csv" | "tsv") => FileType::Csv,
             Some("json") => FileType::Json,
@@ -57,10 +64,7 @@ pub struct SearchResultItem {
 #[derive(Clone, Debug)]
 pub enum PreviewContent {
     /// Local file preview
-    File {
-        path: PathBuf,
-        file_type: FileType,
-    },
+    File { path: PathBuf, file_type: FileType },
     /// Web page preview
     Web {
         url: String,
@@ -70,13 +74,9 @@ pub enum PreviewContent {
         snippet: Option<String>,
     },
     /// Direct image
-    Image {
-        source: ImageSource,
-    },
+    Image { source: ImageSource },
     /// ASCII art state
-    Ascii {
-        state: AsciiState,
-    },
+    Ascii { state: AsciiState },
     /// Mode introduction
     ModeIntro {
         mode: String, // Mode name as string to avoid circular dependency
@@ -95,10 +95,7 @@ pub enum PreviewContent {
         versions: Vec<crate::version::FileVersion>,
     },
     /// Error state
-    Error {
-        message: String,
-        source: String,
-    },
+    Error { message: String, source: String },
 }
 
 /// Source for an image to display
@@ -191,69 +188,187 @@ impl ParsedPreviewTag {
     }
 }
 
-/// Parse preview tags from an agent response
-///
-/// Format: `<preview type="TYPE" [path="..."] [url="..."] [state="..."]>caption</preview>`
-pub fn parse_preview_tag(response: &str) -> Option<ParsedPreviewTag> {
-    // Simple regex-like parsing without regex crate
-    let start = response.find("<preview ")?;
-    let end = response.find("</preview>")?;
+fn parse_preview_attributes(attrs_str: &str) -> Vec<(String, String)> {
+    let mut attrs = Vec::new();
+    let mut chars = attrs_str.chars().peekable();
 
-    if end <= start {
-        return None;
-    }
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        if ch == '/' {
+            chars.next();
+            continue;
+        }
 
-    let tag_end = response[start..].find('>')? + start;
-    let attrs_str = &response[start + 9..tag_end]; // Skip "<preview "
-    let caption = response[tag_end + 1..end].trim().to_string();
-
-    // Parse attributes
-    let mut content_type = String::new();
-    let mut path = None;
-    let mut url = None;
-    let mut state = None;
-
-    // Simple attribute parsing
-    for part in attrs_str.split_whitespace() {
-        if let Some((key, value)) = part.split_once('=') {
-            let value = value.trim_matches('"').trim_matches('\'').to_string();
-            match key {
-                "type" => content_type = value,
-                "path" => path = Some(value),
-                "url" => url = Some(value),
-                "state" => state = Some(value),
-                _ => {}
+        let mut key = String::new();
+        while let Some(&c) = chars.peek() {
+            if c == '=' || c.is_whitespace() {
+                break;
             }
+            key.push(c);
+            chars.next();
+        }
+
+        while let Some(&c) = chars.peek() {
+            if c == '=' {
+                chars.next();
+                break;
+            } else if c.is_whitespace() {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        while let Some(&c) = chars.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            chars.next();
+        }
+
+        let mut value = String::new();
+        if let Some(&c) = chars.peek() {
+            if c == '"' || c == '\'' {
+                let quote = c;
+                chars.next();
+                while let Some(next_char) = chars.next() {
+                    if next_char == quote {
+                        break;
+                    }
+                    value.push(next_char);
+                }
+            } else {
+                while let Some(&next_char) = chars.peek() {
+                    if next_char.is_whitespace() {
+                        break;
+                    }
+                    value.push(next_char);
+                    chars.next();
+                }
+            }
+        }
+
+        if !key.is_empty() {
+            attrs.push((key, value));
         }
     }
 
-    if content_type.is_empty() {
-        return None;
+    attrs
+}
+
+/// Parse all preview tags from a response. Supports both legacy and new formats.
+pub fn parse_preview_tags(response: &str) -> Vec<ParsedPreviewTag> {
+    let mut tags = Vec::new();
+    let mut cursor = 0;
+    const OPEN: &str = "<preview";
+    const CLOSE: &str = "</preview>";
+
+    while let Some(rel_start) = response[cursor..].find(OPEN) {
+        let start = cursor + rel_start;
+        let header_end_rel = match response[start..].find('>') {
+            Some(end) => end,
+            None => break,
+        };
+        let header_end = start + header_end_rel;
+        let body_start = header_end + 1;
+        let close_rel = match response[body_start..].find(CLOSE) {
+            Some(idx) => idx,
+            None => break,
+        };
+        let close_start = body_start + close_rel;
+        let caption = response[body_start..close_start].trim().to_string();
+        let attrs_str = &response[start + OPEN.len()..header_end];
+
+        let mut content_type = String::new();
+        let mut path = None;
+        let mut url = None;
+        let mut state = None;
+
+        for (key, value) in parse_preview_attributes(attrs_str) {
+            match key.as_str() {
+                "type" => content_type = value,
+                "path" => {
+                    if !value.is_empty() {
+                        path = Some(value);
+                    }
+                }
+                "url" => {
+                    if !value.is_empty() {
+                        url = Some(value);
+                    }
+                }
+                "state" => {
+                    if !value.is_empty() {
+                        state = Some(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if content_type.is_empty() {
+            if !caption.is_empty() {
+                content_type = "file".to_string();
+                path = Some(caption.clone());
+            } else {
+                cursor = close_start + CLOSE.len();
+                continue;
+            }
+        }
+
+        tags.push(ParsedPreviewTag {
+            content_type,
+            path,
+            url,
+            state,
+            caption,
+        });
+
+        cursor = close_start + CLOSE.len();
     }
 
-    Some(ParsedPreviewTag {
-        content_type,
-        path,
-        url,
-        state,
-        caption,
-    })
+    tags
+}
+
+/// Parse the first preview tag from an agent response
+pub fn parse_preview_tag(response: &str) -> Option<ParsedPreviewTag> {
+    parse_preview_tags(response).into_iter().next()
 }
 
 /// Strip preview tags from a response for display
 pub fn strip_preview_tags(response: &str) -> String {
-    let mut result = response.to_string();
+    let mut output = String::new();
+    let mut cursor = 0;
+    const OPEN: &str = "<preview";
+    const CLOSE: &str = "</preview>";
 
-    // Keep stripping tags until none remain
-    while let (Some(start), Some(end)) = (result.find("<preview "), result.find("</preview>")) {
-        if end > start {
-            result = format!("{}{}", &result[..start], &result[end + 10..]);
-        } else {
-            break;
-        }
+    while let Some(rel_start) = response[cursor..].find(OPEN) {
+        let start = cursor + rel_start;
+        let header_end_rel = match response[start..].find('>') {
+            Some(end) => end,
+            None => {
+                output.push_str(&response[cursor..]);
+                return output.trim().to_string();
+            }
+        };
+        let header_end = start + header_end_rel;
+        let body_start = header_end + 1;
+        let close_rel = match response[body_start..].find(CLOSE) {
+            Some(idx) => idx,
+            None => {
+                output.push_str(&response[cursor..]);
+                return output.trim().to_string();
+            }
+        };
+        output.push_str(&response[cursor..start]);
+        cursor = body_start + close_rel + CLOSE.len();
     }
 
-    result.trim().to_string()
+    output.push_str(&response[cursor..]);
+    output.trim().to_string()
 }
 
 /// Reference to preview content stored in a message
@@ -296,6 +411,27 @@ Key findings from research
     }
 
     #[test]
+    fn test_parse_preview_with_spaces() {
+        let response = r#"<preview type="file" path="C:\Users\Ben West\Notes.txt">
+Context
+</preview>"#;
+        let tag = parse_preview_tag(response).unwrap();
+        assert_eq!(tag.path, Some(r"C:\Users\Ben West\Notes.txt".to_string()));
+    }
+
+    #[test]
+    fn test_parse_multiple_preview_tags() {
+        let response = r#"
+<preview type="file" path="/tmp/first.txt">First</preview>
+<preview type="web" url="https://example.com">Second</preview>
+"#;
+        let tags = parse_preview_tags(response);
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].path, Some("/tmp/first.txt".to_string()));
+        assert_eq!(tags[1].url, Some("https://example.com".to_string()));
+    }
+
+    #[test]
     fn test_strip_preview_tags() {
         let response = r#"Here's the file.
 <preview type="file" path="/path/to/file">Caption</preview>
@@ -309,10 +445,29 @@ Check it out!"#;
     }
 
     #[test]
+    fn test_strip_preview_tags_with_attributes() {
+        let response = r#"<preview type="file" path="C:\Docs\file.txt">Caption</preview>Done"#;
+        let stripped = strip_preview_tags(response);
+        assert_eq!(stripped, "Done");
+    }
+
+    #[test]
     fn test_file_type_detection() {
-        assert_eq!(FileType::from_path(std::path::Path::new("test.txt")), FileType::Text);
-        assert_eq!(FileType::from_path(std::path::Path::new("image.png")), FileType::Image);
-        assert_eq!(FileType::from_path(std::path::Path::new("data.csv")), FileType::Csv);
-        assert_eq!(FileType::from_path(std::path::Path::new("config.json")), FileType::Json);
+        assert_eq!(
+            FileType::from_path(std::path::Path::new("test.txt")),
+            FileType::Text
+        );
+        assert_eq!(
+            FileType::from_path(std::path::Path::new("image.png")),
+            FileType::Image
+        );
+        assert_eq!(
+            FileType::from_path(std::path::Path::new("data.csv")),
+            FileType::Csv
+        );
+        assert_eq!(
+            FileType::from_path(std::path::Path::new("config.json")),
+            FileType::Json
+        );
     }
 }
