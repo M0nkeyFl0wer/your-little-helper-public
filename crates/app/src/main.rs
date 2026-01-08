@@ -665,11 +665,20 @@ ALWAYS:
             });
         }
 
-        // Start async AI generation
-        self.start_ai_generation(api_messages);
+        // Start async AI generation with capability flags
+        self.start_ai_generation(
+            api_messages,
+            terminal_enabled,
+            self.settings.enable_internet_research,
+        );
     }
 
-    fn start_ai_generation(&mut self, messages: Vec<ApiChatMessage>) {
+    fn start_ai_generation(
+        &mut self,
+        messages: Vec<ApiChatMessage>,
+        allow_terminal: bool,
+        allow_web: bool,
+    ) {
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
         self.thinking_status = "Thinking...".to_string();
@@ -678,7 +687,7 @@ ALWAYS:
         
         // Spawn background thread for AI work
         std::thread::spawn(move || {
-            run_ai_generation(messages, settings, tx);
+            run_ai_generation(messages, settings, allow_terminal, allow_web, tx);
         });
     }
     
@@ -758,6 +767,8 @@ ALWAYS:
 fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
     settings: shared::settings::ModelProvider,
+    allow_terminal: bool,
+    allow_web: bool,
     tx: Sender<AiResult>,
 ) {
     use agent_host::{execute_command, web_search, classify_command, DangerLevel};
@@ -834,6 +845,13 @@ fn run_ai_generation(
             
             // Execute searches
             for query in &searches {
+                if !allow_web {
+                    results.push(format!(
+                        "[Search blocked: Internet access disabled]\nQuery: {}",
+                        query
+                    ));
+                    continue;
+                }
                 match web_search(query).await {
                     Ok(result) => {
                         results.push(format!("[Search Results for '{}']\n{}", query, result.output));
@@ -846,6 +864,18 @@ fn run_ai_generation(
             
             // Execute safe commands and track them
             for cmd in &commands {
+                if !allow_terminal {
+                    all_executed_commands.push((
+                        cmd.clone(),
+                        "Terminal access disabled in settings".to_string(),
+                        false,
+                    ));
+                    results.push(format!(
+                        "[Command blocked: terminal access disabled]\n$ {}",
+                        cmd
+                    ));
+                    continue;
+                }
                 let danger = classify_command(cmd);
                 match danger {
                     DangerLevel::Safe => {
