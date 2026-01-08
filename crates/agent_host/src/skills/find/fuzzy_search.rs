@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use services::file_index::{FileIndexService, FileSearchResult};
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::sync::Arc;
 
@@ -114,7 +114,10 @@ impl Skill for FuzzyFileSearch {
 }
 
 impl FuzzyFileSearch {
-    fn build_suggestions(&self, results: &[FileSearchResult]) -> Vec<shared::skill::SuggestedAction> {
+    fn build_suggestions(
+        &self,
+        results: &[FileSearchResult],
+    ) -> Vec<shared::skill::SuggestedAction> {
         let mut suggestions = Vec::new();
 
         // Suggest opening top result if available
@@ -122,9 +125,12 @@ impl FuzzyFileSearch {
             suggestions.push(shared::skill::SuggestedAction {
                 label: format!("Open {}", top.name),
                 skill_id: "file_preview".to_string(),
-                params: [("path".to_string(), serde_json::json!(top.path.to_string_lossy()))]
-                    .into_iter()
-                    .collect(),
+                params: [(
+                    "path".to_string(),
+                    serde_json::json!(top.path.to_string_lossy()),
+                )]
+                .into_iter()
+                .collect(),
             });
         }
 

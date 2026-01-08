@@ -284,22 +284,27 @@ impl PreviewPanel {
             // Content source label
             if let Some(content) = &self.state.content {
                 let label = match content {
-                    PreviewContent::File { path, .. } => {
-                        path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("File")
-                            .to_string()
-                    }
+                    PreviewContent::File { path, .. } => path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("File")
+                        .to_string(),
                     PreviewContent::Web { url, title, .. } => {
                         title.clone().unwrap_or_else(|| url.clone())
                     }
                     PreviewContent::ModeIntro { mode } => format!("{} Mode", mode),
                     PreviewContent::Ascii { state } => format!("{}", state),
                     PreviewContent::Image { .. } => "Image".to_string(),
-                    PreviewContent::SearchResults { query, total_count, .. } => {
+                    PreviewContent::SearchResults {
+                        query, total_count, ..
+                    } => {
                         format!("Search: \"{}\" ({} results)", query, total_count)
                     }
-                    PreviewContent::VersionHistory { file_name, versions, .. } => {
+                    PreviewContent::VersionHistory {
+                        file_name,
+                        versions,
+                        ..
+                    } => {
                         format!("Versions: {} ({} versions)", file_name, versions.len())
                     }
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
@@ -397,9 +402,7 @@ impl PreviewPanel {
                 ui.vertical_centered(|ui| {
                     // ASCII art mascot
                     ui.add(egui::Label::new(
-                        egui::RichText::new(ascii_art)
-                            .monospace()
-                            .color(text_color)
+                        egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
 
                     ui.add_space(10.0);
@@ -407,15 +410,11 @@ impl PreviewPanel {
                     // Agent greeting
                     ui.heading(
                         egui::RichText::new(format!("Hi, I'm {}!", intro.agent_name))
-                            .color(accent_color)
+                            .color(accent_color),
                     );
 
                     ui.add_space(5.0);
-                    ui.label(
-                        egui::RichText::new(intro.greeting)
-                            .italics()
-                            .size(16.0)
-                    );
+                    ui.label(egui::RichText::new(intro.greeting).italics().size(16.0));
 
                     ui.add_space(15.0);
 
@@ -443,17 +442,18 @@ impl PreviewPanel {
 
                     for example in intro.example_prompts.iter().take(3) {
                         let example_text = example.to_string();
-                        let response = ui.horizontal(|ui| {
-                            ui.colored_label(accent_color, "→");
-                            let btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!("\"{}\"", example))
-                                        .italics()
-                                )
-                                .frame(false)
-                            );
-                            btn
-                        }).inner;
+                        let response = ui
+                            .horizontal(|ui| {
+                                ui.colored_label(accent_color, "→");
+                                let btn = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("\"{}\"", example)).italics(),
+                                    )
+                                    .frame(false),
+                                );
+                                btn
+                            })
+                            .inner;
 
                         if response.clicked() {
                             self.state.clicked_prompt = Some(example_text);
@@ -468,9 +468,7 @@ impl PreviewPanel {
                 let ascii_art = get_ascii_art(*state);
                 ui.vertical_centered(|ui| {
                     ui.add(egui::Label::new(
-                        egui::RichText::new(ascii_art)
-                            .monospace()
-                            .color(text_color)
+                        egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
                 });
             }
@@ -479,26 +477,25 @@ impl PreviewPanel {
                 ui.label(format!("Type: {:?}", file_type));
                 // TODO: Use viewers crate to render file content
             }
-            Some(PreviewContent::Web { url, title, snippet, og_image, .. }) => {
+            Some(PreviewContent::Web {
+                url,
+                title,
+                snippet,
+                og_image,
+                ..
+            }) => {
                 ui.vertical(|ui| {
                     // Web preview header
                     ui.horizontal(|ui| {
                         ui.colored_label(accent_color, "🌐");
-                        ui.label(
-                            egui::RichText::new("Web Preview")
-                                .strong()
-                                .size(14.0)
-                        );
+                        ui.label(egui::RichText::new("Web Preview").strong().size(14.0));
                     });
 
                     ui.add_space(8.0);
 
                     // Title (if available)
                     if let Some(title) = title {
-                        ui.heading(
-                            egui::RichText::new(title)
-                                .color(text_color)
-                        );
+                        ui.heading(egui::RichText::new(title).color(text_color));
                         ui.add_space(4.0);
                     }
 
@@ -530,11 +527,7 @@ impl PreviewPanel {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Image:").small().weak());
-                            ui.label(
-                                egui::RichText::new(og_url)
-                                    .small()
-                                    .weak()
-                            );
+                            ui.label(egui::RichText::new(og_url).small().weak());
                         });
                     }
 
@@ -550,7 +543,11 @@ impl PreviewPanel {
                 ui.label(format!("Image: {:?}", source));
                 // TODO: Load and render image
             }
-            Some(PreviewContent::VersionHistory { file_path, file_name, versions }) => {
+            Some(PreviewContent::VersionHistory {
+                file_path,
+                file_name,
+                versions,
+            }) => {
                 ui.vertical(|ui| {
                     // Header
                     ui.horizontal(|ui| {
@@ -665,7 +662,12 @@ impl PreviewPanel {
                     });
                 });
             }
-            Some(PreviewContent::SearchResults { query, results, total_count, search_time_ms }) => {
+            Some(PreviewContent::SearchResults {
+                query,
+                results,
+                total_count,
+                search_time_ms,
+            }) => {
                 ui.vertical(|ui| {
                     // Search header
                     ui.horizontal(|ui| {
@@ -673,7 +675,7 @@ impl PreviewPanel {
                         ui.label(
                             egui::RichText::new(format!("Search Results for \"{}\"", query))
                                 .strong()
-                                .size(14.0)
+                                .size(14.0),
                         );
                     });
 
@@ -687,7 +689,7 @@ impl PreviewPanel {
                                 total_count, search_time_ms
                             ))
                             .small()
-                            .weak()
+                            .weak(),
                         );
                     });
 
@@ -696,11 +698,7 @@ impl PreviewPanel {
                     if results.is_empty() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
-                            ui.label(
-                                egui::RichText::new("No files found")
-                                    .weak()
-                                    .size(16.0)
-                            );
+                            ui.label(egui::RichText::new("No files found").weak().size(16.0));
                             ui.add_space(8.0);
                             ui.label("Try a different search term or index more directories.");
                         });
@@ -729,48 +727,62 @@ impl PreviewPanel {
                                                 ui.label(
                                                     egui::RichText::new(&result.name)
                                                         .strong()
-                                                        .color(accent_color)
+                                                        .color(accent_color),
                                                 );
 
                                                 // Score bar
                                                 let score_color = score_to_color(result.score);
                                                 ui.add_space(8.0);
                                                 ui.label(
-                                                    egui::RichText::new(format!("{:.0}%", result.score * 100.0))
-                                                        .small()
-                                                        .color(score_color)
+                                                    egui::RichText::new(format!(
+                                                        "{:.0}%",
+                                                        result.score * 100.0
+                                                    ))
+                                                    .small()
+                                                    .color(score_color),
                                                 );
                                             });
 
                                             // Parent directory
                                             ui.label(
-                                                egui::RichText::new(&result.parent)
-                                                    .small()
-                                                    .weak()
+                                                egui::RichText::new(&result.parent).small().weak(),
                                             );
                                         });
 
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // File size
-                                            ui.label(
-                                                egui::RichText::new(format_file_size(result.size))
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // File size
+                                                ui.label(
+                                                    egui::RichText::new(format_file_size(
+                                                        result.size,
+                                                    ))
                                                     .small()
-                                                    .weak()
-                                            );
+                                                    .weak(),
+                                                );
 
-                                            // Action buttons
-                                            let path_clone = result.path.clone();
-                                            if ui.small_button("📂").on_hover_text("Reveal in folder").clicked() {
-                                                if let Some(parent) = path_clone.parent() {
-                                                    let _ = open::that(parent);
+                                                // Action buttons
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("📂")
+                                                    .on_hover_text("Reveal in folder")
+                                                    .clicked()
+                                                {
+                                                    if let Some(parent) = path_clone.parent() {
+                                                        let _ = open::that(parent);
+                                                    }
                                                 }
-                                            }
 
-                                            let path_clone = result.path.clone();
-                                            if ui.small_button("📄").on_hover_text("Open file").clicked() {
-                                                let _ = open::that(&path_clone);
-                                            }
-                                        });
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("📄")
+                                                    .on_hover_text("Open file")
+                                                    .clicked()
+                                                {
+                                                    let _ = open::that(&path_clone);
+                                                }
+                                            },
+                                        );
                                     });
                                 });
 
@@ -783,10 +795,11 @@ impl PreviewPanel {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "Showing {} of {} results",
-                                    results.len(), total_count
+                                    results.len(),
+                                    total_count
                                 ))
                                 .small()
-                                .weak()
+                                .weak(),
                             );
                         }
                     }
@@ -806,7 +819,7 @@ impl PreviewPanel {
                     ui.add(egui::Label::new(
                         egui::RichText::new(welcome_art)
                             .monospace()
-                            .color(text_color)
+                            .color(text_color),
                     ));
                     ui.add_space(10.0);
                     ui.label("Select a mode to get started!");
@@ -824,7 +837,12 @@ impl Default for PreviewPanel {
 
 /// Get a file icon emoji based on extension
 fn get_file_icon(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .as_deref()
+    {
         // Documents
         Some("pdf") => "📕",
         Some("doc" | "docx") => "📘",

@@ -20,7 +20,12 @@ fn test_dns() -> String {
 
 fn test_tcp(addr: &str) -> String {
     let timeout = Duration::from_millis(800);
-    match TcpStream::connect_timeout(&addr.parse().unwrap_or_else(|_| "1.1.1.1:53".parse().unwrap()), timeout) {
+    match TcpStream::connect_timeout(
+        &addr
+            .parse()
+            .unwrap_or_else(|_| "1.1.1.1:53".parse().unwrap()),
+        timeout,
+    ) {
         Ok(_) => format!("TCP OK: {}", addr),
         Err(e) => format!("TCP FAIL: {} ({})", addr, e),
     }
@@ -33,7 +38,11 @@ pub fn network_diagnostics() -> Result<DiagnosticReport> {
     details.push(test_tcp("8.8.8.8:53"));
 
     let failures = details.iter().filter(|d| d.contains("FAIL")).count();
-    let summary = if failures == 0 { "Network looks healthy".into() } else { format!("Network issues detected: {} checks failed", failures) };
+    let summary = if failures == 0 {
+        "Network looks healthy".into()
+    } else {
+        format!("Network issues detected: {} checks failed", failures)
+    };
 
     Ok(DiagnosticReport { summary, details })
 }

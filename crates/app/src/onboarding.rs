@@ -114,10 +114,16 @@ impl OnboardingFlow {
             OnboardingStep::TerminalPermission => OnboardingStep::DependencyCheck,
             OnboardingStep::DependencyCheck => {
                 // Check if any dependencies need installation
-                let needs_install = self.state.dependencies.iter()
+                let needs_install = self
+                    .state
+                    .dependencies
+                    .iter()
                     .any(|d| d.required && !d.detected);
                 if needs_install {
-                    if let Some(dep) = self.state.dependencies.iter()
+                    if let Some(dep) = self
+                        .state
+                        .dependencies
+                        .iter()
                         .find(|d| d.required && !d.detected)
                     {
                         OnboardingStep::DependencyInstall {
@@ -133,12 +139,18 @@ impl OnboardingFlow {
             }
             OnboardingStep::DependencyInstall { .. } => {
                 // Check if more dependencies need installation
-                let installed: Vec<_> = self.state.dependencies.iter()
+                let installed: Vec<_> = self
+                    .state
+                    .dependencies
+                    .iter()
                     .filter(|d| d.detected)
                     .map(|d| d.name.clone())
                     .collect();
 
-                if let Some(dep) = self.state.dependencies.iter()
+                if let Some(dep) = self
+                    .state
+                    .dependencies
+                    .iter()
                     .find(|d| d.required && !d.detected && !installed.contains(&d.name))
                 {
                     OnboardingStep::DependencyInstall {
@@ -175,9 +187,7 @@ impl OnboardingFlow {
             }
             OnboardingStep::DependencyInstall { name, .. } => {
                 // Mark as skipped
-                if let Some(dep) = self.state.dependencies.iter_mut()
-                    .find(|d| &d.name == name)
-                {
+                if let Some(dep) = self.state.dependencies.iter_mut().find(|d| &d.name == name) {
                     dep.detected = true; // Treat as "handled"
                 }
                 self.next();
@@ -203,9 +213,7 @@ impl OnboardingFlow {
 
     /// Mark a dependency as installed
     pub fn mark_installed(&mut self, name: &str) {
-        if let Some(dep) = self.state.dependencies.iter_mut()
-            .find(|d| d.name == name)
-        {
+        if let Some(dep) = self.state.dependencies.iter_mut().find(|d| d.name == name) {
             dep.detected = true;
         }
     }
@@ -221,11 +229,16 @@ impl OnboardingFlow {
 
         OnboardingResult {
             terminal_enabled: self.state.terminal_approved,
-            dependencies_installed: self.state.dependencies.iter()
+            dependencies_installed: self
+                .state
+                .dependencies
+                .iter()
                 .filter(|d| d.detected)
                 .map(|d| d.name.clone())
                 .collect(),
-            verification_passed: self.state.verification_result
+            verification_passed: self
+                .state
+                .verification_result
                 .as_ref()
                 .map(|r| r.is_ok())
                 .unwrap_or(false),
@@ -237,17 +250,15 @@ impl OnboardingFlow {
         // Clone step to avoid borrow conflicts
         let step = self.state.step.clone();
 
-        ui.vertical_centered(|ui| {
-            match step {
-                OnboardingStep::Welcome => self.render_welcome(ui),
-                OnboardingStep::TerminalPermission => self.render_terminal_permission(ui),
-                OnboardingStep::DependencyCheck => self.render_dependency_check(ui),
-                OnboardingStep::DependencyInstall { name, status } => {
-                    self.render_dependency_install(ui, &name, &status)
-                }
-                OnboardingStep::Verification => self.render_verification(ui),
-                OnboardingStep::Complete => self.render_complete(ui),
+        ui.vertical_centered(|ui| match step {
+            OnboardingStep::Welcome => self.render_welcome(ui),
+            OnboardingStep::TerminalPermission => self.render_terminal_permission(ui),
+            OnboardingStep::DependencyCheck => self.render_dependency_check(ui),
+            OnboardingStep::DependencyInstall { name, status } => {
+                self.render_dependency_install(ui, &name, &status)
             }
+            OnboardingStep::Verification => self.render_verification(ui),
+            OnboardingStep::Complete => self.render_complete(ui),
         });
     }
 
@@ -453,7 +464,11 @@ impl OnboardingFlow {
         let terminal_status = if self.state.terminal_approved {
             ("✓", "Terminal access enabled", egui::Color32::GREEN)
         } else {
-            ("✗", "Terminal access disabled (limited mode)", egui::Color32::YELLOW)
+            (
+                "✗",
+                "Terminal access disabled (limited mode)",
+                egui::Color32::YELLOW,
+            )
         };
 
         ui.horizontal(|ui| {
@@ -461,14 +476,20 @@ impl OnboardingFlow {
             ui.label(terminal_status.1);
         });
 
-        let deps_installed = self.state.dependencies.iter()
+        let deps_installed = self
+            .state
+            .dependencies
+            .iter()
             .filter(|d| d.detected)
             .count();
         let deps_total = self.state.dependencies.len();
 
         ui.horizontal(|ui| {
             ui.colored_label(egui::Color32::GREEN, "✓");
-            ui.label(format!("{}/{} dependencies ready", deps_installed, deps_total));
+            ui.label(format!(
+                "{}/{} dependencies ready",
+                deps_installed, deps_total
+            ));
         });
 
         ui.add_space(30.0);
@@ -496,7 +517,11 @@ pub async fn check_dependency(name: &str) -> DependencyStatus {
 
     // Try to run the command
     let detected = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
-        .args(if cfg!(windows) { vec!["/C", command] } else { vec!["-c", command] })
+        .args(if cfg!(windows) {
+            vec!["/C", command]
+        } else {
+            vec!["-c", command]
+        })
         .output()
         .await
         .map(|o| o.status.success())

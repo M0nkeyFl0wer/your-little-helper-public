@@ -38,8 +38,13 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(model: &str) -> Result<Self> {
-        let key = env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
-        Ok(Self { http: Client::new(), auth_token: key, model: model.to_string() })
+        let key =
+            env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
+        Ok(Self {
+            http: Client::new(),
+            auth_token: key,
+            model: model.to_string(),
+        })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
@@ -49,7 +54,8 @@ impl AnthropicClient {
             api_key.clone()
         } else {
             // Try environment variable as fallback
-            env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("No Anthropic authentication configured"))?
+            env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| anyhow!("No Anthropic authentication configured"))?
         };
 
         Ok(Self {
@@ -67,7 +73,10 @@ impl AnthropicClient {
         let anthropic_messages: Vec<AnthropicMessage> = messages
             .into_iter()
             .filter(|m| m.role != "system")
-            .map(|m| AnthropicMessage { role: m.role, content: m.content })
+            .map(|m| AnthropicMessage {
+                role: m.role,
+                content: m.content,
+            })
             .collect();
 
         let req = AnthropicRequest {
@@ -76,7 +85,8 @@ impl AnthropicClient {
             messages: anthropic_messages,
         };
 
-        let resp = self.http
+        let resp = self
+            .http
             .post(url)
             .header("x-api-key", &self.auth_token)
             .header("anthropic-version", "2023-06-01")

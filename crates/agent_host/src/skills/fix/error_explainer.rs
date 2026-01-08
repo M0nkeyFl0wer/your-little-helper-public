@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
     SuggestedAction,
 };
 
@@ -295,7 +295,7 @@ impl Skill for ErrorExplainer {
         if input.query.trim().is_empty() {
             return Ok(SkillOutput::text(
                 "Please paste the error message you'd like me to explain.\n\n\
-                 Example: \"What does 'Permission denied' mean?\""
+                 Example: \"What does 'Permission denied' mean?\"",
             ));
         }
 
@@ -316,8 +316,12 @@ impl Skill for ErrorExplainer {
                 vec![SuggestedAction {
                     label: "Search online".to_string(),
                     skill_id: "web_search".to_string(),
-                    params: [("query".to_string(), serde_json::json!(format!("{} fix", analysis.original_error)))]
-                        .into_iter().collect(),
+                    params: [(
+                        "query".to_string(),
+                        serde_json::json!(format!("{} fix", analysis.original_error)),
+                    )]
+                    .into_iter()
+                    .collect(),
                 }]
             } else {
                 Vec::new()
@@ -332,7 +336,8 @@ mod tests {
 
     #[test]
     fn test_permission_denied() {
-        let analysis = ErrorExplainer::analyze_error("Error: Permission denied when opening file.txt");
+        let analysis =
+            ErrorExplainer::analyze_error("Error: Permission denied when opening file.txt");
         assert!(analysis.matched);
         assert_eq!(analysis.category, "Permission Error");
     }

@@ -126,9 +126,9 @@ impl WebPreviewService {
         };
 
         // Generate snippet from description or URL
-        let snippet = description.clone().or_else(|| {
-            Some(format!("Source: {}", url))
-        });
+        let snippet = description
+            .clone()
+            .or_else(|| Some(format!("Source: {}", url)));
 
         Ok(WebPreview {
             url: url.to_string(),
@@ -142,7 +142,10 @@ impl WebPreviewService {
     }
 
     /// Fetch Open Graph and basic metadata from a URL
-    async fn fetch_metadata(&self, url: &str) -> Result<(Option<String>, Option<String>, Option<String>)> {
+    async fn fetch_metadata(
+        &self,
+        url: &str,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (compatible; LittleHelper/1.0)")
@@ -208,18 +211,18 @@ impl WebPreviewService {
 
     /// Extract meta description
     fn extract_meta_description(&self, html: &str) -> Option<String> {
-        let re = Regex::new(
-            r#"(?i)<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']"#
-        ).ok()?;
+        let re =
+            Regex::new(r#"(?i)<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']"#)
+                .ok()?;
 
         if let Some(caps) = re.captures(html) {
             return caps.get(1).map(|m| html_decode(m.as_str()));
         }
 
         // Try alternate order
-        let re_alt = Regex::new(
-            r#"(?i)<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']"#
-        ).ok()?;
+        let re_alt =
+            Regex::new(r#"(?i)<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']"#)
+                .ok()?;
         re_alt
             .captures(html)
             .and_then(|c| c.get(1))
@@ -246,12 +249,17 @@ impl WebPreviewService {
         // Capture screenshot using wkhtmltoimage
         let output = tokio::process::Command::new("wkhtmltoimage")
             .args([
-                "--quality", "80",
-                "--width", "1200",
-                "--height", "800",
+                "--quality",
+                "80",
+                "--width",
+                "1200",
+                "--height",
+                "800",
                 "--disable-javascript",
-                "--load-error-handling", "ignore",
-                "--load-media-error-handling", "ignore",
+                "--load-error-handling",
+                "ignore",
+                "--load-media-error-handling",
+                "ignore",
                 url,
                 screenshot_path.to_str().unwrap_or("screenshot.png"),
             ])

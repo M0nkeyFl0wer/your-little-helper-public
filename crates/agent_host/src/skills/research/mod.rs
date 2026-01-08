@@ -6,13 +6,13 @@
 //! - Source credibility evaluation
 //! - Information synthesis (future)
 
-pub mod web_search;
 pub mod article_reader;
 pub mod source_evaluator;
+pub mod web_search;
 
-pub use web_search::WebSearch;
 pub use article_reader::ArticleReader;
 pub use source_evaluator::SourceEvaluator;
+pub use web_search::WebSearch;
 
 use crate::skills::SkillRegistry;
 use std::sync::Arc;

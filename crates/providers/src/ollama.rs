@@ -24,8 +24,13 @@ pub struct OllamaClient {
 
 impl OllamaClient {
     pub fn new(model: String) -> Self {
-        let base = env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
-        Self { http: Client::new(), base, model }
+        let base =
+            env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        Self {
+            http: Client::new(),
+            base,
+            model,
+        }
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
@@ -35,9 +40,15 @@ impl OllamaClient {
             .collect::<Vec<_>>()
             .join("\n");
         let url = format!("{}/api/generate", self.base);
-        let req = OllamaRequest { model: &self.model, prompt, stream: false };
+        let req = OllamaRequest {
+            model: &self.model,
+            prompt,
+            stream: false,
+        };
         let resp = self.http.post(url).json(&req).send().await?;
-        if !resp.status().is_success() { return Err(anyhow!("ollama error: {}", resp.status())); }
+        if !resp.status().is_success() {
+            return Err(anyhow!("ollama error: {}", resp.status()));
+        }
         let body: OllamaResponse = resp.json().await?;
         Ok(body.response)
     }

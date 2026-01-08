@@ -9,17 +9,16 @@ use std::time::Instant;
 
 use anyhow::Result;
 use shared::skill::{
-    Mode, Permission, PermissionLevel, Skill, SkillContext, SkillError,
-    SkillExecution, SkillInput,
+    Mode, Permission, PermissionLevel, Skill, SkillContext, SkillError, SkillExecution, SkillInput,
 };
 
+pub mod build;
 pub mod common;
+pub mod content;
+pub mod data;
 pub mod find;
 pub mod fix;
 pub mod research;
-pub mod data;
-pub mod content;
-pub mod build;
 
 /// Registry managing all available skills
 pub struct SkillRegistry {
@@ -87,9 +86,12 @@ impl SkillRegistry {
 
     /// Check if skill is enabled (considering permission and session approval)
     pub fn can_execute(&self, skill_id: &str, ctx: &SkillContext) -> Result<(), SkillError> {
-        let skill = self.skills.get(skill_id).ok_or_else(|| SkillError::NotFound {
-            skill_id: skill_id.to_string(),
-        })?;
+        let skill = self
+            .skills
+            .get(skill_id)
+            .ok_or_else(|| SkillError::NotFound {
+                skill_id: skill_id.to_string(),
+            })?;
 
         // Check if skill supports current mode
         if !skill.modes().contains(&ctx.mode) {
@@ -134,14 +136,19 @@ impl SkillRegistry {
         // Permission check
         self.can_execute(skill_id, ctx)?;
 
-        let skill = self.skills.get(skill_id).ok_or_else(|| SkillError::NotFound {
-            skill_id: skill_id.to_string(),
-        })?;
+        let skill = self
+            .skills
+            .get(skill_id)
+            .ok_or_else(|| SkillError::NotFound {
+                skill_id: skill_id.to_string(),
+            })?;
 
         // Validate input
-        skill.validate_input(&input).map_err(|e| SkillError::InvalidInput {
-            message: e.to_string(),
-        })?;
+        skill
+            .validate_input(&input)
+            .map_err(|e| SkillError::InvalidInput {
+                message: e.to_string(),
+            })?;
 
         // Create execution record
         let execution = SkillExecution::new(skill_id, ctx.mode, input.clone());
@@ -263,11 +270,21 @@ mod tests {
 
     #[async_trait]
     impl Skill for TestSkill {
-        fn id(&self) -> &'static str { "test_skill" }
-        fn name(&self) -> &'static str { "Test Skill" }
-        fn description(&self) -> &'static str { "A test skill" }
-        fn permission_level(&self) -> PermissionLevel { PermissionLevel::Safe }
-        fn modes(&self) -> &'static [Mode] { &[Mode::Find] }
+        fn id(&self) -> &'static str {
+            "test_skill"
+        }
+        fn name(&self) -> &'static str {
+            "Test Skill"
+        }
+        fn description(&self) -> &'static str {
+            "A test skill"
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Safe
+        }
+        fn modes(&self) -> &'static [Mode] {
+            &[Mode::Find]
+        }
 
         async fn execute(&self, _input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
             Ok(SkillOutput::text("Test result"))

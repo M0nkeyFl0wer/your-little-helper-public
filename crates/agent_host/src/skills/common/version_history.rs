@@ -7,7 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use services::version_control::VersionControlService;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use shared::version::FileVersion;
 use std::path::PathBuf;
@@ -39,7 +39,11 @@ impl VersionHistory {
         output.push_str(&format!("{} versions found\n\n", versions.len()));
 
         for version in versions.iter().rev() {
-            let current_marker = if version.is_current { " ← current" } else { "" };
+            let current_marker = if version.is_current {
+                " ← current"
+            } else {
+                ""
+            };
             output.push_str(&format!(
                 "  Version {}{}\n    {} • {}\n    {}\n\n",
                 version.version_number,
@@ -82,7 +86,14 @@ impl Skill for VersionHistory {
 
     fn modes(&self) -> &'static [Mode] {
         // Available in all modes as a cross-cutting concern
-        &[Mode::Find, Mode::Fix, Mode::Research, Mode::Data, Mode::Content, Mode::Build]
+        &[
+            Mode::Find,
+            Mode::Fix,
+            Mode::Research,
+            Mode::Data,
+            Mode::Content,
+            Mode::Build,
+        ]
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
@@ -98,7 +109,7 @@ impl Skill for VersionHistory {
             return Ok(SkillOutput::text(
                 "Please provide a file path to view version history.\n\n\
                  Example: \"show versions of report.docx\"\n\
-                 Or: \"what are the earlier versions of /path/to/file.txt\""
+                 Or: \"what are the earlier versions of /path/to/file.txt\"",
             ));
         }
 
@@ -151,15 +162,16 @@ impl Skill for VersionHistory {
             data: Some(data),
             citations: Vec::new(),
             suggested_actions: if !versions.is_empty() {
-                vec![
-                    shared::skill::SuggestedAction {
-                        label: "Restore previous version".to_string(),
-                        skill_id: "version_restore".to_string(),
-                        params: [("path".to_string(), serde_json::json!(path.to_string_lossy()))]
-                            .into_iter()
-                            .collect(),
-                    },
-                ]
+                vec![shared::skill::SuggestedAction {
+                    label: "Restore previous version".to_string(),
+                    skill_id: "version_restore".to_string(),
+                    params: [(
+                        "path".to_string(),
+                        serde_json::json!(path.to_string_lossy()),
+                    )]
+                    .into_iter()
+                    .collect(),
+                }]
             } else {
                 Vec::new()
             },
