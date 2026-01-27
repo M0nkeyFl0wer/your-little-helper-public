@@ -6,12 +6,24 @@
 //! - Persona files for audience targeting
 //! - Project knowledge for research
 
+use shared::settings::AppSettings;
 use std::fs;
 use std::process::Command;
+use std::sync::OnceLock;
+
+static CAMPAIGN_CONTEXT: OnceLock<String> = OnceLock::new();
+static PERSONA_CONTEXT: OnceLock<String> = OnceLock::new();
+static SYSTEM_INFO: OnceLock<String> = OnceLock::new();
 
 /// Load campaign context documents for the agent
 /// Returns full content of key campaign files for deep context
 pub fn load_campaign_context() -> String {
+    CAMPAIGN_CONTEXT
+        .get_or_init(|| build_campaign_context())
+        .clone()
+}
+
+fn build_campaign_context() -> String {
     let mut context = String::new();
 
     // MCP project paths
@@ -113,6 +125,12 @@ pub fn load_campaign_context() -> String {
 /// Load persona files from ~/Process/personas/
 /// Returns all personas as context for content generation
 pub fn load_personas() -> String {
+    PERSONA_CONTEXT
+        .get_or_init(|| build_persona_context())
+        .clone()
+}
+
+fn build_persona_context() -> String {
     let mut context = String::new();
 
     // Check multiple possible persona locations
@@ -214,6 +232,10 @@ When generating content, save to ~/Process/drafts/ with format:
 
 /// Get system information for tech support context (cross-platform)
 pub fn get_system_info() -> String {
+    SYSTEM_INFO.get_or_init(|| build_system_info()).clone()
+}
+
+fn build_system_info() -> String {
     let mut info = String::new();
 
     // OS info - cross-platform
@@ -320,32 +342,40 @@ pub fn get_system_info() -> String {
     info
 }
 
-/// Get a brief campaign summary for system prompts (includes system info)
-pub fn get_campaign_summary() -> String {
-    let system_info = get_system_info();
+/// Get a brief campaign summary for system prompts (includes system info when allowed)
+pub fn get_campaign_summary(settings: &AppSettings) -> String {
+    let mut summary = String::new();
 
-    format!(
-        r#"
-SYSTEM CONTEXT:
-{}
+    summary.push_str("SYSTEM CONTEXT:\n");
+    if settings.share_system_summary {
+        summary.push_str(&get_system_info());
+    } else {
+        summary.push_str("System summary sharing is disabled.\n");
+    }
+    summary.push('\n');
 
-CAMPAIGN KNOWLEDGE:
-You have deep knowledge of the Marine Conservation Plan (MCP) campaign:
-- BC Marine Protected Areas policy and implementation
-- Fishing industry impact data (150+ businesses, $50-100M revenue at risk)
-- Aquaculture conflicts (Mowi Canada West facilities)
-- Content calendar with 7+ days of social media content
-- Stakeholder analysis (lodges, charter operations, indigenous communities)
-- Key zones: Central Coast 100-213, Caamano Sound 310-316, Kitkatla Inlet 330-333
+    if settings.enable_campaign_context {
+        summary.push_str(
+            "CAMPAIGN KNOWLEDGE:\n\
+You have deep knowledge of the Marine Conservation Plan (MCP) campaign:\n\
+- BC Marine Protected Areas policy and implementation\n\
+- Fishing industry impact data (150+ businesses, $50-100M revenue at risk)\n\
+- Aquaculture conflicts (Mowi Canada West facilities)\n\
+- Content calendar with 7+ days of social media content\n\
+- Stakeholder analysis (lodges, charter operations, indigenous communities)\n\
+- Key zones: Central Coast 100-213, Caamano Sound 310-316, Kitkatla Inlet 330-333\n\n\
+PROJECT LOCATIONS:\n\
+- MCP Content Engine: ~/Projects/MCP-research-content-automation-engine/\n\
+- Content Calendar: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json\n\
+- Little Helper App: ~/Projects/little-helper/\n\n\
+When discussing marine conservation, fishing policy, or BC coastal issues, draw on this knowledge.\n\
+For content creation, reference the established content calendar and messaging strategies.\n",
+        );
+    } else {
+        summary.push_str(
+            "CAMPAIGN KNOWLEDGE:\nCampaign-specific priming is disabled. Enable it in settings if you are working on MCP materials.\n",
+        );
+    }
 
-PROJECT LOCATIONS:
-- MCP Content Engine: ~/Projects/MCP-research-content-automation-engine/
-- Content Calendar: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json
-- Little Helper App: ~/Projects/little-helper/
-
-When discussing marine conservation, fishing policy, or BC coastal issues, draw on this knowledge.
-For content creation, reference the established content calendar and messaging strategies.
-"#,
-        system_info
-    )
+    summary
 }

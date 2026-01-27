@@ -19,6 +19,8 @@ struct GeminiPart {
 #[derive(Debug, Serialize, Deserialize)]
 struct GeminiRequest {
     contents: Vec<GeminiContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GeminiContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,8 +34,13 @@ struct GeminiCandidateContent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct GeminiCandidate {
+    content: Option<GeminiCandidateContent>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct GeminiResponse {
-    candidates: Vec<GeminiCandidateContent>,
+    candidates: Vec<GeminiCandidate>,
 }
 
 pub struct GeminiClient {
@@ -75,14 +82,26 @@ impl GeminiClient {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.auth_token
         );
-        let contents: Vec<GeminiContent> = messages
-            .into_iter()
-            .map(|m| GeminiContent {
-                role: m.role,
-                parts: vec![GeminiPart { text: m.content }],
-            })
-            .collect();
-        let req = GeminiRequest { contents };
+        let mut system_instruction = None;
+        let mut contents: Vec<GeminiContent> = Vec::new();
+        for m in messages {
+            if m.role == "system" {
+                let part = GeminiPart { text: m.content };
+                system_instruction = Some(GeminiContent {
+                    role: "system".to_string(),
+                    parts: vec![part],
+                });
+            } else {
+                contents.push(GeminiContent {
+                    role: m.role,
+                    parts: vec![GeminiPart { text: m.content }],
+                });
+            }
+        }
+        let req = GeminiRequest {
+            contents,
+            system_instruction,
+        };
         let resp = self.http.post(url).json(&req).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("gemini error: {}", resp.status()));
@@ -91,6 +110,7 @@ impl GeminiClient {
         let text = body
             .candidates
             .get(0)
+            .and_then(|c| c.content.as_ref())
             .and_then(|c| c.parts.get(0))
             .map(|p| p.text.clone())
             .unwrap_or_default();

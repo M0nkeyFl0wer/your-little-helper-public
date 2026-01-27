@@ -6,6 +6,10 @@ pub mod version;
 pub mod settings {
     use serde::{Deserialize, Serialize};
 
+    fn default_true() -> bool {
+        true
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct OAuthCredentials {
         pub access_token: String,
@@ -65,6 +69,12 @@ pub mod settings {
         pub user_profile: UserProfile,
         #[serde(default)]
         pub slack: SlackSettings,
+        #[serde(default = "default_true")]
+        pub enable_campaign_context: bool,
+        #[serde(default = "default_true")]
+        pub enable_persona_context: bool,
+        #[serde(default)]
+        pub share_system_summary: bool,
     }
 
     impl Default for ProviderAuth {
@@ -94,6 +104,9 @@ pub mod settings {
                 max_results: 200,
                 user_profile: UserProfile::default(),
                 slack: SlackSettings::default(),
+                enable_campaign_context: true,
+                enable_persona_context: true,
+                share_system_summary: false,
             }
         }
     }

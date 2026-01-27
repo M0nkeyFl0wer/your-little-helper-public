@@ -5,15 +5,21 @@ use shared::agent_api::ChatMessage;
 use std::env;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct OllamaRequest<'a> {
+struct OllamaChatRequest<'a> {
     model: &'a str,
-    prompt: String,
+    messages: Vec<OllamaMessage>,
     stream: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct OllamaResponse {
-    response: String,
+struct OllamaChatResponse {
+    message: OllamaMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaMessage {
+    role: String,
+    content: String,
 }
 
 pub struct OllamaClient {
@@ -34,22 +40,24 @@ impl OllamaClient {
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
-        let prompt = messages
+        let conversation: Vec<OllamaMessage> = messages
             .into_iter()
-            .map(|m| format!("{}: {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let url = format!("{}/api/generate", self.base);
-        let req = OllamaRequest {
+            .map(|m| OllamaMessage {
+                role: m.role,
+                content: m.content,
+            })
+            .collect();
+        let url = format!("{}/api/chat", self.base);
+        let req = OllamaChatRequest {
             model: &self.model,
-            prompt,
+            messages: conversation,
             stream: false,
         };
         let resp = self.http.post(url).json(&req).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("ollama error: {}", resp.status()));
         }
-        let body: OllamaResponse = resp.json().await?;
-        Ok(body.response)
+        let body: OllamaChatResponse = resp.json().await?;
+        Ok(body.message.content)
     }
 }
