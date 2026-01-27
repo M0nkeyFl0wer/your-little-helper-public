@@ -135,13 +135,7 @@ mod tests {
 
     #[test]
     fn test_file_version_creation() {
-        let version = FileVersion::new(
-            1,
-            Utc::now(),
-            "Initial version",
-            1024,
-            "abc123",
-        );
+        let version = FileVersion::new(1, Utc::now(), "Initial version", 1024, "abc123");
         assert_eq!(version.version_number, 1);
         assert!(!version.is_current);
     }

@@ -70,9 +70,7 @@ impl VersionControlService {
     /// Save a new version of a file
     pub fn save_version(&self, file_path: &Path) -> Result<FileVersion> {
         // Get relative path from root
-        let rel_path = file_path
-            .strip_prefix(&self.root)
-            .unwrap_or(file_path);
+        let rel_path = file_path.strip_prefix(&self.root).unwrap_or(file_path);
 
         // Copy file to version control directory
         let dest_path = self.repo_path.join(rel_path);
@@ -99,14 +97,9 @@ impl VersionControlService {
         let tree = self.repo.find_tree(tree_id)?;
 
         let parent = self.repo.head()?.peel_to_commit()?;
-        let commit_id = self.repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &description,
-            &tree,
-            &[&parent],
-        )?;
+        let commit_id =
+            self.repo
+                .commit(Some("HEAD"), &sig, &sig, &description, &tree, &[&parent])?;
 
         // Count versions of this file
         let version_count = self.count_versions(rel_path)?;
@@ -117,14 +110,13 @@ impl VersionControlService {
             description,
             size_bytes,
             commit_id.to_string(),
-        ).mark_current())
+        )
+        .mark_current())
     }
 
     /// List all versions of a file
     pub fn list_versions(&self, file_path: &Path) -> Result<Vec<FileVersion>> {
-        let rel_path = file_path
-            .strip_prefix(&self.root)
-            .unwrap_or(file_path);
+        let rel_path = file_path.strip_prefix(&self.root).unwrap_or(file_path);
 
         let rel_path_str = rel_path.to_string_lossy();
         let mut versions = Vec::new();
@@ -147,7 +139,9 @@ impl VersionControlService {
 
                 let timestamp = Utc.timestamp_opt(commit.time().seconds(), 0).unwrap();
                 let description = self.user_friendly_description(commit.message().unwrap_or(""));
-                let size_bytes = self.file_size_at_commit(&commit, &rel_path_str).unwrap_or(0);
+                let size_bytes = self
+                    .file_size_at_commit(&commit, &rel_path_str)
+                    .unwrap_or(0);
 
                 let mut version = FileVersion::new(
                     version_number,
@@ -174,9 +168,7 @@ impl VersionControlService {
 
     /// Restore a file to a previous version
     pub fn restore_version(&self, file_path: &Path, version: &FileVersion) -> Result<()> {
-        let rel_path = file_path
-            .strip_prefix(&self.root)
-            .unwrap_or(file_path);
+        let rel_path = file_path.strip_prefix(&self.root).unwrap_or(file_path);
 
         // First save current state as a new version
         if file_path.exists() {
@@ -234,12 +226,7 @@ impl VersionControlService {
     /// Convert git commit message to user-friendly description
     fn user_friendly_description(&self, message: &str) -> String {
         // Remove technical prefixes and clean up
-        let clean = message
-            .lines()
-            .next()
-            .unwrap_or(message)
-            .trim()
-            .to_string();
+        let clean = message.lines().next().unwrap_or(message).trim().to_string();
 
         if clean.is_empty() {
             "Saved version".to_string()
@@ -259,11 +246,9 @@ impl VersionControlService {
                 let parent = commit.parent(0)?;
                 let parent_tree = parent.tree()?;
 
-                let diff = self.repo.diff_tree_to_tree(
-                    Some(&parent_tree),
-                    Some(&tree),
-                    None,
-                )?;
+                let diff = self
+                    .repo
+                    .diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)?;
 
                 for delta in diff.deltas() {
                     if let Some(path) = delta.new_file().path() {

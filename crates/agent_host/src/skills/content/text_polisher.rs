@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Text polishing skill.
@@ -20,7 +20,8 @@ impl TextPolisher {
     /// Analyze text for potential improvements
     fn analyze_text(text: &str) -> TextAnalysis {
         let words: Vec<&str> = text.split_whitespace().collect();
-        let sentences: Vec<&str> = text.split(|c| c == '.' || c == '!' || c == '?')
+        let sentences: Vec<&str> = text
+            .split(|c| c == '.' || c == '!' || c == '?')
             .filter(|s| !s.trim().is_empty())
             .collect();
 
@@ -35,47 +36,60 @@ impl TextPolisher {
             suggestions.push(TextSuggestion {
                 category: "Readability".to_string(),
                 issue: "Long sentences".to_string(),
-                suggestion: "Consider breaking long sentences into shorter ones for clarity.".to_string(),
+                suggestion: "Consider breaking long sentences into shorter ones for clarity."
+                    .to_string(),
             });
         }
 
         // Check for passive voice indicators
         let passive_words = ["was", "were", "been", "being", "is", "are", "am"];
-        let passive_count = words.iter()
+        let passive_count = words
+            .iter()
             .filter(|w| passive_words.contains(&w.to_lowercase().as_str()))
             .count();
         if passive_count > word_count / 10 && word_count > 20 {
             suggestions.push(TextSuggestion {
                 category: "Style".to_string(),
                 issue: "Possible passive voice".to_string(),
-                suggestion: "Consider using active voice for more direct, engaging writing.".to_string(),
+                suggestion: "Consider using active voice for more direct, engaging writing."
+                    .to_string(),
             });
         }
 
         // Check for filler words
-        let fillers = ["very", "really", "just", "actually", "basically", "literally"];
-        let filler_count = words.iter()
+        let fillers = [
+            "very",
+            "really",
+            "just",
+            "actually",
+            "basically",
+            "literally",
+        ];
+        let filler_count = words
+            .iter()
             .filter(|w| fillers.contains(&w.to_lowercase().as_str()))
             .count();
         if filler_count > 0 {
             suggestions.push(TextSuggestion {
                 category: "Conciseness".to_string(),
                 issue: format!("Found {} filler word(s)", filler_count),
-                suggestion: "Remove filler words like 'very', 'really', 'just' for stronger writing.".to_string(),
+                suggestion:
+                    "Remove filler words like 'very', 'really', 'just' for stronger writing."
+                        .to_string(),
             });
         }
 
         // Check for repetition
-        let mut word_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut word_freq: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for word in &words {
             let lower = word.to_lowercase();
-            if lower.len() > 4 { // Only check longer words
+            if lower.len() > 4 {
+                // Only check longer words
                 *word_freq.entry(lower).or_insert(0) += 1;
             }
         }
-        let repeated: Vec<_> = word_freq.iter()
-            .filter(|(_, count)| **count > 3)
-            .collect();
+        let repeated: Vec<_> = word_freq.iter().filter(|(_, count)| **count > 3).collect();
         if !repeated.is_empty() && word_count > 50 {
             suggestions.push(TextSuggestion {
                 category: "Variety".to_string(),
@@ -92,7 +106,8 @@ impl TextPolisher {
                 suggestions.push(TextSuggestion {
                     category: "Strength".to_string(),
                     issue: format!("Weak phrase: '{}'", start),
-                    suggestion: "Restructure to lead with the subject and a strong verb.".to_string(),
+                    suggestion: "Restructure to lead with the subject and a strong verb."
+                        .to_string(),
                 });
                 break;
             }
@@ -116,7 +131,10 @@ impl TextPolisher {
         output.push_str("### Statistics\n");
         output.push_str(&format!("- **Words**: {}\n", analysis.word_count));
         output.push_str(&format!("- **Sentences**: {}\n", analysis.sentence_count));
-        output.push_str(&format!("- **Avg. words/sentence**: {:.1}\n\n", analysis.avg_words_per_sentence));
+        output.push_str(&format!(
+            "- **Avg. words/sentence**: {:.1}\n\n",
+            analysis.avg_words_per_sentence
+        ));
 
         // Readability assessment
         let readability = if analysis.avg_words_per_sentence < 15.0 {
@@ -207,7 +225,7 @@ impl Skill for TextPolisher {
                  - Finding filler words to remove\n\
                  - Identifying passive voice\n\
                  - Spotting repetition\n\n\
-                 Just paste your text and I'll give you suggestions!"
+                 Just paste your text and I'll give you suggestions!",
             ));
         }
 

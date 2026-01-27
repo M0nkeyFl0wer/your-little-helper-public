@@ -31,7 +31,10 @@ impl SafeFileOps {
     /// Returns error if file already exists (use modify_file instead).
     pub fn create_file(&self, path: &Path, content: &[u8]) -> Result<FileAction> {
         if path.exists() {
-            anyhow::bail!("File already exists: {:?}. Use modify_file to update existing files.", path);
+            anyhow::bail!(
+                "File already exists: {:?}. Use modify_file to update existing files.",
+                path
+            );
         }
 
         // Ensure parent directory exists
@@ -40,8 +43,7 @@ impl SafeFileOps {
                 .with_context(|| format!("Failed to create parent directories for {:?}", path))?;
         }
 
-        fs::write(path, content)
-            .with_context(|| format!("Failed to create file {:?}", path))?;
+        fs::write(path, content).with_context(|| format!("Failed to create file {:?}", path))?;
 
         Ok(FileAction::Created)
     }
@@ -51,11 +53,13 @@ impl SafeFileOps {
     /// Returns error if file doesn't exist (use create_file instead).
     pub fn modify_file(&self, path: &Path, content: &[u8]) -> Result<FileAction> {
         if !path.exists() {
-            anyhow::bail!("File does not exist: {:?}. Use create_file to create new files.", path);
+            anyhow::bail!(
+                "File does not exist: {:?}. Use create_file to create new files.",
+                path
+            );
         }
 
-        fs::write(path, content)
-            .with_context(|| format!("Failed to modify file {:?}", path))?;
+        fs::write(path, content).with_context(|| format!("Failed to modify file {:?}", path))?;
 
         Ok(FileAction::Modified)
     }
@@ -70,8 +74,7 @@ impl SafeFileOps {
                 .with_context(|| format!("Failed to create parent directories for {:?}", path))?;
         }
 
-        fs::write(path, content)
-            .with_context(|| format!("Failed to write file {:?}", path))?;
+        fs::write(path, content).with_context(|| format!("Failed to write file {:?}", path))?;
 
         Ok(if existed {
             FileAction::Modified
@@ -120,7 +123,10 @@ impl SafeFileOps {
         }
 
         if to.exists() {
-            anyhow::bail!("Destination file already exists: {:?}. Archive it first.", to);
+            anyhow::bail!(
+                "Destination file already exists: {:?}. Archive it first.",
+                to
+            );
         }
 
         // Ensure destination parent directory exists
@@ -132,7 +138,9 @@ impl SafeFileOps {
         fs::rename(from, to)
             .with_context(|| format!("Failed to move file from {:?} to {:?}", from, to))?;
 
-        Ok(FileAction::Moved { from: from.to_path_buf() })
+        Ok(FileAction::Moved {
+            from: from.to_path_buf(),
+        })
     }
 
     /// Archive a file to the archive directory.
@@ -222,8 +230,7 @@ impl SafeFileOps {
 
     /// Create a directory (and all parent directories).
     pub fn create_dir(&self, path: &Path) -> Result<()> {
-        fs::create_dir_all(path)
-            .with_context(|| format!("Failed to create directory {:?}", path))
+        fs::create_dir_all(path).with_context(|| format!("Failed to create directory {:?}", path))
     }
 
     /// Check if a path exists.
@@ -233,8 +240,7 @@ impl SafeFileOps {
 
     /// Read a file's contents.
     pub fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
-        fs::read(path)
-            .with_context(|| format!("Failed to read file {:?}", path))
+        fs::read(path).with_context(|| format!("Failed to read file {:?}", path))
     }
 
     /// Read a file as a UTF-8 string.

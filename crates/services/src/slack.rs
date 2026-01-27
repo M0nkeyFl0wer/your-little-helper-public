@@ -57,7 +57,7 @@ impl SlackConfig {
             username: Some("Little Helper".to_string()),
         }
     }
-    
+
     /// Check if Slack is configured
     pub fn is_configured(&self) -> bool {
         self.webhook_url.is_some()
@@ -66,9 +66,11 @@ impl SlackConfig {
 
 /// Send a simple text message to Slack
 pub async fn send_message(config: &SlackConfig, message: &str) -> Result<()> {
-    let webhook_url = config.webhook_url.as_ref()
+    let webhook_url = config
+        .webhook_url
+        .as_ref()
         .ok_or_else(|| anyhow!("Slack webhook URL not configured"))?;
-    
+
     let payload = SlackMessage {
         text: message.to_string(),
         channel: config.default_channel.clone(),
@@ -76,13 +78,10 @@ pub async fn send_message(config: &SlackConfig, message: &str) -> Result<()> {
         icon_emoji: Some(":robot_face:".to_string()),
         blocks: None,
     };
-    
+
     let client = reqwest::Client::new();
-    let response = client.post(webhook_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+    let response = client.post(webhook_url).json(&payload).send().await?;
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -99,13 +98,15 @@ pub async fn notify_drafts_ready(
     draft_folder: &str,
     campaign: Option<&str>,
 ) -> Result<()> {
-    let webhook_url = config.webhook_url.as_ref()
+    let webhook_url = config
+        .webhook_url
+        .as_ref()
         .ok_or_else(|| anyhow!("Slack webhook URL not configured"))?;
-    
+
     let campaign_text = campaign
         .map(|c| format!(" for *{}*", c))
         .unwrap_or_default();
-    
+
     let blocks = vec![
         SlackBlock {
             block_type: "section".to_string(),
@@ -127,7 +128,7 @@ pub async fn notify_drafts_ready(
             }),
         },
     ];
-    
+
     let payload = SlackMessage {
         text: format!("{} new draft(s) ready for review", draft_count),
         channel: config.default_channel.clone(),
@@ -135,13 +136,10 @@ pub async fn notify_drafts_ready(
         icon_emoji: Some(":memo:".to_string()),
         blocks: Some(blocks),
     };
-    
+
     let client = reqwest::Client::new();
-    let response = client.post(webhook_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+    let response = client.post(webhook_url).json(&payload).send().await?;
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -158,16 +156,18 @@ pub async fn notify_content_generated(
     platform: &str,
     preview: &str,
 ) -> Result<()> {
-    let webhook_url = config.webhook_url.as_ref()
+    let webhook_url = config
+        .webhook_url
+        .as_ref()
         .ok_or_else(|| anyhow!("Slack webhook URL not configured"))?;
-    
+
     // Truncate preview if too long
     let preview_text = if preview.len() > 300 {
         format!("{}...", &preview[..300])
     } else {
         preview.to_string()
     };
-    
+
     let blocks = vec![
         SlackBlock {
             block_type: "section".to_string(),
@@ -187,7 +187,7 @@ pub async fn notify_content_generated(
             }),
         },
     ];
-    
+
     let payload = SlackMessage {
         text: format!("New {} content for {} persona", platform, persona),
         channel: config.default_channel.clone(),
@@ -195,13 +195,10 @@ pub async fn notify_content_generated(
         icon_emoji: Some(":sparkles:".to_string()),
         blocks: Some(blocks),
     };
-    
+
     let client = reqwest::Client::new();
-    let response = client.post(webhook_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+    let response = client.post(webhook_url).json(&payload).send().await?;
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -214,19 +211,19 @@ pub async fn notify_content_generated(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_slack_config_from_env() {
         // Just test that it doesn't panic
         let config = SlackConfig::from_env();
         assert!(config.username.is_some());
     }
-    
+
     #[test]
     fn test_is_configured() {
         let config = SlackConfig::default();
         assert!(!config.is_configured());
-        
+
         let config = SlackConfig {
             webhook_url: Some("https://hooks.slack.com/...".to_string()),
             ..Default::default()

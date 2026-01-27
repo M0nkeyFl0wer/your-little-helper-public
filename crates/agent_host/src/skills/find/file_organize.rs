@@ -6,11 +6,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    FileAction, FileResult, Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-    ResultType, SuggestedAction,
+    FileAction, FileResult, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput,
+    SkillOutput, SuggestedAction,
 };
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::skills::common::SafeFileOps;
 
@@ -52,7 +52,9 @@ impl FileOrganize {
     /// Check if a query appears to be a deletion request
     fn is_deletion_request(query: &str) -> bool {
         let query_lower = query.to_lowercase();
-        DELETE_PATTERNS.iter().any(|pattern| query_lower.contains(pattern))
+        DELETE_PATTERNS
+            .iter()
+            .any(|pattern| query_lower.contains(pattern))
     }
 
     /// Generate a refusal message with safe alternatives
@@ -160,7 +162,9 @@ impl Skill for FileOrganize {
                             params: [
                                 ("path".to_string(), serde_json::json!(file_path)),
                                 ("action".to_string(), serde_json::json!("archive")),
-                            ].into_iter().collect(),
+                            ]
+                            .into_iter()
+                            .collect(),
                         },
                         SuggestedAction {
                             label: "Move to different folder".to_string(),
@@ -168,7 +172,9 @@ impl Skill for FileOrganize {
                             params: [
                                 ("path".to_string(), serde_json::json!(file_path)),
                                 ("action".to_string(), serde_json::json!("move")),
-                            ].into_iter().collect(),
+                            ]
+                            .into_iter()
+                            .collect(),
                         },
                     ]
                 } else {
@@ -217,7 +223,7 @@ impl Skill for FileOrganize {
                     None => {
                         return Ok(SkillOutput::text(
                             "Please specify which file to archive.\n\n\
-                             Example: \"archive old_report.pdf\""
+                             Example: \"archive old_report.pdf\"",
                         ));
                     }
                 };
@@ -229,41 +235,46 @@ impl Skill for FileOrganize {
                     )));
                 }
 
-                let file_name = source.file_name()
+                let file_name = source
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
 
                 match self.safe_ops.archive_file(&source) {
-                    Ok(FileAction::Archived { to }) => {
-                        Ok(SkillOutput {
-                            result_type: ResultType::Files,
-                            text: Some(format!(
-                                "Archived '{}'\n\n\
+                    Ok(FileAction::Archived { to }) => Ok(SkillOutput {
+                        result_type: ResultType::Files,
+                        text: Some(format!(
+                            "Archived '{}'\n\n\
                                  The file has been moved to:\n{}\n\n\
                                  You can restore it anytime from the archive.",
-                                file_name, to.display()
-                            )),
-                            files: vec![FileResult {
-                                path: to.clone(),
-                                action: FileAction::Archived { to: to.clone() },
-                                preview: None,
-                            }],
-                            data: Some(serde_json::json!({
-                                "action": "archived",
-                                "original_path": source.to_string_lossy(),
-                                "archive_path": to.to_string_lossy(),
-                            })),
-                            citations: Vec::new(),
-                            suggested_actions: vec![
-                                SuggestedAction {
-                                    label: "View archive folder".to_string(),
-                                    skill_id: "file_preview".to_string(),
-                                    params: [("path".to_string(), serde_json::json!(to.parent().map(|p| p.to_string_lossy()).unwrap_or_default()))]
-                                        .into_iter().collect(),
-                                },
-                            ],
-                        })
-                    }
+                            file_name,
+                            to.display()
+                        )),
+                        files: vec![FileResult {
+                            path: to.clone(),
+                            action: FileAction::Archived { to: to.clone() },
+                            preview: None,
+                        }],
+                        data: Some(serde_json::json!({
+                            "action": "archived",
+                            "original_path": source.to_string_lossy(),
+                            "archive_path": to.to_string_lossy(),
+                        })),
+                        citations: Vec::new(),
+                        suggested_actions: vec![SuggestedAction {
+                            label: "View archive folder".to_string(),
+                            skill_id: "file_preview".to_string(),
+                            params: [(
+                                "path".to_string(),
+                                serde_json::json!(to
+                                    .parent()
+                                    .map(|p| p.to_string_lossy())
+                                    .unwrap_or_default()),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        }],
+                    }),
                     Ok(_) => Ok(SkillOutput::text("File operation completed.")),
                     Err(e) => Ok(SkillOutput::error(format!("Failed to archive file: {}", e))),
                 }
@@ -275,7 +286,7 @@ impl Skill for FileOrganize {
                     None => {
                         return Ok(SkillOutput::text(
                             "Please specify the file to move and destination.\n\n\
-                             Example: \"move report.pdf to ~/Documents/Reports/\""
+                             Example: \"move report.pdf to ~/Documents/Reports/\"",
                         ));
                     }
                 };
@@ -286,7 +297,10 @@ impl Skill for FileOrganize {
                         return Ok(SkillOutput::text(format!(
                             "Where would you like to move '{}'?\n\n\
                              Example: \"move {} to ~/Documents/\"",
-                            source.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+                            source
+                                .file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default(),
                             source.display()
                         )));
                     }
@@ -299,7 +313,8 @@ impl Skill for FileOrganize {
                     )));
                 }
 
-                let file_name = source.file_name()
+                let file_name = source
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
 
@@ -311,29 +326,29 @@ impl Skill for FileOrganize {
                 };
 
                 match self.safe_ops.move_file(&source, &final_dest) {
-                    Ok(action) => {
-                        Ok(SkillOutput {
-                            result_type: ResultType::Files,
-                            text: Some(format!(
-                                "Moved '{}'\n\n\
+                    Ok(action) => Ok(SkillOutput {
+                        result_type: ResultType::Files,
+                        text: Some(format!(
+                            "Moved '{}'\n\n\
                                  From: {}\n\
                                  To: {}",
-                                file_name, source.display(), final_dest.display()
-                            )),
-                            files: vec![FileResult {
-                                path: final_dest.clone(),
-                                action,
-                                preview: None,
-                            }],
-                            data: Some(serde_json::json!({
-                                "action": "moved",
-                                "from": source.to_string_lossy(),
-                                "to": final_dest.to_string_lossy(),
-                            })),
-                            citations: Vec::new(),
-                            suggested_actions: Vec::new(),
-                        })
-                    }
+                            file_name,
+                            source.display(),
+                            final_dest.display()
+                        )),
+                        files: vec![FileResult {
+                            path: final_dest.clone(),
+                            action,
+                            preview: None,
+                        }],
+                        data: Some(serde_json::json!({
+                            "action": "moved",
+                            "from": source.to_string_lossy(),
+                            "to": final_dest.to_string_lossy(),
+                        })),
+                        citations: Vec::new(),
+                        suggested_actions: Vec::new(),
+                    }),
                     Err(e) => Ok(SkillOutput::error(format!("Failed to move file: {}", e))),
                 }
             }
@@ -344,7 +359,7 @@ impl Skill for FileOrganize {
                     None => {
                         return Ok(SkillOutput::text(
                             "Please specify the file to copy and destination.\n\n\
-                             Example: \"copy config.yaml to ~/backup/\""
+                             Example: \"copy config.yaml to ~/backup/\"",
                         ));
                     }
                 };
@@ -354,7 +369,10 @@ impl Skill for FileOrganize {
                     None => {
                         return Ok(SkillOutput::text(format!(
                             "Where would you like to copy '{}'?",
-                            source.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                            source
+                                .file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default()
                         )));
                     }
                 };
@@ -366,7 +384,8 @@ impl Skill for FileOrganize {
                     )));
                 }
 
-                let file_name = source.file_name()
+                let file_name = source
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
 
@@ -377,36 +396,35 @@ impl Skill for FileOrganize {
                 };
 
                 match self.safe_ops.copy_file(&source, &final_dest) {
-                    Ok(action) => {
-                        Ok(SkillOutput {
-                            result_type: ResultType::Files,
-                            text: Some(format!(
-                                "Copied '{}'\n\n\
+                    Ok(action) => Ok(SkillOutput {
+                        result_type: ResultType::Files,
+                        text: Some(format!(
+                            "Copied '{}'\n\n\
                                  Original: {}\n\
                                  Copy: {}",
-                                file_name, source.display(), final_dest.display()
-                            )),
-                            files: vec![FileResult {
-                                path: final_dest.clone(),
-                                action,
-                                preview: None,
-                            }],
-                            data: Some(serde_json::json!({
-                                "action": "copied",
-                                "source": source.to_string_lossy(),
-                                "copy": final_dest.to_string_lossy(),
-                            })),
-                            citations: Vec::new(),
-                            suggested_actions: Vec::new(),
-                        })
-                    }
+                            file_name,
+                            source.display(),
+                            final_dest.display()
+                        )),
+                        files: vec![FileResult {
+                            path: final_dest.clone(),
+                            action,
+                            preview: None,
+                        }],
+                        data: Some(serde_json::json!({
+                            "action": "copied",
+                            "source": source.to_string_lossy(),
+                            "copy": final_dest.to_string_lossy(),
+                        })),
+                        citations: Vec::new(),
+                        suggested_actions: Vec::new(),
+                    }),
                     Err(e) => Ok(SkillOutput::error(format!("Failed to copy file: {}", e))),
                 }
             }
 
-            OrganizeAction::Organize | OrganizeAction::Unknown => {
-                Ok(SkillOutput::text(
-                    "How would you like to organize your files?\n\n\
+            OrganizeAction::Organize | OrganizeAction::Unknown => Ok(SkillOutput::text(
+                "How would you like to organize your files?\n\n\
                      I can help you:\n\
                      - **Archive** files (safely store them with timestamps)\n\
                      - **Move** files to different folders\n\
@@ -415,9 +433,8 @@ impl Skill for FileOrganize {
                      Example commands:\n\
                      - \"archive old_project.zip\"\n\
                      - \"move report.pdf to ~/Documents/2024/\"\n\
-                     - \"copy config.yaml to ~/backup/\""
-                ))
-            }
+                     - \"copy config.yaml to ~/backup/\"",
+            )),
         }
     }
 
@@ -434,7 +451,9 @@ impl Skill for FileOrganize {
 fn extract_file_path_from_query(query: &str) -> Option<String> {
     // Look for words with file extensions
     for word in query.split_whitespace() {
-        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '_' && c != '-');
+        let clean = word.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '_' && c != '-'
+        });
         if clean.contains('.') && !clean.starts_with('.') && clean.len() > 2 {
             return Some(clean.to_string());
         }
@@ -485,15 +504,33 @@ mod tests {
 
     #[test]
     fn test_action_parsing() {
-        assert_eq!(FileOrganize::parse_organize_action("archive old files"), OrganizeAction::Archive);
-        assert_eq!(FileOrganize::parse_organize_action("move report.pdf"), OrganizeAction::Move);
-        assert_eq!(FileOrganize::parse_organize_action("copy config"), OrganizeAction::Copy);
-        assert_eq!(FileOrganize::parse_organize_action("organize downloads"), OrganizeAction::Organize);
+        assert_eq!(
+            FileOrganize::parse_organize_action("archive old files"),
+            OrganizeAction::Archive
+        );
+        assert_eq!(
+            FileOrganize::parse_organize_action("move report.pdf"),
+            OrganizeAction::Move
+        );
+        assert_eq!(
+            FileOrganize::parse_organize_action("copy config"),
+            OrganizeAction::Copy
+        );
+        assert_eq!(
+            FileOrganize::parse_organize_action("organize downloads"),
+            OrganizeAction::Organize
+        );
     }
 
     #[test]
     fn test_file_path_extraction() {
-        assert_eq!(extract_file_path_from_query("delete report.pdf"), Some("report.pdf".to_string()));
-        assert_eq!(extract_file_path_from_query("move \"my file.doc\" to folder"), Some("my file.doc".to_string()));
+        assert_eq!(
+            extract_file_path_from_query("delete report.pdf"),
+            Some("report.pdf".to_string())
+        );
+        assert_eq!(
+            extract_file_path_from_query("move \"my file.doc\" to folder"),
+            Some("my file.doc".to_string())
+        );
     }
 }

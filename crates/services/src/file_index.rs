@@ -152,9 +152,7 @@ impl FileIndexService {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
 
-                let extension = path
-                    .extension()
-                    .map(|e| e.to_string_lossy().to_string());
+                let extension = path.extension().map(|e| e.to_string_lossy().to_string());
 
                 let metadata = match entry.metadata() {
                     Ok(m) => m,
@@ -254,7 +252,11 @@ impl FileIndexService {
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
@@ -308,6 +310,9 @@ pub struct ScanStats {
 
 /// Check if a directory entry is hidden (starts with .)
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
+    if entry.depth() == 0 {
+        return false;
+    }
     entry
         .file_name()
         .to_str()

@@ -2,11 +2,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-};
-use std::process::Command;
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Run AI swarms to implement project specs
 pub struct SpecRunSkill;
@@ -35,7 +33,9 @@ impl Skill for SpecRunSkill {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         let description = if input.query.is_empty() {
-            input.params.get("description")
+            input
+                .params
+                .get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("implement the spec")
                 .to_string()
@@ -43,13 +43,14 @@ impl Skill for SpecRunSkill {
             input.query.clone()
         };
 
-        let directory = input.params.get("directory")
+        let directory = input
+            .params
+            .get("directory")
             .and_then(|v| v.as_str())
             .map(|s| PathBuf::from(s))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        let spec = input.params.get("spec")
-            .and_then(|v| v.as_str());
+        let spec = input.params.get("spec").and_then(|v| v.as_str());
 
         // Check if spec-kit-assistant is available
         let spec_kit_path = dirs::home_dir()
@@ -93,8 +94,7 @@ impl Skill for SpecRunSkill {
                         {}\n\n\
                         The AI agents are working on your request. \
                         Check the project directory for changes.",
-                        description,
-                        stdout
+                        description, stdout
                     )))
                 } else {
                     Ok(SkillOutput::text(format!(
@@ -103,9 +103,10 @@ impl Skill for SpecRunSkill {
                     )))
                 }
             }
-            Err(e) => {
-                Ok(SkillOutput::text(format!("Failed to run spec swarm: {}", e)))
-            }
+            Err(e) => Ok(SkillOutput::text(format!(
+                "Failed to run spec swarm: {}",
+                e
+            ))),
         }
     }
 }

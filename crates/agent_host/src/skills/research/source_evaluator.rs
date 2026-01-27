@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Source evaluation skill.
@@ -190,17 +190,32 @@ fn is_organization_domain(domain: &str) -> bool {
 
 fn is_major_news_source(domain: &str) -> bool {
     let news_domains = [
-        "nytimes.com", "washingtonpost.com", "bbc.com", "bbc.co.uk",
-        "reuters.com", "apnews.com", "npr.org", "theguardian.com",
-        "wsj.com", "economist.com", "nature.com", "sciencemag.org",
+        "nytimes.com",
+        "washingtonpost.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "reuters.com",
+        "apnews.com",
+        "npr.org",
+        "theguardian.com",
+        "wsj.com",
+        "economist.com",
+        "nature.com",
+        "sciencemag.org",
     ];
     news_domains.iter().any(|d| domain.contains(d))
 }
 
 fn is_social_media(domain: &str) -> bool {
     let social_domains = [
-        "twitter.com", "x.com", "facebook.com", "instagram.com",
-        "tiktok.com", "reddit.com", "youtube.com", "linkedin.com",
+        "twitter.com",
+        "x.com",
+        "facebook.com",
+        "instagram.com",
+        "tiktok.com",
+        "reddit.com",
+        "youtube.com",
+        "linkedin.com",
     ];
     social_domains.iter().any(|d| domain.contains(d))
 }
@@ -249,14 +264,21 @@ impl Skill for SourceEvaluator {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         // Try to extract URL from query or params
-        let url = input.params.get("url")
+        let url = input
+            .params
+            .get("url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
                 // Look for URL in query
                 for word in input.query.split_whitespace() {
                     if word.starts_with("http://") || word.starts_with("https://") {
-                        return Some(word.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '/' && c != '.' && c != '-').to_string());
+                        return Some(
+                            word.trim_matches(|c: char| {
+                                !c.is_alphanumeric() && c != ':' && c != '/' && c != '.' && c != '-'
+                            })
+                            .to_string(),
+                        );
                     }
                 }
                 None
@@ -268,7 +290,7 @@ impl Skill for SourceEvaluator {
                 return Ok(SkillOutput::text(
                     "Please provide a URL to evaluate.\n\n\
                      Example: \"Evaluate https://example.com/article\"\n\n\
-                     I'll analyze the source for credibility indicators."
+                     I'll analyze the source for credibility indicators.",
                 ));
             }
         };
@@ -298,7 +320,10 @@ mod tests {
 
     #[test]
     fn test_extract_domain() {
-        assert_eq!(extract_domain("https://www.example.com/page"), "www.example.com");
+        assert_eq!(
+            extract_domain("https://www.example.com/page"),
+            "www.example.com"
+        );
         assert_eq!(extract_domain("http://test.org"), "test.org");
     }
 

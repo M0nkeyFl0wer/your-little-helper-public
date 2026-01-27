@@ -9,6 +9,8 @@ use std::env;
 struct AnthropicRequest {
     model: String,
     max_tokens: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
     messages: Vec<AnthropicMessage>,
 }
 
@@ -38,8 +40,13 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(model: &str) -> Result<Self> {
-        let key = env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
-        Ok(Self { http: Client::new(), auth_token: key, model: model.to_string() })
+        let key =
+            env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
+        Ok(Self {
+            http: Client::new(),
+            auth_token: key,
+            model: model.to_string(),
+        })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
@@ -49,7 +56,8 @@ impl AnthropicClient {
             api_key.clone()
         } else {
             // Try environment variable as fallback
-            env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("No Anthropic authentication configured"))?
+            env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| anyhow!("No Anthropic authentication configured"))?
         };
 
         Ok(Self {
@@ -62,21 +70,37 @@ impl AnthropicClient {
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
         let url = "https://api.anthropic.com/v1/messages";
 
-        // Anthropic doesn't support system messages in the same array, so filter them out
-        // and handle system prompt separately if needed
-        let anthropic_messages: Vec<AnthropicMessage> = messages
-            .into_iter()
-            .filter(|m| m.role != "system")
-            .map(|m| AnthropicMessage { role: m.role, content: m.content })
-            .collect();
+        let mut system_prompt = String::new();
+        let mut anthropic_messages: Vec<AnthropicMessage> = Vec::new();
+        for m in messages {
+            if m.role == "system" {
+                if !system_prompt.is_empty() {
+                    system_prompt.push_str("\n\n");
+                }
+                system_prompt.push_str(&m.content);
+            } else {
+                anthropic_messages.push(AnthropicMessage {
+                    role: m.role,
+                    content: m.content,
+                });
+            }
+        }
+
+        let system = if system_prompt.trim().is_empty() {
+            None
+        } else {
+            Some(system_prompt)
+        };
 
         let req = AnthropicRequest {
             model: self.model.clone(),
             max_tokens: 4096,
+            system,
             messages: anthropic_messages,
         };
 
-        let resp = self.http
+        let resp = self
+            .http
             .post(url)
             .header("x-api-key", &self.auth_token)
             .header("anthropic-version", "2023-06-01")

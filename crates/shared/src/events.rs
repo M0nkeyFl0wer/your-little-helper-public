@@ -61,11 +61,7 @@ impl AuditEntry {
     }
 
     /// Create a file operation audit entry
-    pub fn file_operation(
-        path: PathBuf,
-        action: FileAction,
-        skill_id: Option<String>,
-    ) -> Self {
+    pub fn file_operation(path: PathBuf, action: FileAction, skill_id: Option<String>) -> Self {
         let action_str = match &action {
             FileAction::Created => "File created".to_string(),
             FileAction::Modified => "File modified".to_string(),
@@ -174,7 +170,9 @@ impl AuditFilter {
     }
 
     pub fn event_type(mut self, event_type: EventType) -> Self {
-        self.event_types.get_or_insert_with(Vec::new).push(event_type);
+        self.event_types
+            .get_or_insert_with(Vec::new)
+            .push(event_type);
         self
     }
 }
@@ -244,7 +242,9 @@ mod tests {
     fn test_audit_entry_file_operation() {
         let entry = AuditEntry::file_operation(
             PathBuf::from("/home/user/doc.txt"),
-            FileAction::Archived { to: PathBuf::from("/archive/doc.txt") },
+            FileAction::Archived {
+                to: PathBuf::from("/archive/doc.txt"),
+            },
             Some("file_organize".to_string()),
         );
 

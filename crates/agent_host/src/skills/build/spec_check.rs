@@ -2,11 +2,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-};
-use std::process::Command;
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Check project spec status and validate structure
 pub struct SpecCheckSkill;
@@ -34,7 +32,9 @@ impl Skill for SpecCheckSkill {
     }
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
-        let directory = input.params.get("directory")
+        let directory = input
+            .params
+            .get("directory")
             .and_then(|v| v.as_str())
             .map(|s| PathBuf::from(s))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -79,10 +79,7 @@ impl Skill for SpecCheckSkill {
         }
 
         // Manual check if spec-kit not available
-        let mut status_lines = vec![
-            format!("Project: {}", directory.display()),
-            String::new(),
-        ];
+        let mut status_lines = vec![format!("Project: {}", directory.display()), String::new()];
 
         // Check constitution
         if constitution.exists() {
@@ -108,9 +105,15 @@ impl Skill for SpecCheckSkill {
                     let plan_path = entry.path().join("plan.md");
 
                     let mut spec_status = vec![];
-                    if spec_path.exists() { spec_status.push("spec"); }
-                    if plan_path.exists() { spec_status.push("plan"); }
-                    if tasks_path.exists() { spec_status.push("tasks"); }
+                    if spec_path.exists() {
+                        spec_status.push("spec");
+                    }
+                    if plan_path.exists() {
+                        spec_status.push("plan");
+                    }
+                    if tasks_path.exists() {
+                        spec_status.push("tasks");
+                    }
 
                     status_lines.push(format!(
                         "  - {}: [{}]",

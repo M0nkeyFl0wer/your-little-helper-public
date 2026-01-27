@@ -5,7 +5,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Chart recommendation skill.
@@ -22,7 +22,11 @@ impl ChartRecommender {
         let mut recommendations = Vec::new();
 
         // Time series data
-        if desc_lower.contains("time") || desc_lower.contains("date") || desc_lower.contains("trend") || desc_lower.contains("over") {
+        if desc_lower.contains("time")
+            || desc_lower.contains("date")
+            || desc_lower.contains("trend")
+            || desc_lower.contains("over")
+        {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Line,
                 reason: "Line charts are ideal for showing trends over time".to_string(),
@@ -31,12 +35,16 @@ impl ChartRecommender {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Area,
                 reason: "Area charts emphasize the magnitude of change over time".to_string(),
-                when_to_use: "When you want to show cumulative totals or highlight volume".to_string(),
+                when_to_use: "When you want to show cumulative totals or highlight volume"
+                    .to_string(),
             });
         }
 
         // Comparison data
-        if desc_lower.contains("compare") || desc_lower.contains("category") || desc_lower.contains("group") {
+        if desc_lower.contains("compare")
+            || desc_lower.contains("category")
+            || desc_lower.contains("group")
+        {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Bar,
                 reason: "Bar charts make it easy to compare values across categories".to_string(),
@@ -50,7 +58,11 @@ impl ChartRecommender {
         }
 
         // Proportion/percentage data
-        if desc_lower.contains("percent") || desc_lower.contains("proportion") || desc_lower.contains("share") || desc_lower.contains("breakdown") {
+        if desc_lower.contains("percent")
+            || desc_lower.contains("proportion")
+            || desc_lower.contains("share")
+            || desc_lower.contains("breakdown")
+        {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Pie,
                 reason: "Pie charts show parts of a whole".to_string(),
@@ -64,16 +76,23 @@ impl ChartRecommender {
         }
 
         // Correlation/relationship data
-        if desc_lower.contains("relationship") || desc_lower.contains("correlation") || desc_lower.contains("scatter") {
+        if desc_lower.contains("relationship")
+            || desc_lower.contains("correlation")
+            || desc_lower.contains("scatter")
+        {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Scatter,
                 reason: "Scatter plots reveal relationships between two variables".to_string(),
-                when_to_use: "When exploring correlation or distribution of two numeric values".to_string(),
+                when_to_use: "When exploring correlation or distribution of two numeric values"
+                    .to_string(),
             });
         }
 
         // Distribution data
-        if desc_lower.contains("distribution") || desc_lower.contains("frequency") || desc_lower.contains("histogram") {
+        if desc_lower.contains("distribution")
+            || desc_lower.contains("frequency")
+            || desc_lower.contains("histogram")
+        {
             recommendations.push(ChartRecommendation {
                 chart_type: ChartType::Histogram,
                 reason: "Histograms show the distribution of a single variable".to_string(),
@@ -218,7 +237,7 @@ impl Skill for ChartRecommender {
                  - \"I want to show sales trends over time\"\n\
                  - \"Compare revenue across different regions\"\n\
                  - \"Show the breakdown of expenses by category\"\n\
-                 - \"Find correlation between price and quantity\""
+                 - \"Find correlation between price and quantity\"",
             ));
         }
 

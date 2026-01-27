@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use services::file_index::{FileIndexService, ScanStats};
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ impl Skill for DriveIndex {
             return Ok(SkillOutput::text(
                 "Please provide a directory path to index.\n\n\
                  Example: Index my Documents folder\n\
-                 Or: /home/user/Documents"
+                 Or: /home/user/Documents",
             ));
         }
 
@@ -121,13 +121,11 @@ impl Skill for DriveIndex {
             files: Vec::new(),
             data: Some(data),
             citations: Vec::new(),
-            suggested_actions: vec![
-                shared::skill::SuggestedAction {
-                    label: "Search files".to_string(),
-                    skill_id: "fuzzy_file_search".to_string(),
-                    params: std::collections::HashMap::new(),
-                },
-            ],
+            suggested_actions: vec![shared::skill::SuggestedAction {
+                label: "Search files".to_string(),
+                skill_id: "fuzzy_file_search".to_string(),
+                params: std::collections::HashMap::new(),
+            }],
         })
     }
 
