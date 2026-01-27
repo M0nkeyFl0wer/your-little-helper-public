@@ -1264,6 +1264,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
             .with_min_inner_size([800.0, 600.0]),
+        vsync: true, // Limit to monitor refresh rate
         ..Default::default()
     };
     eframe::run_native(
