@@ -3,20 +3,27 @@
 //! Fetches and extracts readable content from web pages,
 //! providing summaries and key information.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
+use html2text::from_read;
+use regex::Regex;
+use reqwest::Client;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
-    Citation,
+    Citation, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
+use std::time::Duration;
 
 /// Article reader skill.
-pub struct ArticleReader;
+pub struct ArticleReader {
+    client: Client,
+}
 
 impl ArticleReader {
     pub fn new() -> Self {
-        Self
+        Self {
+            client: Client::new(),
+        }
     }
 
     /// Extract URL from user query
@@ -33,24 +40,34 @@ impl ArticleReader {
 
     /// Fetch and parse article content
     async fn fetch_article(&self, url: &str) -> Result<ArticleContent> {
-        // In production, this would:
-        // 1. Fetch the URL using reqwest
-        // 2. Parse HTML with scraper or similar
-        // 3. Extract main content using readability algorithms
-        // 4. Return structured content
-
-        // For now, return a placeholder indicating the feature is available
-        // but requires network access
+        let response = self
+            .client
+            .get(url)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow!("article fetch failed with {}", response.status()));
+        }
+        let html = response.text().await?;
+        let title = extract_title(&html);
+        let text = from_read(html.as_bytes(), 80);
+        let content = text.trim().to_string();
+        if content.is_empty() {
+            return Err(anyhow!("article did not return readable content"));
+        }
+        let word_count = content.split_whitespace().count() as u32;
+        let read_time_minutes = estimate_read_time(word_count);
 
         Ok(ArticleContent {
             url: url.to_string(),
-            title: None,
+            title,
             author: None,
             published_date: None,
-            content: None,
-            word_count: 0,
-            read_time_minutes: 0,
-            fetched: false,
+            content: Some(content),
+            word_count,
+            read_time_minutes,
+            fetched: true,
         })
     }
 
@@ -104,10 +121,25 @@ impl ArticleReader {
         }
 
         // Source
-        output.push_str(&format!("\n**Source**: [{}]({})\n", article.url, article.url));
+        output.push_str(&format!(
+            "\n**Source**: [{}]({})\n",
+            article.url, article.url
+        ));
 
         output
     }
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    let re = Regex::new(r"(?is)<title[^>]*>(.*?)</title>").ok()?;
+    re.captures(html)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
+}
+
+fn estimate_read_time(word_count: u32) -> u32 {
+    let minutes = (word_count + 199) / 200;
+    minutes.max(1)
 }
 
 impl Default for ArticleReader {
@@ -153,7 +185,9 @@ impl Skill for ArticleReader {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         // Try to extract URL from query or params
-        let url = input.params.get("url")
+        let url = input
+            .params
+            .get("url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| Self::extract_url(&input.query));
@@ -164,7 +198,7 @@ impl Skill for ArticleReader {
                 return Ok(SkillOutput::text(
                     "Please provide a URL to read.\n\n\
                      Example: \"Read https://example.com/article\"\n\n\
-                     I'll extract the main content and provide a summary."
+                     I'll extract the main content and provide a summary.",
                 ));
             }
         };

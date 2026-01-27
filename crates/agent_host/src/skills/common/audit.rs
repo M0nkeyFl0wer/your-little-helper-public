@@ -102,8 +102,8 @@ impl AuditLogger {
         self.maybe_rotate()?;
 
         // Write to file
-        let json = serde_json::to_string(&entry)
-            .with_context(|| "Failed to serialize audit entry")?;
+        let json =
+            serde_json::to_string(&entry).with_context(|| "Failed to serialize audit entry")?;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -111,8 +111,7 @@ impl AuditLogger {
             .open(&self.current_log)
             .with_context(|| format!("Failed to open audit log {:?}", self.current_log))?;
 
-        writeln!(file, "{}", json)
-            .with_context(|| "Failed to write audit entry")?;
+        writeln!(file, "{}", json).with_context(|| "Failed to write audit entry")?;
 
         // Update cache
         let mut cache = self.cache.write();
@@ -147,12 +146,7 @@ impl AuditLogger {
     /// Get the most recent N entries.
     pub fn recent(&self, count: usize) -> Vec<AuditEntry> {
         let cache = self.cache.read();
-        cache
-            .iter()
-            .rev()
-            .take(count)
-            .cloned()
-            .collect()
+        cache.iter().rev().take(count).cloned().collect()
     }
 
     /// Get user-visible entries for the settings panel.
@@ -185,9 +179,7 @@ impl AuditLogger {
         cache
             .iter()
             .rev()
-            .filter(|e| {
-                e.file_path.as_ref().map_or(false, |p| p == path)
-            })
+            .filter(|e| e.file_path.as_ref().map_or(false, |p| p == path))
             .take(limit)
             .cloned()
             .collect()
@@ -222,7 +214,10 @@ impl AuditLogger {
                 EventType::PermChange => EventType::PermChange,
                 EventType::Error => EventType::Error,
             };
-            if !types.iter().any(|t| std::mem::discriminant(t) == std::mem::discriminant(&entry_type)) {
+            if !types
+                .iter()
+                .any(|t| std::mem::discriminant(t) == std::mem::discriminant(&entry_type))
+            {
                 return false;
             }
         }
@@ -320,7 +315,9 @@ impl AuditLogger {
             .with_context(|| format!("Failed to rotate current log to {:?}", first_rotated))?;
 
         // Delete oldest if exceeds max
-        let oldest = self.log_dir.join(format!("audit.{}.jsonl", MAX_ROTATED_FILES + 1));
+        let oldest = self
+            .log_dir
+            .join(format!("audit.{}.jsonl", MAX_ROTATED_FILES + 1));
         if oldest.exists() {
             fs::remove_file(&oldest)
                 .with_context(|| format!("Failed to remove oldest log {:?}", oldest))?;
@@ -382,11 +379,13 @@ mod tests {
     fn test_log_skill_execution() {
         let (_temp_dir, logger) = setup();
 
-        logger.log_skill_execution(
-            "fuzzy_file_search",
-            "Searched for 'budget 2024'",
-            Some(serde_json::json!({"results": 5})),
-        ).unwrap();
+        logger
+            .log_skill_execution(
+                "fuzzy_file_search",
+                "Searched for 'budget 2024'",
+                Some(serde_json::json!({"results": 5})),
+            )
+            .unwrap();
 
         let recent = logger.recent(1);
         assert_eq!(recent.len(), 1);
@@ -397,11 +396,15 @@ mod tests {
     fn test_log_file_operation() {
         let (_temp_dir, logger) = setup();
 
-        logger.log_file_operation(
-            PathBuf::from("/home/user/doc.txt"),
-            FileAction::Archived { to: PathBuf::from("/archive/doc.txt") },
-            Some("file_organize".to_string()),
-        ).unwrap();
+        logger
+            .log_file_operation(
+                PathBuf::from("/home/user/doc.txt"),
+                FileAction::Archived {
+                    to: PathBuf::from("/archive/doc.txt"),
+                },
+                Some("file_organize".to_string()),
+            )
+            .unwrap();
 
         let recent = logger.recent(1);
         assert_eq!(recent.len(), 1);
@@ -413,16 +416,24 @@ mod tests {
         let (_temp_dir, logger) = setup();
 
         // Log some entries
-        logger.log_skill_execution("skill_a", "Action A", None).unwrap();
-        logger.log_skill_execution("skill_b", "Action B", None).unwrap();
-        logger.log_skill_execution("skill_a", "Action C", None).unwrap();
+        logger
+            .log_skill_execution("skill_a", "Action A", None)
+            .unwrap();
+        logger
+            .log_skill_execution("skill_b", "Action B", None)
+            .unwrap();
+        logger
+            .log_skill_execution("skill_a", "Action C", None)
+            .unwrap();
 
         // Query for skill_a only
         let filter = AuditFilter::new().skill("skill_a");
         let results = logger.query(filter).unwrap();
 
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|e| e.skill_id == Some("skill_a".to_string())));
+        assert!(results
+            .iter()
+            .all(|e| e.skill_id == Some("skill_a".to_string())));
     }
 
     #[test]
@@ -430,11 +441,13 @@ mod tests {
         let (_temp_dir, logger) = setup();
 
         // Log visible entry
-        logger.log_skill_execution("visible_skill", "Visible action", None).unwrap();
+        logger
+            .log_skill_execution("visible_skill", "Visible action", None)
+            .unwrap();
 
         // Log internal entry
-        let internal_entry = AuditEntry::skill_execution("internal_skill", "Internal action", None)
-            .internal();
+        let internal_entry =
+            AuditEntry::skill_execution("internal_skill", "Internal action", None).internal();
         logger.log_entry(internal_entry).unwrap();
 
         let visible = logger.user_visible_entries(10);
@@ -448,7 +461,9 @@ mod tests {
 
         // Log more than cache size
         for i in 0..MEMORY_CACHE_SIZE + 100 {
-            logger.log_skill_execution("test", &format!("Action {}", i), None).unwrap();
+            logger
+                .log_skill_execution("test", &format!("Action {}", i), None)
+                .unwrap();
         }
 
         let cache = logger.cache.read();
@@ -460,11 +475,9 @@ mod tests {
         let (_temp_dir, logger) = setup();
 
         logger.log_skill_execution("skill", "exec", None).unwrap();
-        logger.log_file_operation(
-            PathBuf::from("/file"),
-            FileAction::Created,
-            None,
-        ).unwrap();
+        logger
+            .log_file_operation(PathBuf::from("/file"), FileAction::Created, None)
+            .unwrap();
         logger.log_error("Error!", None, None).unwrap();
 
         let stats = logger.stats();

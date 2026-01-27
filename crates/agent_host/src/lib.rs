@@ -12,14 +12,20 @@ pub mod prompts;
 pub mod skill_executor;
 pub mod skills;
 
-pub use prompts::{ModePrompt, ModeIntroduction, Permissions, get_mode_prompt, get_mode_introduction, get_system_prompt};
+pub use prompts::{
+    get_mode_introduction, get_mode_prompt, get_system_prompt, ModeIntroduction, ModePrompt,
+    Permissions,
+};
 
 use anyhow::Result;
 use regex::Regex;
 use shared::agent_api::ChatMessage;
 use shared::settings::AppSettings;
 
-pub use executor::{CommandResult, DangerLevel, classify_command, execute_command, parse_progress, needs_elevation, web_search};
+pub use executor::{
+    classify_command, execute_command, needs_elevation, parse_progress, web_search, CommandResult,
+    DangerLevel,
+};
 
 #[cfg(not(windows))]
 pub use executor::execute_with_sudo;
@@ -59,45 +65,48 @@ impl AgentHost {
         auto_execute_safe: bool,
     ) -> Result<(String, Vec<ToolResult>)> {
         use providers::router::ProviderRouter;
-        
+
         let router = ProviderRouter::new(self.settings.model.clone());
         let mut all_messages = messages.clone();
         let mut tool_results = Vec::new();
-        
+
         // Add agent system prompt
         let system_prompt = self.get_agent_system_prompt();
-        all_messages.insert(0, ChatMessage {
-            role: "system".to_string(),
-            content: system_prompt,
-        });
-        
+        all_messages.insert(
+            0,
+            ChatMessage {
+                role: "system".to_string(),
+                content: system_prompt,
+            },
+        );
+
         // Loop for multi-turn command execution (max 10 iterations)
         for _ in 0..10 {
             let response = router.generate(all_messages.clone()).await?;
-            
+
             // Extract commands from response
             let commands = self.extract_commands(&response);
-            
+
             if commands.is_empty() {
                 // No commands, return final response
                 return Ok((response, tool_results));
             }
-            
+
             // Process each command
             let mut executed_any = false;
             for cmd in commands {
                 let danger = classify_command(&cmd);
-                
+
                 // Only auto-execute safe commands if enabled
                 let should_execute = match danger {
                     DangerLevel::Safe => auto_execute_safe,
                     DangerLevel::Blocked => false,
                     _ => false, // Needs confirmation from UI
                 };
-                
+
                 if should_execute {
                     let result = execute_command(&cmd, 30).await?;
-                    
+
                     // Add result to conversation
                     all_messages.push(ChatMessage {
                         role: "assistant".to_string(),
@@ -110,7 +119,7 @@ impl AgentHost {
                             cmd, result.output, result.exit_code
                         ),
                     });
-                    
+
                     tool_results.push(ToolResult {
                         command: cmd.clone(),
                         result,
@@ -132,16 +141,17 @@ impl AgentHost {
                     executed_any = true;
                 }
             }
-            
+
             if !executed_any {
                 // Commands need confirmation, return response with pending commands
                 return Ok((response, tool_results));
             }
         }
-        
+
         // Max iterations reached
         Ok((
-            "I've reached the maximum number of command iterations. Please continue manually.".to_string(),
+            "I've reached the maximum number of command iterations. Please continue manually."
+                .to_string(),
             tool_results,
         ))
     }
@@ -149,7 +159,7 @@ impl AgentHost {
     /// Extract commands from AI response
     fn extract_commands(&self, response: &str) -> Vec<String> {
         let mut commands = Vec::new();
-        
+
         // Pattern 1: <command>...</command> tags
         let tag_re = Regex::new(r"<command>(.*?)</command>").unwrap();
         for cap in tag_re.captures_iter(response) {
@@ -160,7 +170,7 @@ impl AgentHost {
                 }
             }
         }
-        
+
         // Pattern 2: ```bash or ```sh code blocks with [RUN] marker
         let block_re = Regex::new(r"(?s)\[RUN\].*?```(?:bash|sh|shell)?\n(.*?)```").unwrap();
         for cap in block_re.captures_iter(response) {
@@ -173,7 +183,7 @@ impl AgentHost {
                 }
             }
         }
-        
+
         // Pattern 3: [EXECUTE] marker followed by inline code
         let exec_re = Regex::new(r"\[EXECUTE\]\s*`([^`]+)`").unwrap();
         for cap in exec_re.captures_iter(response) {
@@ -184,7 +194,7 @@ impl AgentHost {
                 }
             }
         }
-        
+
         commands
     }
 
@@ -205,7 +215,8 @@ impl AgentHost {
 - Python is usually 'python3'"#
         };
 
-        format!(r#"You are Little Helper, a friendly AI assistant with the ability to run commands and search the web.
+        format!(
+            r#"You are Little Helper, a friendly AI assistant with the ability to run commands and search the web.
 
 ## Your Capabilities
 - You can execute shell commands to help users find files, check system status, and perform tasks
@@ -254,7 +265,9 @@ The file will automatically open in the preview panel.
 - Explain what commands do before running them
 - Summarize results in plain English
 - If something fails, explain why and suggest alternatives
-"#, os_context)
+"#,
+            os_context
+        )
     }
 
     /// Execute a specific command (for UI-triggered execution)
@@ -265,7 +278,10 @@ The file will automatically open in the preview panel.
     /// Check if a command needs confirmation
     pub fn needs_confirmation(&self, cmd: &str) -> bool {
         let danger = classify_command(cmd);
-        matches!(danger, DangerLevel::NeedsConfirmation | DangerLevel::Dangerous | DangerLevel::NeedsSudo)
+        matches!(
+            danger,
+            DangerLevel::NeedsConfirmation | DangerLevel::Dangerous | DangerLevel::NeedsSudo
+        )
     }
 
     /// Get danger level for a command

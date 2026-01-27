@@ -4,7 +4,13 @@
 //! contextual preview content including files, web pages, images, and ASCII art.
 
 use agent_host::get_mode_introduction;
-use shared::preview_types::{AsciiState, PreviewContent, SearchResultItem};
+use anyhow::Result;
+use shared::preview_types::{AsciiState, FileType, ImageSource, PreviewContent, SearchResultItem};
+use std::path::{Path, PathBuf};
+use viewers::{
+    csv_viewer::CsvViewer, html_viewer::HtmlViewer, image_viewer::ImageViewer,
+    json_viewer::JsonViewer, pdf_viewer::PdfViewer, text_viewer::TextViewer,
+};
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
 
@@ -56,6 +62,9 @@ impl Default for PreviewState {
 /// The preview panel component
 pub struct PreviewPanel {
     state: PreviewState,
+    file_viewer: Option<FileViewer>,
+    file_error: Option<String>,
+    current_file_path: Option<PathBuf>,
 }
 
 impl PreviewPanel {
@@ -63,17 +72,29 @@ impl PreviewPanel {
     pub fn new() -> Self {
         Self {
             state: PreviewState::default(),
+            file_viewer: None,
+            file_error: None,
+            current_file_path: None,
         }
     }
 
     /// Show content in the preview panel
     /// Automatically makes panel visible if hidden
     pub fn show_content(&mut self, content: PreviewContent) {
+        if !matches!(content, PreviewContent::File { .. }) {
+            self.file_viewer = None;
+            self.file_error = None;
+            self.current_file_path = None;
+        }
         self.state.content = Some(content);
         self.state.visible = true;
         // Reset zoom/scroll when showing new content
         self.state.zoom = 1.0;
         self.state.scroll_offset = egui::Vec2::ZERO;
+
+        if let Some(PreviewContent::File { path, .. }) = &self.state.content {
+            self.current_file_path = Some(path.clone());
+        }
     }
 
     /// Show mode introduction
@@ -184,6 +205,35 @@ impl PreviewPanel {
         self.state.content.as_ref()
     }
 
+    pub fn current_file_path(&self) -> Option<PathBuf> {
+        self.current_file_path.clone()
+    }
+
+    pub fn current_web_url(&self) -> Option<String> {
+        if let Some(PreviewContent::Web { url, .. }) = &self.state.content {
+            Some(url.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn open_file(&mut self, path: &Path, ctx: &egui::Context) {
+        let file_type = FileType::from_path(path);
+        let path_buf = path.to_path_buf();
+        self.state.content = Some(PreviewContent::File {
+            path: path_buf.clone(),
+            file_type: file_type.clone(),
+        });
+        self.state.visible = true;
+        self.state.zoom = 1.0;
+        self.state.scroll_offset = egui::Vec2::ZERO;
+        self.current_file_path = Some(path_buf);
+        self.file_error = None;
+        if let Err(err) = self.prepare_file_viewer(path, &file_type, ctx) {
+            self.file_error = Some(err.to_string());
+        }
+    }
+
     /// Get actions available for current content
     pub fn available_actions(&self) -> Vec<PreviewAction> {
         let mut actions = vec![
@@ -284,22 +334,27 @@ impl PreviewPanel {
             // Content source label
             if let Some(content) = &self.state.content {
                 let label = match content {
-                    PreviewContent::File { path, .. } => {
-                        path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("File")
-                            .to_string()
-                    }
+                    PreviewContent::File { path, .. } => path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("File")
+                        .to_string(),
                     PreviewContent::Web { url, title, .. } => {
                         title.clone().unwrap_or_else(|| url.clone())
                     }
                     PreviewContent::ModeIntro { mode } => format!("{} Mode", mode),
                     PreviewContent::Ascii { state } => format!("{}", state),
                     PreviewContent::Image { .. } => "Image".to_string(),
-                    PreviewContent::SearchResults { query, total_count, .. } => {
+                    PreviewContent::SearchResults {
+                        query, total_count, ..
+                    } => {
                         format!("Search: \"{}\" ({} results)", query, total_count)
                     }
-                    PreviewContent::VersionHistory { file_name, versions, .. } => {
+                    PreviewContent::VersionHistory {
+                        file_name,
+                        versions,
+                        ..
+                    } => {
                         format!("Versions: {} ({} versions)", file_name, versions.len())
                     }
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
@@ -389,17 +444,15 @@ impl PreviewPanel {
             egui::Color32::from_rgb(50, 100, 200)
         };
 
-        match &self.state.content {
+        match self.state.content.clone() {
             Some(PreviewContent::ModeIntro { mode }) => {
-                let intro = get_mode_introduction(mode);
-                let ascii_art = get_mode_art(mode);
+                let intro = get_mode_introduction(&mode);
+                let ascii_art = get_mode_art(&mode);
 
                 ui.vertical_centered(|ui| {
                     // ASCII art mascot
                     ui.add(egui::Label::new(
-                        egui::RichText::new(ascii_art)
-                            .monospace()
-                            .color(text_color)
+                        egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
 
                     ui.add_space(10.0);
@@ -407,15 +460,11 @@ impl PreviewPanel {
                     // Agent greeting
                     ui.heading(
                         egui::RichText::new(format!("Hi, I'm {}!", intro.agent_name))
-                            .color(accent_color)
+                            .color(accent_color),
                     );
 
                     ui.add_space(5.0);
-                    ui.label(
-                        egui::RichText::new(intro.greeting)
-                            .italics()
-                            .size(16.0)
-                    );
+                    ui.label(egui::RichText::new(intro.greeting).italics().size(16.0));
 
                     ui.add_space(15.0);
 
@@ -443,17 +492,18 @@ impl PreviewPanel {
 
                     for example in intro.example_prompts.iter().take(3) {
                         let example_text = example.to_string();
-                        let response = ui.horizontal(|ui| {
-                            ui.colored_label(accent_color, "→");
-                            let btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!("\"{}\"", example))
-                                        .italics()
-                                )
-                                .frame(false)
-                            );
-                            btn
-                        }).inner;
+                        let response = ui
+                            .horizontal(|ui| {
+                                ui.colored_label(accent_color, "→");
+                                let btn = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("\"{}\"", example)).italics(),
+                                    )
+                                    .frame(false),
+                                );
+                                btn
+                            })
+                            .inner;
 
                         if response.clicked() {
                             self.state.clicked_prompt = Some(example_text);
@@ -465,40 +515,44 @@ impl PreviewPanel {
                 });
             }
             Some(PreviewContent::Ascii { state }) => {
-                let ascii_art = get_ascii_art(*state);
+                let ascii_art = get_ascii_art(state);
                 ui.vertical_centered(|ui| {
                     ui.add(egui::Label::new(
-                        egui::RichText::new(ascii_art)
-                            .monospace()
-                            .color(text_color)
+                        egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
                 });
             }
             Some(PreviewContent::File { path, file_type }) => {
-                ui.label(format!("File: {:?}", path));
-                ui.label(format!("Type: {:?}", file_type));
-                // TODO: Use viewers crate to render file content
+                self.render_file(&path, &file_type, ui);
             }
-            Some(PreviewContent::Web { url, title, snippet, og_image, .. }) => {
+            Some(PreviewContent::Web {
+                ref url,
+                ref title,
+                ref snippet,
+                ref og_image,
+                ref screenshot,
+            }) => {
+                let has_screenshot = screenshot.as_ref().map_or(false, |p| p.exists());
+
                 ui.vertical(|ui| {
                     // Web preview header
                     ui.horizontal(|ui| {
                         ui.colored_label(accent_color, "🌐");
-                        ui.label(
-                            egui::RichText::new("Web Preview")
-                                .strong()
-                                .size(14.0)
-                        );
+                        ui.label(egui::RichText::new("Web Preview").strong().size(14.0));
                     });
 
                     ui.add_space(8.0);
 
                     // Title (if available)
                     if let Some(title) = title {
-                        ui.heading(
-                            egui::RichText::new(title)
-                                .color(text_color)
-                        );
+                        if title == "Loading..." {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(egui::RichText::new("Fetching preview...").weak());
+                            });
+                        } else {
+                            ui.heading(egui::RichText::new(title).color(text_color));
+                        }
                         ui.add_space(4.0);
                     }
 
@@ -509,6 +563,15 @@ impl PreviewPanel {
                     });
 
                     ui.add_space(12.0);
+
+                    // Screenshot (if available)
+                    if let Some(screenshot_path) = screenshot {
+                        if screenshot_path.exists() {
+                            // Render screenshot as image preview
+                            self.render_file(screenshot_path, &FileType::Image, ui);
+                            ui.add_space(12.0);
+                        }
+                    }
 
                     // Description/snippet
                     if let Some(snippet) = snippet {
@@ -525,17 +588,15 @@ impl PreviewPanel {
                             });
                     }
 
-                    // OG image URL hint (if available but not loaded)
-                    if let Some(og_url) = og_image {
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Image:").small().weak());
-                            ui.label(
-                                egui::RichText::new(og_url)
-                                    .small()
-                                    .weak()
-                            );
-                        });
+                    // OG image URL hint (if available but not loaded as screenshot)
+                    if !has_screenshot {
+                        if let Some(og_url) = og_image {
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Preview image:").small().weak());
+                                ui.hyperlink(og_url);
+                            });
+                        }
                     }
 
                     ui.add_space(16.0);
@@ -546,11 +607,28 @@ impl PreviewPanel {
                     }
                 });
             }
-            Some(PreviewContent::Image { source }) => {
-                ui.label(format!("Image: {:?}", source));
-                // TODO: Load and render image
-            }
-            Some(PreviewContent::VersionHistory { file_path, file_name, versions }) => {
+            Some(PreviewContent::Image { source }) => match source {
+                ImageSource::File(path) => {
+                    self.render_file(&path, &FileType::Image, ui);
+                }
+                ImageSource::Url(url) => {
+                    ui.vertical_centered(|ui| {
+                        ui.label("Image from URL:");
+                        ui.hyperlink(url);
+                    });
+                }
+                ImageSource::Bytes(_) => {
+                    ui.colored_label(
+                        egui::Color32::YELLOW,
+                        "Image bytes provided but inline rendering is not supported yet.",
+                    );
+                }
+            },
+            Some(PreviewContent::VersionHistory {
+                file_path,
+                file_name,
+                versions,
+            }) => {
                 ui.vertical(|ui| {
                     // Header
                     ui.horizontal(|ui| {
@@ -654,18 +732,23 @@ impl PreviewPanel {
 
                     // Action buttons
                     ui.horizontal(|ui| {
-                        if ui.button("Open File").clicked() {
-                            let _ = open::that(file_path);
-                        }
-                        if ui.button("Show in Folder").clicked() {
-                            if let Some(parent) = file_path.parent() {
+                    if ui.button("Open File").clicked() {
+                        let _ = open::that(&file_path);
+                    }
+                    if ui.button("Show in Folder").clicked() {
+                        if let Some(parent) = file_path.parent() {
                                 let _ = open::that(parent);
                             }
                         }
                     });
                 });
             }
-            Some(PreviewContent::SearchResults { query, results, total_count, search_time_ms }) => {
+            Some(PreviewContent::SearchResults {
+                query,
+                results,
+                total_count,
+                search_time_ms,
+            }) => {
                 ui.vertical(|ui| {
                     // Search header
                     ui.horizontal(|ui| {
@@ -673,7 +756,7 @@ impl PreviewPanel {
                         ui.label(
                             egui::RichText::new(format!("Search Results for \"{}\"", query))
                                 .strong()
-                                .size(14.0)
+                                .size(14.0),
                         );
                     });
 
@@ -687,7 +770,7 @@ impl PreviewPanel {
                                 total_count, search_time_ms
                             ))
                             .small()
-                            .weak()
+                            .weak(),
                         );
                     });
 
@@ -696,11 +779,7 @@ impl PreviewPanel {
                     if results.is_empty() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
-                            ui.label(
-                                egui::RichText::new("No files found")
-                                    .weak()
-                                    .size(16.0)
-                            );
+                            ui.label(egui::RichText::new("No files found").weak().size(16.0));
                             ui.add_space(8.0);
                             ui.label("Try a different search term or index more directories.");
                         });
@@ -729,48 +808,72 @@ impl PreviewPanel {
                                                 ui.label(
                                                     egui::RichText::new(&result.name)
                                                         .strong()
-                                                        .color(accent_color)
+                                                        .color(accent_color),
                                                 );
 
                                                 // Score bar
                                                 let score_color = score_to_color(result.score);
                                                 ui.add_space(8.0);
                                                 ui.label(
-                                                    egui::RichText::new(format!("{:.0}%", result.score * 100.0))
-                                                        .small()
-                                                        .color(score_color)
+                                                    egui::RichText::new(format!(
+                                                        "{:.0}%",
+                                                        result.score * 100.0
+                                                    ))
+                                                    .small()
+                                                    .color(score_color),
                                                 );
                                             });
 
                                             // Parent directory
                                             ui.label(
-                                                egui::RichText::new(&result.parent)
-                                                    .small()
-                                                    .weak()
+                                                egui::RichText::new(&result.parent).small().weak(),
                                             );
                                         });
 
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // File size
-                                            ui.label(
-                                                egui::RichText::new(format_file_size(result.size))
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // File size
+                                                ui.label(
+                                                    egui::RichText::new(format_file_size(
+                                                        result.size,
+                                                    ))
                                                     .small()
-                                                    .weak()
-                                            );
+                                                    .weak(),
+                                                );
 
-                                            // Action buttons
-                                            let path_clone = result.path.clone();
-                                            if ui.small_button("📂").on_hover_text("Reveal in folder").clicked() {
-                                                if let Some(parent) = path_clone.parent() {
-                                                    let _ = open::that(parent);
+                                                // Action buttons
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("📂")
+                                                    .on_hover_text("Reveal in folder")
+                                                    .clicked()
+                                                {
+                                                    if let Some(parent) = path_clone.parent() {
+                                                        let _ = open::that(parent);
+                                                    }
                                                 }
-                                            }
 
-                                            let path_clone = result.path.clone();
-                                            if ui.small_button("📄").on_hover_text("Open file").clicked() {
-                                                let _ = open::that(&path_clone);
-                                            }
-                                        });
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("📄")
+                                                    .on_hover_text("Open file")
+                                                    .clicked()
+                                                {
+                                                    let _ = open::that(&path_clone);
+                                                }
+
+                                                let path_clone = result.path.clone();
+                                                if ui
+                                                    .small_button("👁")
+                                                    .on_hover_text("Preview in side panel")
+                                                    .clicked()
+                                                {
+                                                    self.open_file(path_clone.as_path(), ui.ctx());
+                                                    return;
+                                                }
+                                            },
+                                        );
                                     });
                                 });
 
@@ -778,15 +881,16 @@ impl PreviewPanel {
                         }
 
                         // Show count if more results exist
-                        if *total_count > results.len() {
+                        if total_count > results.len() {
                             ui.add_space(8.0);
                             ui.label(
                                 egui::RichText::new(format!(
                                     "Showing {} of {} results",
-                                    results.len(), total_count
+                                    results.len(),
+                                    total_count
                                 ))
                                 .small()
-                                .weak()
+                                .weak(),
                             );
                         }
                     }
@@ -806,13 +910,81 @@ impl PreviewPanel {
                     ui.add(egui::Label::new(
                         egui::RichText::new(welcome_art)
                             .monospace()
-                            .color(text_color)
+                            .color(text_color),
                     ));
                     ui.add_space(10.0);
                     ui.label("Select a mode to get started!");
                 });
             }
         }
+    }
+
+    fn render_file(&mut self, path: &Path, file_type: &FileType, ui: &mut egui::Ui) {
+        let needs_reload = self
+            .current_file_path
+            .as_ref()
+            .map(|existing| existing != path)
+            .unwrap_or(true);
+
+        if needs_reload {
+            self.current_file_path = Some(path.to_path_buf());
+            self.file_error = None;
+            if let Err(err) = self.prepare_file_viewer(path, file_type, ui.ctx()) {
+                self.file_error = Some(err.to_string());
+            }
+        }
+
+        if let Some(err) = &self.file_error {
+            ui.colored_label(egui::Color32::RED, err);
+        } else if let Some(viewer) = &mut self.file_viewer {
+            viewer.ui(ui);
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label("Loading preview…");
+            });
+        }
+    }
+
+    fn prepare_file_viewer(
+        &mut self,
+        path: &Path,
+        file_type: &FileType,
+        ctx: &egui::Context,
+    ) -> Result<()> {
+        let viewer = match file_type {
+            FileType::Image => {
+                let mut v = ImageViewer::new();
+                v.load(path, ctx)?;
+                FileViewer::Image(v)
+            }
+            FileType::Csv => {
+                let mut v = CsvViewer::new();
+                v.load(path)?;
+                FileViewer::Csv(v)
+            }
+            FileType::Json => {
+                let mut v = JsonViewer::new();
+                v.load(path)?;
+                FileViewer::Json(v)
+            }
+            FileType::Html => {
+                let mut v = HtmlViewer::new();
+                v.load(path)?;
+                FileViewer::Html(v)
+            }
+            FileType::Pdf => {
+                let mut v = PdfViewer::new();
+                v.load(path)?;
+                FileViewer::Pdf(v)
+            }
+            FileType::Text | FileType::Markdown | FileType::Unknown => {
+                let mut v = TextViewer::new();
+                v.load(path)?;
+                FileViewer::Text(v)
+            }
+        };
+        self.file_viewer = Some(viewer);
+        Ok(())
     }
 }
 
@@ -822,9 +994,36 @@ impl Default for PreviewPanel {
     }
 }
 
+enum FileViewer {
+    Text(TextViewer),
+    Image(ImageViewer),
+    Csv(CsvViewer),
+    Json(JsonViewer),
+    Html(HtmlViewer),
+    Pdf(PdfViewer),
+}
+
+impl FileViewer {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        match self {
+            FileViewer::Text(viewer) => viewer.ui(ui),
+            FileViewer::Image(viewer) => viewer.ui(ui),
+            FileViewer::Csv(viewer) => viewer.ui(ui),
+            FileViewer::Json(viewer) => viewer.ui(ui),
+            FileViewer::Html(viewer) => viewer.ui(ui),
+            FileViewer::Pdf(viewer) => viewer.ui(ui),
+        }
+    }
+}
+
 /// Get a file icon emoji based on extension
 fn get_file_icon(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .as_deref()
+    {
         // Documents
         Some("pdf") => "📕",
         Some("doc" | "docx") => "📘",

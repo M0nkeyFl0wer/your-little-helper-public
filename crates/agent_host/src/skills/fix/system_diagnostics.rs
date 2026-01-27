@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::process::Command;
 
@@ -26,7 +26,12 @@ impl SystemDiagnostics {
         {
             // Windows: Use systeminfo and wmic
             if let Ok(output) = Command::new("wmic")
-                .args(["os", "get", "Caption,Version,TotalVisibleMemorySize,FreePhysicalMemory", "/format:list"])
+                .args([
+                    "os",
+                    "get",
+                    "Caption,Version,TotalVisibleMemorySize,FreePhysicalMemory",
+                    "/format:list",
+                ])
                 .output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -74,7 +79,12 @@ impl SystemDiagnostics {
 
             // Get disk info
             if let Ok(output) = Command::new("wmic")
-                .args(["logicaldisk", "get", "DeviceID,Size,FreeSpace", "/format:list"])
+                .args([
+                    "logicaldisk",
+                    "get",
+                    "DeviceID,Size,FreeSpace",
+                    "/format:list",
+                ])
                 .output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -162,7 +172,10 @@ impl SystemDiagnostics {
             }
 
             // Disk info
-            if let Ok(output) = Command::new("df").args(["-BG", "--output=target,size,avail"]).output() {
+            if let Ok(output) = Command::new("df")
+                .args(["-BG", "--output=target,size,avail"])
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -195,20 +208,23 @@ impl SystemDiagnostics {
         // Check memory usage
         if info.total_memory_mb > 0 {
             let used_percent = ((info.total_memory_mb - info.free_memory_mb) as f32
-                / info.total_memory_mb as f32) * 100.0;
+                / info.total_memory_mb as f32)
+                * 100.0;
             if used_percent > 90.0 {
                 issues.push(HealthIssue {
                     severity: Severity::Critical,
                     component: "Memory".to_string(),
                     message: format!("Memory usage is critically high ({:.1}%)", used_percent),
-                    recommendation: "Close unused applications or consider adding more RAM".to_string(),
+                    recommendation: "Close unused applications or consider adding more RAM"
+                        .to_string(),
                 });
             } else if used_percent > 75.0 {
                 issues.push(HealthIssue {
                     severity: Severity::Warning,
                     component: "Memory".to_string(),
                     message: format!("Memory usage is elevated ({:.1}%)", used_percent),
-                    recommendation: "Consider closing some applications if performance is slow".to_string(),
+                    recommendation: "Consider closing some applications if performance is slow"
+                        .to_string(),
                 });
             }
         }
@@ -233,19 +249,27 @@ impl SystemDiagnostics {
         // Check disk space
         for disk in &info.disks {
             if disk.total_gb > 0 {
-                let used_percent = ((disk.total_gb - disk.free_gb) as f32 / disk.total_gb as f32) * 100.0;
+                let used_percent =
+                    ((disk.total_gb - disk.free_gb) as f32 / disk.total_gb as f32) * 100.0;
                 if used_percent > 95.0 {
                     issues.push(HealthIssue {
                         severity: Severity::Critical,
                         component: format!("Disk ({})", disk.mount_point),
-                        message: format!("Disk almost full ({:.1}% used, {} GB free)", used_percent, disk.free_gb),
-                        recommendation: "Delete unnecessary files or move data to external storage".to_string(),
+                        message: format!(
+                            "Disk almost full ({:.1}% used, {} GB free)",
+                            used_percent, disk.free_gb
+                        ),
+                        recommendation: "Delete unnecessary files or move data to external storage"
+                            .to_string(),
                     });
                 } else if used_percent > 85.0 {
                     issues.push(HealthIssue {
                         severity: Severity::Warning,
                         component: format!("Disk ({})", disk.mount_point),
-                        message: format!("Disk space is low ({:.1}% used, {} GB free)", used_percent, disk.free_gb),
+                        message: format!(
+                            "Disk space is low ({:.1}% used, {} GB free)",
+                            used_percent, disk.free_gb
+                        ),
                         recommendation: "Consider cleaning up old files".to_string(),
                     });
                 }
@@ -300,7 +324,10 @@ impl SystemDiagnostics {
         }
 
         // CPU
-        report.push_str(&format!("- **CPU Usage**: {:.1}%\n", info.cpu_usage_percent));
+        report.push_str(&format!(
+            "- **CPU Usage**: {:.1}%\n",
+            info.cpu_usage_percent
+        ));
 
         // Disks
         if !info.disks.is_empty() {
@@ -438,7 +465,9 @@ mod tests {
             ..Default::default()
         };
         let issues = SystemDiagnostics::analyze_health(&info);
-        assert!(issues.iter().any(|i| i.severity == Severity::Critical && i.component == "Memory"));
+        assert!(issues
+            .iter()
+            .any(|i| i.severity == Severity::Critical && i.component == "Memory"));
     }
 
     #[test]

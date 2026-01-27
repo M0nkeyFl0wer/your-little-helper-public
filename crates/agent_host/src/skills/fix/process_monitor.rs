@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::process::Command;
 
@@ -32,9 +32,7 @@ impl ProcessMonitor {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     // Parse CSV: "name","pid","session","session#","mem"
-                    let parts: Vec<&str> = line.split(',')
-                        .map(|s| s.trim_matches('"'))
-                        .collect();
+                    let parts: Vec<&str> = line.split(',').map(|s| s.trim_matches('"')).collect();
                     if parts.len() >= 5 {
                         let name = parts[0].to_string();
                         let pid: u32 = parts[1].parse().unwrap_or(0);
@@ -56,12 +54,10 @@ impl ProcessMonitor {
         #[cfg(not(target_os = "windows"))]
         {
             // Linux/macOS: Use ps command
-            if let Ok(output) = Command::new("ps")
-                .args(["aux", "--sort=-rss"])
-                .output()
-            {
+            if let Ok(output) = Command::new("ps").args(["aux", "--sort=-rss"]).output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines().skip(1).take(50) { // Top 50 processes
+                for line in stdout.lines().skip(1).take(50) {
+                    // Top 50 processes
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 11 {
                         let pid: u32 = parts[1].parse().unwrap_or(0);
@@ -109,16 +105,14 @@ impl ProcessMonitor {
                 issues.push(ProcessIssue {
                     process: proc.clone(),
                     issue_type: IssueType::HighCpu,
-                    message: format!(
-                        "'{}' is using {:.1}% CPU",
-                        proc.name, proc.cpu_percent
-                    ),
+                    message: format!("'{}' is using {:.1}% CPU", proc.name, proc.cpu_percent),
                 });
             }
         }
 
         // Check for duplicate process names (potential issue)
-        let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut name_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         for proc in processes {
             *name_counts.entry(proc.name.clone()).or_insert(0) += 1;
         }
@@ -173,7 +167,8 @@ impl ProcessMonitor {
         report.push_str("|---------|-----|--------|-----|\n");
 
         let filtered: Vec<&ProcessInfo> = if let Some(ref f) = filter {
-            processes.iter()
+            processes
+                .iter()
                 .filter(|p| p.name.to_lowercase().contains(f))
                 .take(20)
                 .collect()
@@ -182,7 +177,10 @@ impl ProcessMonitor {
         };
 
         if filtered.is_empty() && filter.is_some() {
-            report.push_str(&format!("\nNo processes found matching '{}'\n", filter.unwrap()));
+            report.push_str(&format!(
+                "\nNo processes found matching '{}'\n",
+                filter.unwrap()
+            ));
         } else {
             for proc in filtered {
                 let mem_display = if proc.memory_mb > 1024 {

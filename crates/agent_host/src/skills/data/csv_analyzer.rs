@@ -5,7 +5,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
+    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -27,7 +27,8 @@ impl CsvAnalyzer {
         let mut lines = reader.lines();
 
         // Read header
-        let header_line = lines.next()
+        let header_line = lines
+            .next()
             .ok_or_else(|| anyhow::anyhow!("Empty CSV file"))??;
 
         let headers: Vec<String> = parse_csv_line(&header_line);
@@ -35,7 +36,8 @@ impl CsvAnalyzer {
 
         // Analyze rows
         let mut row_count = 0;
-        let mut column_stats: Vec<ColumnStats> = headers.iter()
+        let mut column_stats: Vec<ColumnStats> = headers
+            .iter()
             .map(|name| ColumnStats {
                 name: name.clone(),
                 non_empty: 0,
@@ -47,7 +49,8 @@ impl CsvAnalyzer {
             })
             .collect();
 
-        for line_result in lines.take(10000) { // Limit for performance
+        for line_result in lines.take(10000) {
+            // Limit for performance
             let line = line_result?;
             let values = parse_csv_line(&line);
             row_count += 1;
@@ -96,7 +99,9 @@ impl CsvAnalyzer {
     fn format_analysis(analysis: &CsvAnalysis) -> String {
         let mut output = String::new();
 
-        let file_name = analysis.path.file_name()
+        let file_name = analysis
+            .path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("data.csv");
 
@@ -144,18 +149,14 @@ impl CsvAnalyzer {
 
             output.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} |\n",
-                name_display,
-                data_type,
-                stat.non_empty,
-                unique_display,
-                min,
-                max,
-                avg
+                name_display, data_type, stat.non_empty, unique_display, min, max, avg
             ));
         }
 
         // Sample categorical values
-        let categoricals: Vec<&ColumnStats> = analysis.column_stats.iter()
+        let categoricals: Vec<&ColumnStats> = analysis
+            .column_stats
+            .iter()
             .filter(|s| s.unique_values.len() > 0 && s.unique_values.len() <= 10)
             .take(3)
             .collect();
@@ -163,7 +164,9 @@ impl CsvAnalyzer {
         if !categoricals.is_empty() {
             output.push_str("\n### Categorical Values\n\n");
             for stat in categoricals {
-                let values: Vec<String> = stat.unique_values.keys()
+                let values: Vec<String> = stat
+                    .unique_values
+                    .keys()
                     .take(5)
                     .map(|v| format!("\"{}\"", v))
                     .collect();
@@ -248,7 +251,9 @@ impl Skill for CsvAnalyzer {
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
         // Get file path from params or query
-        let path_str = input.params.get("path")
+        let path_str = input
+            .params
+            .get("path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
@@ -274,7 +279,7 @@ impl Skill for CsvAnalyzer {
                 return Ok(SkillOutput::text(
                     "Please specify a CSV file to analyze.\n\n\
                      Example: \"Analyze sales_data.csv\"\n\n\
-                     I'll show you the structure, statistics, and patterns in the data."
+                     I'll show you the structure, statistics, and patterns in the data.",
                 ));
             }
         };

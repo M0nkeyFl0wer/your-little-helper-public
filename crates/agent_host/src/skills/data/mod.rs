@@ -6,11 +6,11 @@
 //! - Chart type recommendations
 //! - Data cleaning helpers (future)
 
-pub mod csv_analyzer;
 pub mod chart_recommender;
+pub mod csv_analyzer;
 
-pub use csv_analyzer::CsvAnalyzer;
 pub use chart_recommender::ChartRecommender;
+pub use csv_analyzer::CsvAnalyzer;
 
 use crate::skills::SkillRegistry;
 use std::sync::Arc;

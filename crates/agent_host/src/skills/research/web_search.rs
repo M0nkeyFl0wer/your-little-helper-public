@@ -3,12 +3,12 @@
 //! Provides web search capabilities to find information online.
 //! This is a framework skill that can be connected to various search providers.
 
+use crate::executor;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, ResultType,
-    Citation,
+    Citation, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 
 /// Web search skill for research.
@@ -19,10 +19,7 @@ pub struct WebSearch {
 
 impl WebSearch {
     pub fn new() -> Self {
-        Self {
-            // Web search requires API setup
-            enabled: false,
-        }
+        Self { enabled: true }
     }
 
     /// Enable web search (when API is configured)
@@ -32,15 +29,9 @@ impl WebSearch {
 
     /// Perform a web search
     async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
-        // This would connect to a search API (DuckDuckGo, Brave, etc.)
-        // For now, return guidance on setting up search
-
-        // Placeholder: In production, this would call:
-        // - DuckDuckGo Instant Answer API
-        // - Brave Search API
-        // - or other search providers
-
-        Ok(vec![])
+        let result = executor::web_search(query).await?;
+        let parsed = parse_results(&result.stdout);
+        Ok(parsed)
     }
 
     /// Format search results for display
@@ -77,6 +68,60 @@ impl WebSearch {
 
         output.push_str(&format!("\n*Found {} results*\n", results.len()));
         output
+    }
+}
+
+fn parse_results(text: &str) -> Vec<SearchResult> {
+    text.split("\n\n")
+        .filter_map(|block| {
+            let lines: Vec<String> = block
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            if lines.len() < 3 {
+                return None;
+            }
+
+            let title_line = lines.first()?.to_string();
+            let title = title_line
+                .splitn(2, ". ")
+                .nth(1)
+                .unwrap_or(title_line.trim())
+                .trim()
+                .to_string();
+
+            let snippet = lines.get(1).cloned().unwrap_or_default();
+            let url_line = lines
+                .iter()
+                .find(|line| line.starts_with("URL:"))
+                .cloned()
+                .unwrap_or_default();
+            if title.is_empty() || url_line.is_empty() {
+                return None;
+            }
+            let url = url_line.trim_start_matches("URL:").trim().to_string();
+            Some(SearchResult {
+                title,
+                url: url.clone(),
+                domain: extract_domain(&url),
+                snippet,
+            })
+        })
+        .collect()
+}
+
+fn extract_domain(url: &str) -> String {
+    let domain = url
+        .split('/')
+        .nth(2)
+        .unwrap_or(url)
+        .trim_start_matches("www.")
+        .to_string();
+    if domain.is_empty() {
+        url.to_string()
+    } else {
+        domain
     }
 }
 
@@ -118,10 +163,16 @@ impl Skill for WebSearch {
     }
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
+        if !self.enabled {
+            return Ok(SkillOutput::text(
+                "Web search is disabled. Enable internet research in Settings to run searches.",
+            ));
+        }
+
         if input.query.trim().is_empty() {
             return Ok(SkillOutput::text(
                 "What would you like to search for?\n\n\
-                 Example: \"What are the benefits of renewable energy?\""
+                 Example: \"What are the benefits of renewable energy?\"",
             ));
         }
 
@@ -129,14 +180,15 @@ impl Skill for WebSearch {
         let formatted = Self::format_results(&input.query, &results);
 
         // Convert results to citations
-        let citations: Vec<Citation> = results.iter().map(|r| {
-            Citation {
+        let citations: Vec<Citation> = results
+            .iter()
+            .map(|r| Citation {
                 text: format!("{}: {}", r.title, r.snippet),
                 url: r.url.clone(),
                 accessed_at: Utc::now(),
                 verified: false,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(SkillOutput {
             result_type: ResultType::Text,

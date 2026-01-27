@@ -2,11 +2,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{
-    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-};
-use std::path::PathBuf;
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 use std::fs;
+use std::path::PathBuf;
 
 /// Quickly scaffold common project types
 pub struct ProjectScaffoldSkill;
@@ -35,7 +33,9 @@ impl Skill for ProjectScaffoldSkill {
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         // Parse template and name from query or params
-        let template = input.params.get("template")
+        let template = input
+            .params
+            .get("template")
             .and_then(|v| v.as_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_else(|| {
@@ -49,19 +49,31 @@ impl Skill for ProjectScaffoldSkill {
                 "node".to_string()
             });
 
-        let name = input.params.get("name")
+        let name = input
+            .params
+            .get("name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
                 // Try to extract project name from query
-                input.query.split_whitespace()
+                input
+                    .query
+                    .split_whitespace()
                     .last()
-                    .filter(|w| !["create", "scaffold", "new", "react", "rust", "python", "node", "web", "project", "app"].contains(w))
+                    .filter(|w| {
+                        ![
+                            "create", "scaffold", "new", "react", "rust", "python", "node", "web",
+                            "project", "app",
+                        ]
+                        .contains(w)
+                    })
                     .unwrap_or("my-project")
                     .to_string()
             });
 
-        let parent_dir = input.params.get("directory")
+        let parent_dir = input
+            .params
+            .get("directory")
             .and_then(|v| v.as_str())
             .map(|s| PathBuf::from(s))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -70,7 +82,10 @@ impl Skill for ProjectScaffoldSkill {
 
         // Create project directory
         if project_dir.exists() {
-            return Ok(SkillOutput::text(format!("Directory already exists: {}", project_dir.display())));
+            return Ok(SkillOutput::text(format!(
+                "Directory already exists: {}",
+                project_dir.display()
+            )));
         }
 
         fs::create_dir_all(&project_dir)
@@ -85,7 +100,8 @@ impl Skill for ProjectScaffoldSkill {
                 }
 
                 // package.json
-                let package_json = format!(r#"{{
+                let package_json = format!(
+                    r#"{{
   "name": "{}",
   "version": "0.1.0",
   "private": true,
@@ -102,11 +118,14 @@ impl Skill for ProjectScaffoldSkill {
     "@vitejs/plugin-react": "^4.0.0",
     "vite": "^5.0.0"
   }}
-}}"#, name);
+}}"#,
+                    name
+                );
                 fs::write(project_dir.join("package.json"), &package_json).ok();
 
                 // Basic index.html
-                let index_html = format!(r#"<!DOCTYPE html>
+                let index_html = format!(
+                    r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -117,7 +136,9 @@ impl Skill for ProjectScaffoldSkill {
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
 </body>
-</html>"#, name);
+</html>"#,
+                    name
+                );
                 fs::write(project_dir.join("index.html"), &index_html).ok();
 
                 // src/main.jsx
@@ -133,14 +154,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(
                 fs::write(project_dir.join("src/main.jsx"), main_jsx).ok();
 
                 // src/App.jsx
-                let app_jsx = format!(r#"export default function App() {{
+                let app_jsx = format!(
+                    r#"export default function App() {{
   return (
     <div>
       <h1>{}</h1>
       <p>Edit src/App.jsx to get started</p>
     </div>
   )
-}}"#, name);
+}}"#,
+                    name
+                );
                 fs::write(project_dir.join("src/App.jsx"), &app_jsx).ok();
             }
 
@@ -163,16 +187,20 @@ ReactDOM.createRoot(document.getElementById('root')).render(
                 fs::write(src_dir.join("__init__.py"), "").ok();
 
                 // main.py
-                let main_py = format!(r#"def main():
+                let main_py = format!(
+                    r#"def main():
     print("Hello from {}!")
 
 if __name__ == "__main__":
     main()
-"#, name);
+"#,
+                    name
+                );
                 fs::write(src_dir.join("main.py"), &main_py).ok();
 
                 // pyproject.toml
-                let pyproject = format!(r#"[project]
+                let pyproject = format!(
+                    r#"[project]
 name = "{}"
 version = "0.1.0"
 description = ""
@@ -182,7 +210,11 @@ dependencies = []
 
 [project.scripts]
 {} = "{}:main"
-"#, name, name, name.replace("-", "_"));
+"#,
+                    name,
+                    name,
+                    name.replace("-", "_")
+                );
                 fs::write(project_dir.join("pyproject.toml"), &pyproject).ok();
             }
 
@@ -190,7 +222,8 @@ dependencies = []
                 // Create Node.js project
                 fs::create_dir_all(project_dir.join("src")).ok();
 
-                let package_json = format!(r#"{{
+                let package_json = format!(
+                    r#"{{
   "name": "{}",
   "version": "0.1.0",
   "type": "module",
@@ -199,11 +232,16 @@ dependencies = []
     "start": "node src/index.js",
     "dev": "node --watch src/index.js"
   }}
-}}"#, name);
+}}"#,
+                    name
+                );
                 fs::write(project_dir.join("package.json"), &package_json).ok();
 
-                let index_js = format!(r#"console.log('Hello from {}!')
-"#, name);
+                let index_js = format!(
+                    r#"console.log('Hello from {}!')
+"#,
+                    name
+                );
                 fs::write(project_dir.join("src/index.js"), &index_js).ok();
             }
 

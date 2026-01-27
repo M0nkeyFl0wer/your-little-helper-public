@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
-use shared::agent_api::ChatMessage;
-use shared::settings::ModelProvider;
+use crate::anthropic::AnthropicClient;
 use crate::gemini::GeminiClient;
 use crate::ollama::OllamaClient;
 use crate::openai::OpenAIClient;
-use crate::anthropic::AnthropicClient;
+use anyhow::{anyhow, Result};
+use shared::agent_api::ChatMessage;
+use shared::settings::ModelProvider;
 
 pub struct ProviderRouter {
     config: ModelProvider,
@@ -26,15 +26,24 @@ impl ProviderRouter {
                     client.generate(messages.clone()).await
                 }
                 "openai" => {
-                    let client = OpenAIClient::from_auth(&self.config.openai_model, &self.config.openai_auth)?;
+                    let client = OpenAIClient::from_auth(
+                        &self.config.openai_model,
+                        &self.config.openai_auth,
+                    )?;
                     client.generate(messages.clone()).await
                 }
                 "anthropic" => {
-                    let client = AnthropicClient::from_auth(&self.config.anthropic_model, &self.config.anthropic_auth)?;
+                    let client = AnthropicClient::from_auth(
+                        &self.config.anthropic_model,
+                        &self.config.anthropic_auth,
+                    )?;
                     client.generate(messages.clone()).await
                 }
                 "gemini" => {
-                    let client = GeminiClient::from_auth(&self.config.gemini_model, &self.config.gemini_auth)?;
+                    let client = GeminiClient::from_auth(
+                        &self.config.gemini_model,
+                        &self.config.gemini_auth,
+                    )?;
                     client.generate(messages.clone()).await
                 }
                 _ => {

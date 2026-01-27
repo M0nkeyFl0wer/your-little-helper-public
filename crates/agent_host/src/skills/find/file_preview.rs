@@ -5,8 +5,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{
-    FileAction, FileResult, Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput,
-    ResultType,
+    FileAction, FileResult, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput,
+    SkillOutput,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -86,10 +86,7 @@ impl FilePreview {
             .to_lowercase();
 
         if is_binary_extension(&extension) {
-            return Ok(Some(format!(
-                "[Binary file - {} bytes]",
-                metadata.len()
-            )));
+            return Ok(Some(format!("[Binary file - {} bytes]", metadata.len())));
         }
 
         // Try to read as text
@@ -97,7 +94,11 @@ impl FilePreview {
             // Read first chunk only
             let content = fs::read(path)?;
             let preview = String::from_utf8_lossy(&content[..MAX_PREVIEW_SIZE.min(content.len())]);
-            return Ok(Some(format!("{}...\n\n[Truncated - file is {} bytes]", preview, metadata.len())));
+            return Ok(Some(format!(
+                "{}...\n\n[Truncated - file is {} bytes]",
+                preview,
+                metadata.len()
+            )));
         }
 
         match fs::read_to_string(path) {
@@ -145,9 +146,7 @@ impl Skill for FilePreview {
             .unwrap_or_else(|| input.query.trim().to_string());
 
         if path_str.is_empty() {
-            return Ok(SkillOutput::text(
-                "Please provide a file path to preview."
-            ));
+            return Ok(SkillOutput::text("Please provide a file path to preview."));
         }
 
         let path = PathBuf::from(&path_str);
@@ -198,18 +197,25 @@ impl Skill for FilePreview {
                 shared::skill::SuggestedAction {
                     label: "Open in default app".to_string(),
                     skill_id: "open_file".to_string(),
-                    params: [("path".to_string(), serde_json::json!(path.to_string_lossy()))]
-                        .into_iter()
-                        .collect(),
+                    params: [(
+                        "path".to_string(),
+                        serde_json::json!(path.to_string_lossy()),
+                    )]
+                    .into_iter()
+                    .collect(),
                 },
                 shared::skill::SuggestedAction {
                     label: "Search for similar".to_string(),
                     skill_id: "fuzzy_file_search".to_string(),
-                    params: [("query".to_string(), serde_json::json!(
-                        path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
-                    ))]
-                        .into_iter()
-                        .collect(),
+                    params: [(
+                        "query".to_string(),
+                        serde_json::json!(path
+                            .file_stem()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()),
+                    )]
+                    .into_iter()
+                    .collect(),
                 },
             ],
         })
@@ -247,13 +253,46 @@ fn format_size(bytes: u64) -> String {
 fn is_binary_extension(ext: &str) -> bool {
     matches!(
         ext,
-        "exe" | "dll" | "so" | "dylib" | "bin" |
-        "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" |
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg" |
-        "mp3" | "wav" | "ogg" | "flac" | "m4a" |
-        "mp4" | "avi" | "mkv" | "mov" | "webm" |
-        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" |
-        "sqlite" | "db" | "mdb"
+        "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "bz2"
+            | "xz"
+            | "7z"
+            | "rar"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "ico"
+            | "svg"
+            | "mp3"
+            | "wav"
+            | "ogg"
+            | "flac"
+            | "m4a"
+            | "mp4"
+            | "avi"
+            | "mkv"
+            | "mov"
+            | "webm"
+            | "pdf"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "sqlite"
+            | "db"
+            | "mdb"
     )
 }
 
