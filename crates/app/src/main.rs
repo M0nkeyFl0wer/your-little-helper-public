@@ -102,7 +102,7 @@ struct AppState {
     previous_mode: Option<ChatMode>, // For detecting mode changes
     input_text: String,
     mode_input_drafts: std::collections::HashMap<ChatMode, String>, // Preserve input per mode
-    chat_history: Vec<ChatMessage>,
+    mode_chat_histories: std::collections::HashMap<ChatMode, Vec<ChatMessage>>, // Per-mode chat threads
     is_thinking: bool,
     thinking_status: String, // What the agent is currently doing
     #[allow(dead_code)] // Available for future agentic features
@@ -193,7 +193,14 @@ impl Default for AppState {
             previous_mode: None,
             input_text: String::new(),
             mode_input_drafts: std::collections::HashMap::new(),
-            chat_history: vec![welcome_msg],
+            mode_chat_histories: {
+                let mut h = std::collections::HashMap::new();
+                h.insert(ChatMode::Fix, vec![welcome_msg]);
+                h.insert(ChatMode::Research, Vec::new());
+                h.insert(ChatMode::Data, Vec::new());
+                h.insert(ChatMode::Content, Vec::new());
+                h
+            },
             is_thinking: false,
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
@@ -226,6 +233,24 @@ impl AppState {
         is_path_in_allowed_dirs(path, &self.settings.allowed_dirs)
     }
 
+    /// Get chat history for current mode
+    fn chat_history(&self) -> &Vec<ChatMessage> {
+        self.mode_chat_histories.get(&self.current_mode).unwrap()
+    }
+
+    /// Get mutable chat history for current mode
+    fn chat_history_mut(&mut self) -> &mut Vec<ChatMessage> {
+        self.mode_chat_histories.get_mut(&self.current_mode).unwrap()
+    }
+
+    /// Push a message to current mode's chat history
+    fn push_chat(&mut self, msg: ChatMessage) {
+        self.mode_chat_histories
+            .get_mut(&self.current_mode)
+            .unwrap()
+            .push(msg);
+    }
+
     /// Check for completed AI responses (called each frame)
     fn poll_ai_response(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
@@ -249,7 +274,7 @@ impl AppState {
                         content: error_content,
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
-                    self.chat_history.push(error_msg);
+                    self.push_chat(error_msg);
                 } else {
                     // Store file to preview
                     self.pending_preview = result.preview_file;
@@ -279,7 +304,7 @@ impl AppState {
                                     .push_str(&format!("```\n{}\n```\n", output_preview.trim()));
                             }
                         }
-                        self.chat_history.push(ChatMessage {
+                        self.push_chat(ChatMessage {
                             role: "assistant".to_string(),
                             content: cmd_summary,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -323,7 +348,7 @@ impl AppState {
                         },
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
-                    self.chat_history.push(assistant_msg);
+                    self.push_chat(assistant_msg);
 
                     if !self.pending_commands.is_empty() {
                         let mut summary =
@@ -331,7 +356,7 @@ impl AppState {
                         for cmd in &self.pending_commands {
                             summary.push_str(&format!("\n`{}`", cmd));
                         }
-                        self.chat_history.push(ChatMessage {
+                        self.push_chat(ChatMessage {
                             role: "assistant".to_string(),
                             content: summary,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -355,7 +380,7 @@ impl AppState {
                             result.command.clone(),
                             cmd_result.output.clone(),
                         );
-                        self.chat_history.push(ChatMessage {
+                        self.push_chat(ChatMessage {
                             role: "assistant".to_string(),
                             content: format!(
                                 "Command `{}` completed.\n\n```\n{}\n```",
@@ -365,7 +390,7 @@ impl AppState {
                         });
                     }
                     Err(err) => {
-                        self.chat_history.push(ChatMessage {
+                        self.push_chat(ChatMessage {
                             role: "assistant".to_string(),
                             content: format!("Command `{}` failed to run: {}", result.command, err),
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -452,7 +477,7 @@ impl AppState {
         self.pending_commands.retain(|c| c != &command);
         if let Err(reason) = validate_command_against_allowed(&command, &self.settings.allowed_dirs)
         {
-            self.chat_history.push(ChatMessage {
+            self.push_chat(ChatMessage {
                 role: "assistant".to_string(),
                 content: format!("Command `{}` blocked: {}", command, reason),
                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -534,7 +559,7 @@ impl AppState {
             content: self.input_text.clone(),
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
-        self.chat_history.push(user_msg);
+        self.push_chat(user_msg);
 
         // Clear input and show thinking state
         let _query = self.input_text.clone();
@@ -843,7 +868,7 @@ ALWAYS:
         }];
 
         // Add recent chat history (last 10 messages to keep context manageable)
-        let recent_messages = self.chat_history.iter().rev().take(10).rev();
+        let recent_messages = self.chat_history().iter().rev().take(10).rev();
         for msg in recent_messages {
             api_messages.push(ApiChatMessage {
                 role: msg.role.clone(),
@@ -1680,7 +1705,7 @@ impl eframe::App for LittleHelperApp {
                             ),
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         };
-                        s.chat_history = vec![welcome];
+                        s.mode_chat_histories.insert(mode, vec![welcome]);
                         // Show mode intro in preview
                         s.preview_panel.show_mode_intro(mode.as_str());
                     }
@@ -1688,7 +1713,7 @@ impl eframe::App for LittleHelperApp {
                     ui.separator();
 
                     // Thread count indicator
-                    let thread_count = s.chat_history.len();
+                    let thread_count = s.mode_chat_histories.get(&s.current_mode).map_or(0, |h| h.len());
                     ui.label(
                         egui::RichText::new(format!("{} messages", thread_count))
                             .small()
@@ -1716,7 +1741,7 @@ impl eframe::App for LittleHelperApp {
                                 ),
                                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                             };
-                            s.chat_history = vec![welcome];
+                            s.mode_chat_histories.insert(mode, vec![welcome]);
                             s.preview_panel.show_mode_intro(mode.as_str());
                         }
                     });
@@ -1730,14 +1755,24 @@ impl eframe::App for LittleHelperApp {
                 let mut clicked_path: Option<PathBuf> = None;
                 let mut slack_msg: Option<String> = None;
 
+                // Get current mode's chat history (clone to avoid borrow issues)
+                let current_mode = s.current_mode;
+                let chat_history: Vec<ChatMessage> = s.mode_chat_histories
+                    .get(&current_mode)
+                    .cloned()
+                    .unwrap_or_default();
+                let allowed_dirs = s.settings.allowed_dirs.clone();
+                let is_thinking = s.is_thinking;
+                let thinking_status = s.thinking_status.clone();
+
                 egui::ScrollArea::vertical()
                     .max_height(chat_height)
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        for msg in &s.chat_history {
+                        for msg in chat_history.iter() {
                             ui.add_space(6.0);
-                            let action = render_message(ui, msg, dark, &s.settings.allowed_dirs);
+                            let action = render_message(ui, msg, dark, &allowed_dirs);
                             if action.clicked_path.is_some() {
                                 clicked_path = action.clicked_path;
                             }
@@ -1747,7 +1782,7 @@ impl eframe::App for LittleHelperApp {
                             ui.add_space(6.0);
                         }
 
-                        if s.is_thinking {
+                        if is_thinking {
                             ui.add_space(6.0);
                             egui::Frame::none()
                                 .fill(if dark {
@@ -1768,10 +1803,10 @@ impl eframe::App for LittleHelperApp {
                                             _ => "...",
                                         };
 
-                                        let status = if s.thinking_status.is_empty() {
+                                        let status = if thinking_status.is_empty() {
                                             "Thinking".to_string()
                                         } else {
-                                            s.thinking_status.clone()
+                                            thinking_status.clone()
                                         };
 
                                         ui.label(
@@ -3010,13 +3045,16 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 } else {
                                     s.settings.user_profile.name.clone()
                                 };
-                                if let Some(first_msg) = s.chat_history.first_mut() {
-                                    first_msg.content = format!(
-                                        "Hey {}! Great to meet you.\n\n\
-                                        I'm here whenever you need a hand. Just tell me what you're working on \
-                                        and I'll do my best to help out.",
-                                        user_name
-                                    );
+                                let mode = s.current_mode;
+                                if let Some(history) = s.mode_chat_histories.get_mut(&mode) {
+                                    if let Some(first_msg) = history.first_mut() {
+                                        first_msg.content = format!(
+                                            "Hey {}! Great to meet you.\n\n\
+                                            I'm here whenever you need a hand. Just tell me what you're working on \
+                                            and I'll do my best to help out.",
+                                            user_name
+                                        );
+                                    }
                                 }
 
                                 // Save settings
