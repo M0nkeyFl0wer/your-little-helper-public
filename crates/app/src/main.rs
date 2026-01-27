@@ -1,6 +1,7 @@
 use agent_host::{AgentHost, CommandResult};
 use eframe::egui;
 use parking_lot::Mutex;
+use services::web_preview::WebPreviewService;
 use shared::agent_api::ChatMessage as ApiChatMessage;
 use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
@@ -21,6 +22,15 @@ struct AiResult {
 struct CommandExecResult {
     command: String,
     output: Result<CommandResult, String>,
+}
+
+/// Result from background web preview fetch
+struct WebPreviewResult {
+    url: String,
+    title: Option<String>,
+    screenshot: Option<PathBuf>,
+    og_image: Option<String>,
+    snippet: Option<String>,
 }
 
 // Default mascot image (boss's dog!)
@@ -122,6 +132,10 @@ struct AppState {
     // Async AI response channel
     ai_result_rx: Option<Receiver<AiResult>>,
 
+    // Web preview service and async fetch channel
+    web_preview_service: Arc<WebPreviewService>,
+    web_preview_rx: Option<Receiver<WebPreviewResult>>,
+
     // Slack integration
     show_slack_dialog: bool,
     slack_message_to_send: Option<String>,
@@ -193,6 +207,8 @@ impl Default for AppState {
             mascot_texture: None,
             mascot_loaded: false,
             ai_result_rx: None,
+            web_preview_service: Arc::new(WebPreviewService::new()),
+            web_preview_rx: None,
             show_slack_dialog: false,
             slack_message_to_send: None,
             slack_selected_channel: "#general".to_string(),
@@ -275,13 +291,11 @@ impl AppState {
                         if let Some(content) = tag.to_content() {
                             match &content {
                                 PreviewContent::Web { url, .. } => {
-                                    self.preview_panel.show_content(PreviewContent::Web {
-                                        url: url.clone(),
-                                        title: None,
-                                        screenshot: None,
-                                        og_image: None,
-                                        snippet: Some(tag.caption.clone()),
-                                    });
+                                    // Fetch web preview metadata in background
+                                    self.fetch_web_preview(
+                                        url.clone(),
+                                        Some(tag.caption.clone()),
+                                    );
                                 }
                                 PreviewContent::File { path, .. } => {
                                     if self.is_path_permitted(path) {
@@ -360,6 +374,78 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// Poll for web preview fetch results
+    fn poll_web_preview(&mut self) {
+        if let Some(rx) = &self.web_preview_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.web_preview_rx = None;
+
+                // Update the preview panel with fetched metadata
+                self.preview_panel.show_content(PreviewContent::Web {
+                    url: result.url,
+                    title: result.title,
+                    screenshot: result.screenshot,
+                    og_image: result.og_image,
+                    snippet: result.snippet,
+                });
+            }
+        }
+    }
+
+    /// Fetch web preview metadata in background
+    fn fetch_web_preview(&mut self, url: String, snippet: Option<String>) {
+        let (tx, rx) = channel::<WebPreviewResult>();
+        self.web_preview_rx = Some(rx);
+
+        // Show loading state immediately with URL and snippet
+        self.preview_panel.show_content(PreviewContent::Web {
+            url: url.clone(),
+            title: Some("Loading...".to_string()),
+            screenshot: None,
+            og_image: None,
+            snippet: snippet.clone(),
+        });
+
+        let service = Arc::clone(&self.web_preview_service);
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(_) => {
+                    let _ = tx.send(WebPreviewResult {
+                        url: url.clone(),
+                        title: None,
+                        screenshot: None,
+                        og_image: None,
+                        snippet,
+                    });
+                    return;
+                }
+            };
+
+            let preview = rt.block_on(service.get_preview(&url));
+
+            let result = match preview {
+                Ok(p) => WebPreviewResult {
+                    url: p.url,
+                    title: p.title,
+                    screenshot: p.screenshot_path,
+                    og_image: p.og_image,
+                    snippet: p.snippet,
+                },
+                Err(_) => WebPreviewResult {
+                    url,
+                    title: None,
+                    screenshot: None,
+                    og_image: None,
+                    snippet,
+                },
+            };
+
+            let _ = tx.send(result);
+        });
     }
 
     fn approve_command(&mut self, command: String) {
@@ -1202,6 +1288,12 @@ impl eframe::App for LittleHelperApp {
         // Poll for AI response (non-blocking)
         s.poll_ai_response();
         s.poll_command_result();
+        s.poll_web_preview();
+
+        // Request repaint if we're waiting for AI or web preview
+        if s.web_preview_rx.is_some() {
+            ctx.request_repaint();
+        }
 
         // Request repaint if we're waiting for AI (to keep polling)
         if s.is_thinking {
@@ -2750,6 +2842,109 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 &mut s.settings.user_profile.dark_mode,
                                 "",
                             ));
+                        });
+
+                        ui.add_space(24.0);
+
+                        ui.group(|ui| {
+                            ui.label(
+                                egui::RichText::new("Privacy preferences")
+                                    .size(14.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(220, 210, 200)
+                                    } else {
+                                        warm_brown
+                                    }),
+                            );
+                            ui.add_space(6.0);
+
+                            ui.checkbox(
+                                &mut s.settings.enable_campaign_context,
+                                "Load MCP campaign materials automatically",
+                            );
+                            ui.checkbox(
+                                &mut s.settings.enable_persona_context,
+                                "Load persona files from ~/Process/personas",
+                            );
+                            ui.checkbox(
+                                &mut s.settings.share_system_summary,
+                                "Share system summary (hostname, tools) with the AI",
+                            );
+                            ui.checkbox(
+                                &mut s.settings.enable_internet_research,
+                                "Allow internet research (web searches & articles)",
+                            );
+                        });
+
+                        ui.add_space(24.0);
+
+                        ui.group(|ui| {
+                            ui.label(
+                                egui::RichText::new("Allowed directories")
+                                    .size(14.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(220, 210, 200)
+                                    } else {
+                                        warm_brown
+                                    }),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Little Helper only previews files and proposes commands inside these folders.",
+                                )
+                                .size(12.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(210, 200, 190)
+                                } else {
+                                    egui::Color32::from_rgb(100, 80, 70)
+                                }),
+                            );
+                            ui.add_space(6.0);
+
+                            if s.settings.allowed_dirs.is_empty() {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(230, 120, 120),
+                                    "No directories selected yet.",
+                                );
+                                ui.add_space(4.0);
+                            }
+
+                            let mut to_remove: Option<String> = None;
+                            for dir in &s.settings.allowed_dirs {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(dir)
+                                            .family(egui::FontFamily::Monospace)
+                                            .size(12.0),
+                                    );
+                                    if s.settings.allowed_dirs.len() > 1 {
+                                        if ui.small_button("Remove").clicked() {
+                                            to_remove = Some(dir.clone());
+                                        }
+                                    }
+                                });
+                            }
+
+                            if let Some(target) = to_remove {
+                                s.settings.allowed_dirs.retain(|d| d != &target);
+                                ensure_allowed_dirs(&mut s.settings);
+                            }
+
+                            ui.add_space(4.0);
+                            if ui
+                                .button("Add folder…")
+                                .on_hover_text("Choose a directory Little Helper can access")
+                                .clicked()
+                            {
+                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                    let path_str =
+                                        path.canonicalize().unwrap_or(path).to_string_lossy().to_string();
+                                    if !s.settings.allowed_dirs.contains(&path_str) {
+                                        s.settings.allowed_dirs.push(path_str);
+                                    }
+                                }
+                            }
                         });
 
                         ui.add_space(24.0);
