@@ -526,12 +526,14 @@ impl PreviewPanel {
                 self.render_file(&path, &file_type, ui);
             }
             Some(PreviewContent::Web {
-                url,
-                title,
-                snippet,
-                og_image,
-                ..
+                ref url,
+                ref title,
+                ref snippet,
+                ref og_image,
+                ref screenshot,
             }) => {
+                let has_screenshot = screenshot.as_ref().map_or(false, |p| p.exists());
+
                 ui.vertical(|ui| {
                     // Web preview header
                     ui.horizontal(|ui| {
@@ -543,17 +545,33 @@ impl PreviewPanel {
 
                     // Title (if available)
                     if let Some(title) = title {
-                        ui.heading(egui::RichText::new(title).color(text_color));
+                        if title == "Loading..." {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(egui::RichText::new("Fetching preview...").weak());
+                            });
+                        } else {
+                            ui.heading(egui::RichText::new(title).color(text_color));
+                        }
                         ui.add_space(4.0);
                     }
 
                     // URL as clickable link
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Source:").small().weak());
-                        ui.hyperlink(&url);
+                        ui.hyperlink(url);
                     });
 
                     ui.add_space(12.0);
+
+                    // Screenshot (if available)
+                    if let Some(screenshot_path) = screenshot {
+                        if screenshot_path.exists() {
+                            // Render screenshot as image preview
+                            self.render_file(screenshot_path, &FileType::Image, ui);
+                            ui.add_space(12.0);
+                        }
+                    }
 
                     // Description/snippet
                     if let Some(snippet) = snippet {
@@ -570,20 +588,22 @@ impl PreviewPanel {
                             });
                     }
 
-                    // OG image URL hint (if available but not loaded)
-                    if let Some(og_url) = og_image {
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Image:").small().weak());
-                            ui.label(egui::RichText::new(og_url).small().weak());
-                        });
+                    // OG image URL hint (if available but not loaded as screenshot)
+                    if !has_screenshot {
+                        if let Some(og_url) = og_image {
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Preview image:").small().weak());
+                                ui.hyperlink(og_url);
+                            });
+                        }
                     }
 
                     ui.add_space(16.0);
 
                     // Action button to open in browser
                     if ui.button("🔗 Open in Browser").clicked() {
-                        let _ = open::that(&url);
+                        let _ = open::that(url);
                     }
                 });
             }
