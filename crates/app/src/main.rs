@@ -7,7 +7,7 @@ use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 /// Result from background AI generation
 struct AiResult {
     response: String,
@@ -127,6 +127,10 @@ struct AppState {
     slack_message_to_send: Option<String>,
     slack_selected_channel: String,
     slack_status: Option<String>, // Status message after send attempt
+    show_settings_dialog: bool,
+    new_allowed_dir: String,
+    settings_status: Option<String>,
+    settings_status_is_error: bool,
 }
 
 impl Default for AppState {
@@ -193,6 +197,10 @@ impl Default for AppState {
             slack_message_to_send: None,
             slack_selected_channel: "#general".to_string(),
             slack_status: None,
+            show_settings_dialog: false,
+            new_allowed_dir: String::new(),
+            settings_status: None,
+            settings_status_is_error: false,
         }
     }
 }
@@ -356,6 +364,19 @@ impl AppState {
 
     fn approve_command(&mut self, command: String) {
         self.pending_commands.retain(|c| c != &command);
+        if let Err(reason) = validate_command_against_allowed(&command, &self.settings.allowed_dirs)
+        {
+            self.chat_history.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("Command `{}` blocked: {}", command, reason),
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+            self.command_result_rx = None;
+            self.is_thinking = false;
+            self.thinking_status.clear();
+            return;
+        }
+
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
         self.is_thinking = true;
@@ -458,24 +479,24 @@ impl AppState {
 
         let capabilities = if terminal_enabled {
             format!("
-CRITICAL: YOU ARE A TERMINAL AGENT. You MUST use <command> tags to actually run commands.
-DO NOT just describe what commands would do - ACTUALLY RUN THEM using <command>your command</command> tags.
+YOU HAVE TERMINAL ACCESS. Propose concrete commands with <command> tags so I can review and approve them.
+Do not merely describe steps—share the exact commands you want to run.
 
 CAPABILITIES:
-- You can RUN TERMINAL COMMANDS using <command>your command</command> tags. Safe commands run automatically!
-- You can SEARCH THE WEB using <search>your query</search> tags. ALWAYS search when you need current info!
+- You can REQUEST TERMINAL COMMANDS using <command>your command</command> tags. I will queue them for approval.
+- You can SEARCH THE WEB using <search>your query</search> tags when you need current info.
 - You can AUTO-OPEN FILES in the preview panel using <preview>/path/to/file</preview> tags.
 - Supported preview types: text files, images (png/jpg/gif), CSV/data files, JSON, HTML, Markdown
 
-IMPORTANT: When the user asks you to do something, DO IT by running commands. Don't just explain - execute!
-Example: If user says 'list my documents', you respond with <command>dir Documents</command> or <command>ls Documents</command>
+When the user asks for an action, provide the exact commands you'd run. They will only execute after approval.
 
 {}
-", get_campaign_summary())
+", get_campaign_summary(&self.settings))
         } else {
-            format!("
+            format!(
+                "
 CAPABILITIES (Limited Mode - Terminal Disabled):
-- You can SEARCH THE WEB using <search>your query</search> tags. ALWAYS search when you need current info!
+- You can SEARCH THE WEB using <search>your query</search> tags when you need current info.
 - You can reference files in the preview panel using <preview>/path/to/file</preview> tags.
 - Supported preview types: text files, images (png/jpg/gif), CSV/data files, JSON, HTML, Markdown
 
@@ -483,7 +504,9 @@ NOTE: Terminal command execution is disabled. You cannot run <command> tags.
 Instead, provide instructions the user can run manually.
 
 {}
-", get_campaign_summary())
+",
+                get_campaign_summary(&self.settings)
+            )
         };
 
         // Platform-specific Find mode commands
@@ -665,8 +688,18 @@ ALWAYS:
             ),
             ChatMode::Content => {
                 // Load full campaign context + personas + DDD workflow for Content mode
-                let campaign_docs = load_campaign_context();
-                let personas = load_personas();
+                let campaign_docs = if self.settings.enable_campaign_context {
+                    load_campaign_context()
+                } else {
+                    "CAMPAIGN CONTEXT DISABLED. Enable it in Settings to preload MCP materials."
+                        .to_string()
+                };
+                let personas = if self.settings.enable_persona_context {
+                    load_personas()
+                } else {
+                    "PERSONA CONTEXT DISABLED. Enable it in Settings to include persona guidance."
+                        .to_string()
+                };
                 let ddd_workflow = load_ddd_workflow();
 
                 format!(
@@ -792,7 +825,7 @@ fn run_ai_generation(
     allowed_dirs: Vec<String>,
     tx: Sender<AiResult>,
 ) {
-    use agent_host::{classify_command, execute_command, web_search, DangerLevel};
+    use agent_host::{classify_command, web_search, DangerLevel};
     use providers::router::ProviderRouter;
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -897,7 +930,7 @@ fn run_ai_generation(
                 }
             }
 
-            // Execute safe commands and track them
+            // Queue commands for approval (no longer auto-execute)
             for cmd in &commands {
                 if !allow_terminal {
                     all_executed_commands.push((
@@ -912,43 +945,19 @@ fn run_ai_generation(
                     continue;
                 }
                 let danger = classify_command(cmd);
-                match danger {
-                    DangerLevel::Safe => match execute_command(cmd, 30).await {
-                        Ok(result) => {
-                            all_executed_commands.push((
-                                cmd.clone(),
-                                result.output.clone(),
-                                result.success,
-                            ));
-                            results.push(format!("[Command Output: {}]\n{}", cmd, result.output));
-                        }
-                        Err(e) => {
-                            all_executed_commands.push((cmd.clone(), e.to_string(), false));
-                            results.push(format!("[Command failed: {}]: {}", cmd, e));
-                        }
-                    },
-                    DangerLevel::Blocked => {
-                        all_executed_commands.push((
-                            cmd.clone(),
-                            "Blocked for safety".to_string(),
-                            false,
-                        ));
-                        results.push(format!("[Command blocked for safety: {}]", cmd));
-                    }
-                    _ => {
-                        all_executed_commands.push((
-                            cmd.clone(),
-                            "Needs user confirmation".to_string(),
-                            false,
-                        ));
-                        results.push(format!(
-                            "[Command '{}' needs user confirmation - skipping for now]",
-                            cmd
-                        ));
-                        if !pending_commands.iter().any(|c| c == cmd) {
-                            pending_commands.push(cmd.clone());
-                        }
-                    }
+                if danger == DangerLevel::Blocked {
+                    all_executed_commands.push((
+                        cmd.clone(),
+                        "Blocked for safety".to_string(),
+                        false,
+                    ));
+                    results.push(format!("[Command blocked for safety: {}]", cmd));
+                    continue;
+                }
+
+                results.push(format!("[Command '{}' queued for user approval]", cmd));
+                if !pending_commands.iter().any(|c| c == cmd) {
+                    pending_commands.push(cmd.clone());
                 }
             }
 
@@ -1025,7 +1034,7 @@ fn expand_user_path(path_str: &str) -> PathBuf {
 
 fn is_path_in_allowed_dirs(path: &Path, allowed_dirs: &[String]) -> bool {
     if allowed_dirs.is_empty() {
-        return true;
+        return false;
     }
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
@@ -1069,15 +1078,16 @@ fn load_settings_or_default() -> (AppSettings, bool) {
         if path.exists() {
             if let Ok(bytes) = fs::read(&path) {
                 if let Ok(s) = serde_json::from_slice::<AppSettings>(&bytes) {
-                    return (s, false);
+                    let mut settings = s;
+                    ensure_allowed_dirs(&mut settings);
+                    return (settings, false);
                 }
             }
         }
     }
     // Fresh install - honor app defaults, optionally seed OpenAI key for bespoke builds
     let mut default_settings = AppSettings::default();
-    default_settings.enable_internet_research = true;
-    default_settings.model.provider_preference = vec!["openai".to_string()];
+    ensure_allowed_dirs(&mut default_settings);
     if preload_openai_enabled() && !OPENAI_API_KEY.is_empty() {
         default_settings.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
     }
@@ -1330,6 +1340,24 @@ impl eframe::App for LittleHelperApp {
                         {
                             // Open Signal link in browser
                             let _ = open::that(SUPPORT_LINK);
+                        }
+
+                        ui.add_space(12.0);
+
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Settings")
+                                        .size(12.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(90, 90, 140))
+                                .rounding(egui::Rounding::same(4.0)),
+                            )
+                            .on_hover_text("Configure privacy and allowed directories")
+                            .clicked()
+                        {
+                            s.show_settings_dialog = true;
                         }
 
                         ui.add_space(12.0);
@@ -1743,6 +1771,165 @@ impl eframe::App for LittleHelperApp {
                     }
                 });
             });
+
+        // Settings dialog
+        if s.show_settings_dialog {
+            egui::Window::new("Settings")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.set_min_width(420.0);
+                    ui.heading("Privacy & Context");
+                    ui.add_space(8.0);
+
+                    let mut needs_save = false;
+
+                    if ui
+                        .checkbox(
+                            &mut s.settings.enable_campaign_context,
+                            "Load MCP campaign materials automatically",
+                        )
+                        .changed()
+                    {
+                        needs_save = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut s.settings.enable_persona_context,
+                            "Load persona files from ~/Process/personas",
+                        )
+                        .changed()
+                    {
+                        needs_save = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut s.settings.share_system_summary,
+                            "Share system summary (hostname, tools) with the AI",
+                        )
+                        .changed()
+                    {
+                        needs_save = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut s.settings.enable_internet_research,
+                            "Allow internet research (web searches & articles)",
+                        )
+                        .changed()
+                    {
+                        needs_save = true;
+                    }
+
+                    if needs_save {
+                        save_settings(&s.settings);
+                        s.settings_status = Some("Saved privacy preferences".to_string());
+                        s.settings_status_is_error = false;
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.heading("Allowed Directories");
+                    ui.label(
+                        "Little Helper only previews files and proposes commands inside these folders.",
+                    );
+                    ui.add_space(6.0);
+
+                    if let Some(msg) = &s.settings_status {
+                        let color = if s.settings_status_is_error {
+                            egui::Color32::from_rgb(200, 120, 120)
+                        } else {
+                            egui::Color32::from_rgb(120, 200, 150)
+                        };
+                        ui.colored_label(color, msg);
+                        ui.add_space(6.0);
+                    }
+
+                    if s.settings.allowed_dirs.is_empty() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 120, 120),
+                            "No directories allowed. Add at least one path.",
+                        );
+                    }
+
+                    let current_dirs = s.settings.allowed_dirs.clone();
+                    let mut dir_to_remove: Option<String> = None;
+                    for dir in &current_dirs {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(dir)
+                                    .family(egui::FontFamily::Monospace)
+                                    .size(12.0),
+                            );
+                            if s.settings.allowed_dirs.len() > 1 {
+                                if ui.small_button("Remove").clicked() {
+                                    dir_to_remove = Some(dir.clone());
+                                }
+                            }
+                        });
+                    }
+
+                    if let Some(target) = dir_to_remove {
+                        s.settings
+                            .allowed_dirs
+                            .retain(|existing| existing != &target);
+                        ensure_allowed_dirs(&mut s.settings);
+                        save_settings(&s.settings);
+                        s.settings_status =
+                            Some(format!("Removed {}", target));
+                        s.settings_status_is_error = false;
+                    }
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let text_edit = egui::TextEdit::singleline(&mut s.new_allowed_dir)
+                            .hint_text("~/Documents or /data/projects");
+                        ui.add(text_edit);
+                        if ui.button("Add").clicked() {
+                            let input = s.new_allowed_dir.trim();
+                            if input.is_empty() {
+                                s.settings_status =
+                                    Some("Enter a directory path before adding.".to_string());
+                                s.settings_status_is_error = true;
+                            } else if let Some(normalized) =
+                                normalize_allowed_dir_input(input)
+                            {
+                                let path_str = normalized.to_string_lossy().to_string();
+                                if s.settings
+                                    .allowed_dirs
+                                    .iter()
+                                    .any(|dir| dir == &path_str)
+                                {
+                                    s.settings_status =
+                                        Some("Directory already in allowlist.".to_string());
+                                    s.settings_status_is_error = true;
+                                } else {
+                                    s.settings.allowed_dirs.push(path_str.clone());
+                                    save_settings(&s.settings);
+                                    s.settings_status =
+                                        Some(format!("Added {}", path_str));
+                                    s.settings_status_is_error = false;
+                                }
+                                s.new_allowed_dir.clear();
+                            } else {
+                                s.settings_status =
+                                    Some("Directory must exist on disk.".to_string());
+                                s.settings_status_is_error = true;
+                            }
+                        }
+                    });
+
+                    ui.add_space(12.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            s.show_settings_dialog = false;
+                        }
+                    });
+                });
+        }
 
         // Slack dialog window (modal-ish)
         if s.show_slack_dialog {
@@ -2675,4 +2862,55 @@ fn save_settings(settings: &AppSettings) {
             let _ = fs::write(path, bytes);
         }
     }
+}
+
+fn ensure_allowed_dirs(settings: &mut AppSettings) {
+    if settings.allowed_dirs.is_empty() {
+        if let Some(home) = dirs::home_dir() {
+            settings.allowed_dirs = vec![home.to_string_lossy().to_string()];
+        }
+    }
+}
+
+fn normalize_allowed_dir_input(input: &str) -> Option<PathBuf> {
+    let expanded = expand_user_path(input);
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(expanded)
+    } else {
+        expanded
+    };
+
+    if !absolute.exists() {
+        return None;
+    }
+
+    absolute.canonicalize().ok().or(Some(absolute))
+}
+
+static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+
+fn validate_command_against_allowed(command: &str, allowed_dirs: &[String]) -> Result<(), String> {
+    if allowed_dirs.is_empty() {
+        return Err("No directories are allowed. Add one in Settings first.".to_string());
+    }
+
+    let regex = COMMAND_PATH_REGEX
+        .get_or_init(|| regex::Regex::new(r#"(?P<path>(?:~|/|[A-Za-z]:\\)[^\s"'`]+)"#).unwrap());
+
+    for capture in regex.captures_iter(command) {
+        if let Some(path_match) = capture.name("path") {
+            let raw = path_match.as_str();
+            let candidate = expand_user_path(raw);
+            if !is_path_in_allowed_dirs(&candidate, allowed_dirs) {
+                return Err(format!(
+                    "Path `{}` is outside the allowed directories.",
+                    raw
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }

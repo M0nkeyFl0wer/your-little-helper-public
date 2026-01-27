@@ -6,8 +6,8 @@
   "model": {
     "local_model": "llama3.2:3b",
     "provider_preference": [
-      "openai",
-      "local"
+      "local",
+      "openai"
     ],
     "openai_model": "gpt-4o-mini",
     "anthropic_model": "claude-3-5-sonnet-20241022",
@@ -26,5 +26,8 @@
     }
   },
   "enable_internet_research": false,
+  "enable_campaign_context": true,
+  "enable_persona_context": true,
+  "share_system_summary": false,
   "max_results": 200
 }

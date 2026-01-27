@@ -20,6 +20,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 parking_lot = { workspace = true }
 dirs = "5"
+reqwest = { workspace = true }
+html2text = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

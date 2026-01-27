@@ -54,6 +54,12 @@ curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/mai
 
 **Everything runs locally.** Your data stays on your machine.
 
+## Privacy Defaults
+
+- Terminal commands are never auto-run. The assistant proposes commands inside `<command>` blocks and you approve each one before it executes.
+- Cloud providers are optional. Fresh installs stay on local models until you explicitly add API keys.
+- Campaign/persona context sharing and system summaries are opt-in. Toggle them in `settings.json` if you want Little Helper to preload those documents.
+
 ---
 
 ## First Launch
