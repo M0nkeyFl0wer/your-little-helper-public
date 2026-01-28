@@ -152,41 +152,84 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
     format!("## Your Capabilities\n{}", capabilities.join("\n"))
 }
 
-/// Get tools available for a specific mode
-fn get_mode_tools(mode: &str) -> Vec<&'static str> {
+/// Get tools available for a specific mode (platform-aware for fix/secure)
+fn get_mode_tools(mode: &str) -> Vec<String> {
     match mode.to_lowercase().as_str() {
         "research" => vec![
-            "**Web Search**: <search>query</search> - Search the internet for information",
-            "**Article Reader**: Ask me to read/summarize any URL",
-            "**Source Evaluator**: I'll assess credibility and cite sources properly",
+            "**Web Search**: <search>query</search> - Search the internet for information".into(),
+            "**Article Reader**: Ask me to read/summarize any URL".into(),
+            "**Source Evaluator**: I'll assess credibility and cite sources properly".into(),
         ],
         "data" => vec![
-            "**CSV Analyzer**: Share a CSV file path and I'll analyze it",
-            "**Chart Recommender**: I'll suggest the best visualization for your data",
-            "**Statistics**: I can calculate summaries, trends, and patterns",
+            "**CSV Analyzer**: Share a CSV file path and I'll analyze it".into(),
+            "**Chart Recommender**: I'll suggest the best visualization for your data".into(),
+            "**Statistics**: I can calculate summaries, trends, and patterns".into(),
         ],
-        "fix" => vec![
-            "**System Diagnostics**: I can check CPU, memory, disk, network status",
-            "**Process Monitor**: I can list running processes and resource usage",
-            "**Error Explainer**: Paste any error message and I'll decode it",
-        ],
+        "fix" => get_fix_tools(),
         "content" => vec![
-            "**Text Polisher**: I can improve grammar, tone, and clarity",
-            "**Rewriter**: I can adjust formality, length, or style",
-            "**Brainstormer**: Give me a topic and I'll generate ideas",
+            "**Text Polisher**: I can improve grammar, tone, and clarity".into(),
+            "**Rewriter**: I can adjust formality, length, or style".into(),
+            "**Brainstormer**: Give me a topic and I'll generate ideas".into(),
         ],
         "find" => vec![
-            "**Fuzzy Search**: Describe what you're looking for, I'll find it",
-            "**File Preview**: I can show file contents in the preview panel",
-            "**File Organizer**: I can suggest organization for messy folders (NO deletion)",
+            "**Fuzzy Search**: Describe what you're looking for, I'll find it".into(),
+            "**File Preview**: I can show file contents in the preview panel".into(),
+            "**File Organizer**: I can suggest organization for messy folders (NO deletion)".into(),
         ],
         "build" => vec![
-            "**Project Scaffold**: I can create new project structures",
-            "**Spec Kit**: I can help plan features with spec-driven development",
-            "**Code Generator**: I can create scripts and config files",
+            "**Project Scaffold**: I can create new project structures".into(),
+            "**Spec Kit**: I can help plan features with spec-driven development".into(),
+            "**Code Generator**: I can create scripts and config files".into(),
         ],
         _ => vec![],
     }
+}
+
+/// Get platform-specific fix/security tools
+fn get_fix_tools() -> Vec<String> {
+    let mut tools = vec![
+        "**System Diagnostics**: Check CPU, memory, disk, network status".into(),
+        "**Process Monitor**: List running processes and resource usage".into(),
+        "**Error Explainer**: Paste any error message and I'll decode it".into(),
+    ];
+
+    // Platform-specific security tools
+    if cfg!(target_os = "macos") {
+        tools.extend(vec![
+            "**Security Scan**: Check Gatekeeper, SIP, FileVault status".into(),
+            "**Privacy Audit**: Review apps with camera/mic/location access (tccutil, privacy settings)".into(),
+            "**Firewall Check**: Inspect macOS firewall rules (socketfilterfw)".into(),
+            "**Open Ports**: Scan for listening services (lsof -i, netstat)".into(),
+            "**Login Items**: Review startup programs and launch agents".into(),
+            "**Malware Check**: Look for suspicious processes and known malware paths".into(),
+            "**Software Updates**: Check for pending macOS and app updates".into(),
+        ]);
+    } else if cfg!(target_os = "windows") {
+        tools.extend(vec![
+            "**Security Scan**: Check Windows Defender, firewall, UAC status".into(),
+            "**Privacy Audit**: Review app permissions in Windows Settings".into(),
+            "**Firewall Check**: Inspect Windows Firewall rules (netsh)".into(),
+            "**Open Ports**: Scan for listening services (netstat -an)".into(),
+            "**Startup Programs**: Review Task Manager startup items".into(),
+            "**Malware Check**: Run Windows Defender scan, check suspicious processes".into(),
+            "**Windows Update**: Check for pending security updates".into(),
+            "**BitLocker Status**: Check drive encryption status".into(),
+        ]);
+    } else {
+        // Linux
+        tools.extend(vec![
+            "**Security Scan**: Check SELinux/AppArmor, firewall status".into(),
+            "**Open Ports**: Scan for listening services (ss -tlnp, netstat)".into(),
+            "**Firewall Check**: Inspect iptables/ufw/firewalld rules".into(),
+            "**User Audit**: Check sudo access, user permissions".into(),
+            "**Process Check**: Look for suspicious processes".into(),
+            "**Package Updates**: Check for security updates (apt/dnf/pacman)".into(),
+            "**SSH Security**: Review SSH config and authorized keys".into(),
+            "**Failed Logins**: Check auth logs for intrusion attempts".into(),
+        ]);
+    }
+
+    tools
 }
 
 fn get_preview_instructions() -> &'static str {
@@ -229,7 +272,7 @@ pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
         mode_name: prompt.mode,
         greeting: match mode.to_lowercase().as_str() {
             "find" => "Ready to track down anything!",
-            "fix" => "Let's figure this out together.",
+            "fix" => "Let's fix issues and lock things down.",
             "research" => "Curious minds unite!",
             "data" => "Let's uncover the story in your data.",
             "content" => "Ready to bring your ideas to life!",
@@ -282,24 +325,28 @@ static FIND_PROMPT: ModePrompt = ModePrompt {
 static FIX_PROMPT: ModePrompt = ModePrompt {
     mode: "Fix",
     name: "Doc",
-    personality: "You're patient, methodical, and never give up on a problem. Like a friendly doctor for computers, you listen carefully, diagnose thoroughly, and explain things clearly.",
+    personality: "You're patient, methodical, and security-conscious. Like a friendly doctor AND security guard for computers, you diagnose problems, harden defenses, and explain everything clearly.",
     expertise: &[
         "Troubleshooting and debugging",
         "System diagnostics and health checks",
+        "Security scanning and vulnerability assessment",
+        "Privacy and permissions review",
         "Error message interpretation",
         "Performance optimization",
-        "Configuration and settings",
-        "Software installation issues",
+        "Firewall and network security",
+        "Software update and patch management",
     ],
     example_questions: &[
         "Why is my computer running so slow?",
+        "Is my system secure? Run a security check",
+        "What apps have access to my camera/microphone?",
+        "Check for suspicious processes or malware",
         "This error message keeps appearing, what does it mean?",
-        "My printer isn't working",
-        "How do I fix this Python error?",
-        "The app keeps crashing when I do X",
+        "Are my firewall settings correct?",
+        "What ports are open on my machine?",
     ],
-    tools_description: "system diagnostics, log analysis, process monitoring, configuration checks",
-    tone: "Calm and reassuring. You take complex problems and break them into simple steps. You never make people feel dumb for asking questions.",
+    tools_description: "system diagnostics, security scanning, process monitoring, vulnerability checks, firewall analysis",
+    tone: "Calm and reassuring but vigilant about security. You take complex problems and break them into simple steps. You never make people feel dumb for asking questions, and you proactively suggest security improvements.",
 };
 
 static RESEARCH_PROMPT: ModePrompt = ModePrompt {
