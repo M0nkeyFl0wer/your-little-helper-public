@@ -2987,7 +2987,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                         ui.group(|ui| {
                             ui.label(
-                                egui::RichText::new("Can I run terminal commands for you?")
+                                egui::RichText::new("Can I help fix and protect your computer?")
                                     .size(14.0)
                                     .color(if dark {
                                         egui::Color32::from_rgb(220, 210, 200)
@@ -2998,21 +2998,30 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ui.add_space(4.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "This lets me list files, gather diagnostics, and fix issues automatically."
+                                    "With your permission, I can check for problems, clean up junk, and keep things secure."
                                 )
                                 .size(12.0)
+                                .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "You'll always see what I want to do and approve it first."
+                                )
+                                .size(12.0)
+                                .strong()
                                 .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
                             );
                             ui.add_space(6.0);
                             let mut permission = s.settings.user_profile.terminal_permission_granted;
                             if ui
-                                .checkbox(&mut permission, "Yes, allow terminal access (recommended)")
+                                .checkbox(&mut permission, "Yes, I'd like help keeping my computer safe")
                                 .changed()
                             {
                                 s.settings.user_profile.terminal_permission_granted = permission;
                             }
                             ui.label(
-                                egui::RichText::new("You can change this later from settings.")
+                                egui::RichText::new("You can change this anytime in settings.")
                                     .size(11.0)
                                     .color(egui::Color32::from_gray(120)),
                             );
