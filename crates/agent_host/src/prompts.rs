@@ -47,7 +47,7 @@ pub fn get_system_prompt(
 ) -> String {
     let mode_prompt = get_mode_prompt(mode);
     let os_context = get_os_context();
-    let capabilities = get_capabilities_section(permissions);
+    let capabilities = get_capabilities_section(mode, permissions);
     let preview_instructions = get_preview_instructions();
 
     format!(
@@ -114,9 +114,10 @@ fn get_os_context() -> &'static str {
     }
 }
 
-fn get_capabilities_section(permissions: &Permissions) -> String {
+fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
     let mut capabilities: Vec<String> = Vec::new();
 
+    // Base capabilities based on permissions
     if permissions.terminal_enabled {
         capabilities
             .push("- You CAN execute shell commands using <command>...</command> tags".to_string());
@@ -138,7 +139,54 @@ fn get_capabilities_section(permissions: &Permissions) -> String {
         capabilities.push(format!("- You CAN access files in: {}", dirs.join(", ")));
     }
 
+    // Mode-specific tools
+    let mode_tools = get_mode_tools(mode);
+    if !mode_tools.is_empty() {
+        capabilities.push(String::new()); // blank line
+        capabilities.push("### Mode-Specific Tools".to_string());
+        for tool in mode_tools {
+            capabilities.push(format!("- {}", tool));
+        }
+    }
+
     format!("## Your Capabilities\n{}", capabilities.join("\n"))
+}
+
+/// Get tools available for a specific mode
+fn get_mode_tools(mode: &str) -> Vec<&'static str> {
+    match mode.to_lowercase().as_str() {
+        "research" => vec![
+            "**Web Search**: <search>query</search> - Search the internet for information",
+            "**Article Reader**: Ask me to read/summarize any URL",
+            "**Source Evaluator**: I'll assess credibility and cite sources properly",
+        ],
+        "data" => vec![
+            "**CSV Analyzer**: Share a CSV file path and I'll analyze it",
+            "**Chart Recommender**: I'll suggest the best visualization for your data",
+            "**Statistics**: I can calculate summaries, trends, and patterns",
+        ],
+        "fix" => vec![
+            "**System Diagnostics**: I can check CPU, memory, disk, network status",
+            "**Process Monitor**: I can list running processes and resource usage",
+            "**Error Explainer**: Paste any error message and I'll decode it",
+        ],
+        "content" => vec![
+            "**Text Polisher**: I can improve grammar, tone, and clarity",
+            "**Rewriter**: I can adjust formality, length, or style",
+            "**Brainstormer**: Give me a topic and I'll generate ideas",
+        ],
+        "find" => vec![
+            "**Fuzzy Search**: Describe what you're looking for, I'll find it",
+            "**File Preview**: I can show file contents in the preview panel",
+            "**File Organizer**: I can suggest organization for messy folders (NO deletion)",
+        ],
+        "build" => vec![
+            "**Project Scaffold**: I can create new project structures",
+            "**Spec Kit**: I can help plan features with spec-driven development",
+            "**Code Generator**: I can create scripts and config files",
+        ],
+        _ => vec![],
+    }
 }
 
 fn get_preview_instructions() -> &'static str {
