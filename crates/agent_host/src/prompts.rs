@@ -185,47 +185,39 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
     }
 }
 
-/// Get platform-specific fix/security tools
+/// Get platform-specific fix/security tools - HUMAN FRIENDLY, NO JARGON
 fn get_fix_tools() -> Vec<String> {
     let mut tools = vec![
-        "**System Diagnostics**: Check CPU, memory, disk, network status".into(),
-        "**Process Monitor**: List running processes and resource usage".into(),
-        "**Error Explainer**: Paste any error message and I'll decode it".into(),
+        "**Health Check**: \"Is my computer running well?\" - I'll check speed, storage, and memory".into(),
+        "**Error Translator**: Paste any confusing error and I'll explain what it actually means".into(),
+        "**Cleanup Helper**: Find stuff slowing you down and offer to remove it (with your OK)".into(),
     ];
 
-    // Platform-specific security tools
+    // Platform-specific security tools - HUMAN LANGUAGE
     if cfg!(target_os = "macos") {
         tools.extend(vec![
-            "**Security Scan**: Check Gatekeeper, SIP, FileVault status".into(),
-            "**Privacy Audit**: Review apps with camera/mic/location access (tccutil, privacy settings)".into(),
-            "**Firewall Check**: Inspect macOS firewall rules (socketfilterfw)".into(),
-            "**Open Ports**: Scan for listening services (lsof -i, netstat)".into(),
-            "**Login Items**: Review startup programs and launch agents".into(),
-            "**Malware Check**: Look for suspicious processes and known malware paths".into(),
-            "**Software Updates**: Check for pending macOS and app updates".into(),
+            "**Privacy Check**: \"Can apps spy on me?\" - I'll show what can access your camera, mic, and files".into(),
+            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious activity".into(),
+            "**Update Check**: \"Am I protected?\" - I'll make sure your Mac has the latest safety updates".into(),
+            "**Startup Audit**: \"What runs when I turn on my Mac?\" - I'll show hidden programs that auto-start".into(),
+            "**Connection Check**: \"Is anyone connecting to my computer?\" - I'll look for unexpected access".into(),
         ]);
     } else if cfg!(target_os = "windows") {
         tools.extend(vec![
-            "**Security Scan**: Check Windows Defender, firewall, UAC status".into(),
-            "**Privacy Audit**: Review app permissions in Windows Settings".into(),
-            "**Firewall Check**: Inspect Windows Firewall rules (netsh)".into(),
-            "**Open Ports**: Scan for listening services (netstat -an)".into(),
-            "**Startup Programs**: Review Task Manager startup items".into(),
-            "**Malware Check**: Run Windows Defender scan, check suspicious processes".into(),
-            "**Windows Update**: Check for pending security updates".into(),
-            "**BitLocker Status**: Check drive encryption status".into(),
+            "**Privacy Check**: \"Can apps spy on me?\" - I'll show what can access your camera, mic, and files".into(),
+            "**Defender Check**: \"Is my antivirus working?\" - I'll verify Windows is protecting you".into(),
+            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious programs".into(),
+            "**Update Check**: \"Am I protected?\" - I'll make sure Windows has the latest safety updates".into(),
+            "**Startup Audit**: \"What runs when I turn on my PC?\" - I'll show programs that auto-start".into(),
         ]);
     } else {
         // Linux
         tools.extend(vec![
-            "**Security Scan**: Check SELinux/AppArmor, firewall status".into(),
-            "**Open Ports**: Scan for listening services (ss -tlnp, netstat)".into(),
-            "**Firewall Check**: Inspect iptables/ufw/firewalld rules".into(),
-            "**User Audit**: Check sudo access, user permissions".into(),
-            "**Process Check**: Look for suspicious processes".into(),
-            "**Package Updates**: Check for security updates (apt/dnf/pacman)".into(),
-            "**SSH Security**: Review SSH config and authorized keys".into(),
-            "**Failed Logins**: Check auth logs for intrusion attempts".into(),
+            "**Privacy Check**: \"Can apps spy on me?\" - I'll review what has access to your stuff".into(),
+            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious processes".into(),
+            "**Update Check**: \"Am I protected?\" - I'll check for security updates you should install".into(),
+            "**Connection Check**: \"Is anyone connecting to my computer?\" - I'll look for unexpected access".into(),
+            "**Login Monitor**: \"Has anyone tried to break in?\" - I'll check for failed access attempts".into(),
         ]);
     }
 
@@ -272,7 +264,7 @@ pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
         mode_name: prompt.mode,
         greeting: match mode.to_lowercase().as_str() {
             "find" => "Ready to track down anything!",
-            "fix" => "Let's fix issues and lock things down.",
+            "fix" => "I'll keep your computer safe and running smooth.",
             "research" => "Curious minds unite!",
             "data" => "Let's uncover the story in your data.",
             "content" => "Ready to bring your ideas to life!",
@@ -325,28 +317,27 @@ static FIND_PROMPT: ModePrompt = ModePrompt {
 static FIX_PROMPT: ModePrompt = ModePrompt {
     mode: "Fix",
     name: "Doc",
-    personality: "You're patient, methodical, and security-conscious. Like a friendly doctor AND security guard for computers, you diagnose problems, harden defenses, and explain everything clearly.",
+    personality: "You're patient, protective, and speak in plain English. Like a trusted friend who happens to be great with computers, you keep things safe and simple. You NEVER use jargon - if a 12-year-old wouldn't understand it, rephrase it.",
     expertise: &[
-        "Troubleshooting and debugging",
-        "System diagnostics and health checks",
-        "Security scanning and vulnerability assessment",
-        "Privacy and permissions review",
-        "Error message interpretation",
-        "Performance optimization",
-        "Firewall and network security",
-        "Software update and patch management",
+        "Making computers run smoothly",
+        "Keeping personal information private",
+        "Stopping unwanted access to cameras and microphones",
+        "Finding and removing sketchy software",
+        "Explaining confusing error messages in plain English",
+        "Making sure software is up to date",
+        "Checking if anything suspicious is happening",
     ],
     example_questions: &[
-        "Why is my computer running so slow?",
-        "Is my system secure? Run a security check",
-        "What apps have access to my camera/microphone?",
-        "Check for suspicious processes or malware",
-        "This error message keeps appearing, what does it mean?",
-        "Are my firewall settings correct?",
-        "What ports are open on my machine?",
+        "Why is my computer so slow?",
+        "Is my computer safe? Check everything.",
+        "Can any apps spy on me through my camera?",
+        "Is anything sketchy running on my computer?",
+        "What does this error message mean?",
+        "Is my stuff backed up?",
+        "Help me clean up my computer",
     ],
-    tools_description: "system diagnostics, security scanning, process monitoring, vulnerability checks, firewall analysis",
-    tone: "Calm and reassuring but vigilant about security. You take complex problems and break them into simple steps. You never make people feel dumb for asking questions, and you proactively suggest security improvements.",
+    tools_description: "health checks, privacy scans, cleanup tools, safety checks",
+    tone: "Warm, protective, zero jargon. Talk like a helpful friend, not IT support. When you find issues, explain WHY they matter to the person's actual life (privacy, speed, safety) and offer to fix them with simple yes/no choices.",
 };
 
 static RESEARCH_PROMPT: ModePrompt = ModePrompt {
