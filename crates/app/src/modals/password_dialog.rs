@@ -7,7 +7,7 @@
 //! - Escape key cancellation
 
 use super::{Modal, ModalResult};
-use egui::{Align2, Area, Context, Frame, Id, Key, Order, RichText, TextEdit, Vec2};
+use egui::{Align2, Area, Context, Frame, Id, Key, RichText, TextEdit, Vec2};
 use zeroize::Zeroizing;
 
 /// Password dialog for sudo/admin commands.
@@ -81,11 +81,8 @@ impl Modal for PasswordDialog {
             .show(ctx, |ui| {
                 let screen_rect = ctx.screen_rect();
                 ui.allocate_response(screen_rect.size(), egui::Sense::click());
-                ui.painter().rect_filled(
-                    screen_rect,
-                    0.0,
-                    egui::Color32::from_black_alpha(180),
-                );
+                ui.painter()
+                    .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
             });
 
         // Main dialog window
@@ -94,7 +91,6 @@ impl Modal for PasswordDialog {
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .order(Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_min_width(350.0);
 
@@ -119,7 +115,7 @@ impl Modal for PasswordDialog {
                         TextEdit::singleline(&mut *self.password)
                             .password(true)
                             .desired_width(200.0)
-                            .hint_text("Enter password...")
+                            .hint_text("Enter password..."),
                     );
 
                     // Focus the text input
@@ -131,10 +127,7 @@ impl Modal for PasswordDialog {
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         if !self.password.is_empty() {
                             // Take ownership of password and secure transfer
-                            let password = std::mem::replace(
-                                &mut *self.password,
-                                String::new()
-                            );
+                            let password = std::mem::replace(&mut *self.password, String::new());
                             self.result = ModalResult::Confirmed(password);
                             should_close = true;
                         }
@@ -153,11 +146,11 @@ impl Modal for PasswordDialog {
                     ui.add_space(8.0);
 
                     let submit_enabled = !self.password.is_empty();
-                    if ui.add_enabled(submit_enabled, egui::Button::new("Submit")).clicked() {
-                        let password = std::mem::replace(
-                            &mut *self.password,
-                            String::new()
-                        );
+                    if ui
+                        .add_enabled(submit_enabled, egui::Button::new("Submit"))
+                        .clicked()
+                    {
+                        let password = std::mem::replace(&mut *self.password, String::new());
                         self.result = ModalResult::Confirmed(password);
                         should_close = true;
                     }

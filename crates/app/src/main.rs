@@ -20,6 +20,7 @@ use support_info::{SUPPORT_BUTTON_TEXT, SUPPORT_LINK};
 
 // Interactive Preview Companion modules
 mod ascii_art;
+mod modals;
 mod onboarding;
 mod preview_panel;
 
