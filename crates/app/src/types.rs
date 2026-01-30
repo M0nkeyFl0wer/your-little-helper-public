@@ -3,10 +3,11 @@
 //! This module contains all the main type definitions used throughout the app,
 //! including result types, screen states, chat types, and the main AppState.
 
-use agent_host::CommandResult;
+use agent_host::{AgentHost, CommandResult};
 use eframe::egui;
 use services::web_preview::WebPreviewService;
 use shared::settings::AppSettings;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -152,4 +153,85 @@ pub struct AppState {
     pub new_allowed_dir: String,
     pub settings_status: Option<String>,
     pub settings_status_is_error: bool,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        let (mut settings, _) = crate::utils::load_settings_or_default();
+
+        // Apply preloaded user info if available (bespoke builds)
+        if crate::secrets::PRELOAD_SKIP_ONBOARDING {
+            settings.user_profile.onboarding_complete = true;
+            settings.user_profile.terminal_permission_granted = true;
+            if !crate::secrets::PRELOAD_USER_NAME.is_empty() {
+                settings.user_profile.name = crate::secrets::PRELOAD_USER_NAME.to_string();
+            }
+        }
+
+        let needs_onboarding = !settings.user_profile.onboarding_complete;
+
+        let user_name = if settings.user_profile.name.is_empty() {
+            "friend".to_string()
+        } else {
+            settings.user_profile.name.clone()
+        };
+
+        let welcome_msg = ChatMessage {
+            role: "assistant".to_string(),
+            content: format!(
+                "Hi {}! I'm your Little Helper. What would you like me to help you with today?\n\n\
+                You can ask me to find files, fix problems, do deep research, work with data, or create content.",
+                user_name
+            ),
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        };
+
+        // Initialize preview panel with mode intro
+        let mut preview_panel = crate::preview_panel::PreviewPanel::new();
+        preview_panel.show_mode_intro("fix");
+
+        Self {
+            settings: settings.clone(),
+            current_screen: if needs_onboarding {
+                AppScreen::Onboarding
+            } else {
+                AppScreen::Chat
+            },
+            current_mode: ChatMode::Fix,
+            previous_mode: None,
+            input_text: String::new(),
+            mode_input_drafts: HashMap::new(),
+            mode_chat_histories: {
+                let mut h = HashMap::new();
+                h.insert(ChatMode::Fix, vec![welcome_msg]);
+                h.insert(ChatMode::Research, Vec::new());
+                h.insert(ChatMode::Data, Vec::new());
+                h.insert(ChatMode::Content, Vec::new());
+                h
+            },
+            is_thinking: false,
+            thinking_status: String::new(),
+            agent_host: AgentHost::new(settings),
+            preview_panel,
+            show_preview: true,
+            active_viewer: ActiveViewer::Panel,
+            pending_preview: None,
+            onboarding_name: String::new(),
+            pending_commands: Vec::new(),
+            command_result_rx: None,
+            mascot_texture: None,
+            mascot_loaded: false,
+            ai_result_rx: None,
+            web_preview_service: Arc::new(WebPreviewService::new()),
+            web_preview_rx: None,
+            show_slack_dialog: false,
+            slack_message_to_send: None,
+            slack_selected_channel: "#general".to_string(),
+            slack_status: None,
+            show_settings_dialog: false,
+            new_allowed_dir: String::new(),
+            settings_status: None,
+            settings_status_is_error: false,
+        }
+    }
 }
