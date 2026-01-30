@@ -96,6 +96,8 @@ pub enum PreviewContent {
     },
     /// Error state
     Error { message: String, source: String },
+    /// Security dashboard (Fix/Secure mode)
+    Security(SecurityView),
 }
 
 /// Source for an image to display
@@ -182,6 +184,22 @@ impl ParsedPreviewTag {
                     _ => AsciiState::Welcome,
                 };
                 Some(PreviewContent::Ascii { state })
+            }
+            // Security views are created programmatically, not from tags
+            // The agent will use <preview type="security" view="health"> etc.
+            "security" => {
+                // Security views need to be populated with actual data,
+                // so we return a placeholder that gets filled in by the app
+                let view = match self.state.as_deref() {
+                    Some("health") => SecurityView::Health(HealthDashboard::default()),
+                    Some("privacy") => SecurityView::Privacy(PrivacyAudit::default()),
+                    Some("processes") => SecurityView::Processes(ProcessAudit::default()),
+                    Some("updates") => SecurityView::Updates(UpdateStatus::default()),
+                    Some("connections") => SecurityView::Connections(ConnectionMonitor::default()),
+                    Some("cleanup") => SecurityView::Cleanup(CleanupRecommendations::default()),
+                    _ => SecurityView::Health(HealthDashboard::default()),
+                };
+                Some(PreviewContent::Security(view))
             }
             _ => None,
         }
@@ -378,6 +396,380 @@ pub struct PreviewReference {
     pub content_type: String,
     /// Path or URL to the content
     pub source: String,
+}
+
+// =============================================================================
+// Security Preview Types (Fix/Secure Mode)
+// =============================================================================
+
+/// Visual status indicator - shown with colors/icons
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecurityStatus {
+    /// ✅ All good (green)
+    Good,
+    /// ⚠️ Needs attention (yellow)
+    Warning,
+    /// 🔴 Critical issue (red)
+    Critical,
+    /// ❓ Unknown/checking (gray)
+    Unknown,
+}
+
+impl SecurityStatus {
+    /// Get emoji for display
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            SecurityStatus::Good => "✅",
+            SecurityStatus::Warning => "⚠️",
+            SecurityStatus::Critical => "🔴",
+            SecurityStatus::Unknown => "❓",
+        }
+    }
+
+    /// Get human-readable label
+    pub fn label(&self) -> &'static str {
+        match self {
+            SecurityStatus::Good => "Good",
+            SecurityStatus::Warning => "Needs attention",
+            SecurityStatus::Critical => "Action needed",
+            SecurityStatus::Unknown => "Checking...",
+        }
+    }
+}
+
+/// Overall security health dashboard
+/// Shows: protection, updates, privacy, storage, performance
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HealthDashboard {
+    /// Is protection enabled? (firewall, antivirus)
+    pub protection_status: SecurityStatus,
+    pub protection_label: String,
+
+    /// Are updates current?
+    pub update_status: SecurityStatus,
+    pub update_label: String,
+
+    /// Privacy issues found
+    pub privacy_status: SecurityStatus,
+    pub privacy_issues_count: usize,
+
+    /// Storage health (percent free)
+    pub storage_status: SecurityStatus,
+    pub storage_percent_free: u8,
+
+    /// System performance
+    pub performance_status: SecurityStatus,
+    pub performance_label: String,
+
+    /// Overall score (0-100)
+    pub overall_score: u8,
+    /// Human-friendly summary ("Looking good!" / "A few things to check")
+    pub summary: String,
+
+    /// When this scan was performed
+    pub scan_time: Option<i64>,
+}
+
+impl Default for HealthDashboard {
+    fn default() -> Self {
+        Self {
+            protection_status: SecurityStatus::Unknown,
+            protection_label: "Checking...".into(),
+            update_status: SecurityStatus::Unknown,
+            update_label: "Checking...".into(),
+            privacy_status: SecurityStatus::Unknown,
+            privacy_issues_count: 0,
+            storage_status: SecurityStatus::Unknown,
+            storage_percent_free: 0,
+            performance_status: SecurityStatus::Unknown,
+            performance_label: "Checking...".into(),
+            overall_score: 0,
+            summary: "Running security check...".into(),
+            scan_time: None,
+        }
+    }
+}
+
+/// Access status for an app's permission
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccessStatus {
+    /// User explicitly granted - shows "You approved"
+    Approved,
+    /// Granted but suspicious/unused - shows "Review this"
+    NeedsReview,
+    /// Definitely should remove - shows "Remove access"
+    Revoke,
+}
+
+impl AccessStatus {
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            AccessStatus::Approved => "✅",
+            AccessStatus::NeedsReview => "⚠️",
+            AccessStatus::Revoke => "🔴",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AccessStatus::Approved => "You approved",
+            AccessStatus::NeedsReview => "Review this",
+            AccessStatus::Revoke => "Remove access",
+        }
+    }
+}
+
+/// An app's access to a sensitive resource (camera, mic, etc.)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppAccess {
+    /// Display name of the app
+    pub app_name: String,
+    /// Path to app icon (optional)
+    pub app_icon: Option<PathBuf>,
+    /// Access status
+    pub status: AccessStatus,
+    /// When last used (optional)
+    pub last_used: Option<i64>,
+    /// Bundle ID or identifier for actions
+    pub app_id: Option<String>,
+}
+
+/// Privacy audit showing which apps can access sensitive resources
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PrivacyAudit {
+    /// Apps with camera access
+    pub camera_access: Vec<AppAccess>,
+    /// Apps with microphone access
+    pub microphone_access: Vec<AppAccess>,
+    /// Apps with location access
+    pub location_access: Vec<AppAccess>,
+    /// Apps with file/folder access
+    pub files_access: Vec<AppAccess>,
+    /// Apps with contacts access
+    pub contacts_access: Vec<AppAccess>,
+    /// When this audit was performed
+    pub scan_time: Option<i64>,
+}
+
+/// A process flagged as suspicious
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SuspiciousProcess {
+    /// Process name
+    pub name: String,
+    /// Process ID
+    pub pid: u32,
+    /// Why it's flagged (human-readable)
+    pub reason: String,
+    /// CPU usage percent
+    pub cpu_percent: f32,
+    /// Memory usage in MB
+    pub memory_mb: u64,
+    /// Our recommendation ("Probably fine" / "Stop this")
+    pub recommendation: String,
+    /// Is this a known safe process? (for "What is this?" explanations)
+    pub known_safe: bool,
+}
+
+/// Process/activity audit showing what's running
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProcessAudit {
+    /// Count of normal processes
+    pub normal_count: usize,
+    /// Suspicious processes that need review
+    pub suspicious: Vec<SuspiciousProcess>,
+    /// Was malware detected?
+    pub malware_detected: bool,
+    /// Malware names if detected
+    pub malware_names: Vec<String>,
+    /// When this scan was performed
+    pub scan_time: Option<i64>,
+}
+
+impl Default for ProcessAudit {
+    fn default() -> Self {
+        Self {
+            normal_count: 0,
+            suspicious: Vec::new(),
+            malware_detected: false,
+            malware_names: Vec::new(),
+            scan_time: None,
+        }
+    }
+}
+
+/// An available software update
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AvailableUpdate {
+    /// Display name (e.g., "macOS Sonoma 14.3.1")
+    pub name: String,
+    /// Icon/emoji for the app/system
+    pub icon: String,
+    /// Is this a security update?
+    pub is_security: bool,
+    /// Brief description
+    pub description: String,
+    /// Action to take (e.g., command to run)
+    pub action: Option<String>,
+}
+
+/// Update status view
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateStatus {
+    /// Critical/security updates available
+    pub security_updates: Vec<AvailableUpdate>,
+    /// Regular updates available
+    pub regular_updates: Vec<AvailableUpdate>,
+    /// Count of up-to-date apps
+    pub up_to_date_count: usize,
+    /// When last checked
+    pub last_checked: Option<i64>,
+}
+
+impl Default for UpdateStatus {
+    fn default() -> Self {
+        Self {
+            security_updates: Vec::new(),
+            regular_updates: Vec::new(),
+            up_to_date_count: 0,
+            last_checked: None,
+        }
+    }
+}
+
+/// A network connection
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkConnection {
+    /// Program making the connection
+    pub program: String,
+    /// Remote host/IP
+    pub remote_host: String,
+    /// Status (Normal/Unknown/Suspicious)
+    pub status: SecurityStatus,
+    /// Human-readable status label
+    pub status_label: String,
+}
+
+/// A listening service
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ListeningService {
+    /// Program name
+    pub program: String,
+    /// Port number
+    pub port: u16,
+    /// Is it local-only or exposed?
+    pub local_only: bool,
+    /// Status
+    pub status: SecurityStatus,
+}
+
+/// Network connection monitor
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectionMonitor {
+    /// Is firewall enabled?
+    pub firewall_enabled: bool,
+    /// Active outbound connections
+    pub connections: Vec<NetworkConnection>,
+    /// Services listening for connections
+    pub listening: Vec<ListeningService>,
+    /// Unknown/suspicious connection count
+    pub unknown_count: usize,
+    /// When this scan was performed
+    pub scan_time: Option<i64>,
+}
+
+impl Default for ConnectionMonitor {
+    fn default() -> Self {
+        Self {
+            firewall_enabled: false,
+            connections: Vec::new(),
+            listening: Vec::new(),
+            unknown_count: 0,
+            scan_time: None,
+        }
+    }
+}
+
+/// An item that can be cleaned up
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupItem {
+    /// Display name
+    pub name: String,
+    /// Size in bytes
+    pub size_bytes: u64,
+    /// Is it selected for cleanup?
+    pub selected: bool,
+    /// Path or identifier for cleanup action
+    pub path: Option<PathBuf>,
+    /// Cleanup category
+    pub category: CleanupCategory,
+}
+
+/// Category of cleanup item
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CleanupCategory {
+    BrowserCache,
+    Downloads,
+    Trash,
+    AppCache,
+    Logs,
+    TempFiles,
+}
+
+impl CleanupCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            CleanupCategory::BrowserCache => "Browser cache",
+            CleanupCategory::Downloads => "Old downloads",
+            CleanupCategory::Trash => "Trash",
+            CleanupCategory::AppCache => "App caches",
+            CleanupCategory::Logs => "Log files",
+            CleanupCategory::TempFiles => "Temporary files",
+        }
+    }
+}
+
+/// Cleanup recommendations view
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CleanupRecommendations {
+    /// Items safe to remove
+    pub items: Vec<CleanupItem>,
+    /// Total bytes that can be freed
+    pub total_bytes: u64,
+    /// When this scan was performed
+    pub scan_time: Option<i64>,
+}
+
+impl CleanupRecommendations {
+    /// Format total as human-readable (e.g., "5.6 GB")
+    pub fn total_human(&self) -> String {
+        let bytes = self.total_bytes as f64;
+        if bytes >= 1_000_000_000.0 {
+            format!("{:.1} GB", bytes / 1_000_000_000.0)
+        } else if bytes >= 1_000_000.0 {
+            format!("{:.1} MB", bytes / 1_000_000.0)
+        } else if bytes >= 1_000.0 {
+            format!("{:.1} KB", bytes / 1_000.0)
+        } else {
+            format!("{} bytes", self.total_bytes)
+        }
+    }
+}
+
+/// All security preview views
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SecurityView {
+    /// Overall health dashboard
+    Health(HealthDashboard),
+    /// Privacy audit (who can access what)
+    Privacy(PrivacyAudit),
+    /// Process audit (what's running)
+    Processes(ProcessAudit),
+    /// Update status
+    Updates(UpdateStatus),
+    /// Network connections
+    Connections(ConnectionMonitor),
+    /// Cleanup recommendations
+    Cleanup(CleanupRecommendations),
 }
 
 #[cfg(test)]
