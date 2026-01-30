@@ -135,6 +135,14 @@ pub struct AppState {
     pub thinking_status: std::collections::HashMap<ChatMode, String>,
     /// Which mode currently has an active AI request
     pub thinking_mode: Option<ChatMode>,
+    /// When the current AI request started
+    pub thinking_started_at: Option<std::time::Instant>,
+    /// Whether we've shown a slow-response hint
+    pub slow_response_hint_shown: bool,
+    /// Whether to show attention near the model indicator
+    pub show_model_hint: bool,
+    /// When the model hint started
+    pub model_hint_started_at: Option<std::time::Instant>,
     /// Available for future agentic features
     #[allow(dead_code)]
     pub agent_host: agent_host::AgentHost,
@@ -280,6 +288,10 @@ impl Default for AppState {
                 m
             },
             thinking_mode: None,
+            thinking_started_at: None,
+            slow_response_hint_shown: false,
+            show_model_hint: false,
+            model_hint_started_at: None,
             agent_host: AgentHost::new(settings.clone()),
             context_manager: agent_host::context_manager::ContextManager::new(
                 agent_host::context_manager::ContextManager::default_dir()
@@ -457,6 +469,9 @@ impl AppState {
                     self.thinking_status.insert(mode, String::new());
                 }
                 self.thinking_mode = None;
+                self.thinking_started_at = None;
+                self.show_model_hint = false;
+                self.model_hint_started_at = None;
                 self.ai_result_rx = None;
 
                 // Return to welcome view (unless Rick Roll is showing)
@@ -1170,6 +1185,8 @@ WORKFLOW:
         if let Some(mode) = self.thinking_mode {
             self.thinking_status.insert(mode, "Thinking...".to_string());
         }
+        self.thinking_started_at = Some(std::time::Instant::now());
+        self.slow_response_hint_shown = false;
 
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();

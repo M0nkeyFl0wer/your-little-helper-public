@@ -5,6 +5,7 @@ use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 
 // Default mascot image (boss's dog!)
@@ -341,6 +342,29 @@ impl eframe::App for LittleHelperApp {
 
         let dark = s.settings.user_profile.dark_mode;
 
+        if let Some(started_at) = s.thinking_started_at {
+            if !s.slow_response_hint_shown
+                && started_at.elapsed() >= Duration::from_secs(20)
+            {
+                s.slow_response_hint_shown = true;
+                s.show_model_hint = true;
+                s.model_hint_started_at = Some(std::time::Instant::now());
+
+                let tip_message =
+                    "This is taking longer than usual. Cloud models often respond faster.";
+                s.preview_panel
+                    .show_tip_if_idle("Want faster replies?", tip_message);
+            }
+        }
+
+        if s.show_model_hint {
+            if let Some(started) = s.model_hint_started_at {
+                if started.elapsed() >= Duration::from_secs(10) {
+                    s.show_model_hint = false;
+                }
+            }
+        }
+
         // Top header with mode buttons
         egui::TopBottomPanel::top("header")
             .frame(egui::Frame::none().fill(if dark {
@@ -427,7 +451,7 @@ impl eframe::App for LittleHelperApp {
                                 .fill(egui::Color32::from_rgb(90, 90, 140))
                                 .rounding(egui::Rounding::same(4.0)),
                             )
-                            .on_hover_text("Configure privacy and allowed directories")
+                            .on_hover_text("Configure privacy and allowed folders")
                             .clicked()
                         {
                             s.show_settings_dialog = true;
@@ -451,26 +475,48 @@ impl eframe::App for LittleHelperApp {
                             "local" => &s.settings.model.local_model,
                             _ => "unknown",
                         };
+                        let show_hint = s.show_model_hint
+                            && s
+                                .model_hint_started_at
+                                .map(|t| t.elapsed() < Duration::from_secs(10))
+                                .unwrap_or(false);
+                        let blink = ((ui.input(|i| i.time) * 2.0) as i32) % 2 == 0;
+
                         // Clickable model indicator
-                        let model_btn = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(format!("⚡ {}", model_name))
-                                    .size(11.0)
-                                    .color(if dark {
-                                        egui::Color32::from_rgb(140, 180, 140)
-                                    } else {
-                                        egui::Color32::from_rgb(80, 130, 80)
-                                    }),
-                            )
-                            .frame(false)
-                        );
-                        if model_btn.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                        if model_btn.clicked() {
-                            s.show_settings_dialog = true;
-                        }
-                        model_btn.on_hover_text(format!("Provider: {} (click to change)", provider));
+                        ui.vertical(|ui| {
+                            let model_btn = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(format!("⚡ {}", model_name))
+                                        .size(11.0)
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(140, 180, 140)
+                                        } else {
+                                            egui::Color32::from_rgb(80, 130, 80)
+                                        }),
+                                )
+                                .frame(false),
+                            );
+                            if model_btn.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            if model_btn.clicked() {
+                                s.show_settings_dialog = true;
+                            }
+                            model_btn
+                                .on_hover_text(format!("Provider: {} (click to change)", provider));
+
+                            if show_hint && blink {
+                                ui.label(
+                                    egui::RichText::new("v")
+                                        .size(12.0)
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(120, 180, 255)
+                                        } else {
+                                            egui::Color32::from_rgb(50, 100, 200)
+                                        }),
+                                );
+                            }
+                        });
 
                         ui.add_space(8.0);
 
@@ -883,7 +929,7 @@ impl eframe::App for LittleHelperApp {
                 .show(ctx, |ui| {
                     ui.set_min_width(420.0);
                     ui.heading(
-                        egui::RichText::new("Privacy & Context")
+                        egui::RichText::new("Privacy")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -897,7 +943,7 @@ impl eframe::App for LittleHelperApp {
                     if ui
                         .checkbox(
                             &mut s.settings.enable_campaign_context,
-                            "Load MCP campaign materials automatically",
+                            "Load campaign materials automatically",
                         )
                         .changed()
                     {
@@ -906,7 +952,7 @@ impl eframe::App for LittleHelperApp {
                     if ui
                         .checkbox(
                             &mut s.settings.enable_persona_context,
-                            "Load persona files from ~/Process/personas",
+                            "Load persona files from your profiles folder",
                         )
                         .changed()
                     {
@@ -915,7 +961,7 @@ impl eframe::App for LittleHelperApp {
                     if ui
                         .checkbox(
                             &mut s.settings.share_system_summary,
-                            "Share system summary (hostname, tools) with the AI",
+                            "Share basic system info with the AI",
                         )
                         .changed()
                     {
@@ -924,7 +970,7 @@ impl eframe::App for LittleHelperApp {
                     if ui
                         .checkbox(
                             &mut s.settings.enable_internet_research,
-                            "Allow internet research (web searches & articles)",
+                            "Allow web research (searches and articles)",
                         )
                         .changed()
                     {
@@ -933,7 +979,7 @@ impl eframe::App for LittleHelperApp {
 
                     if needs_save {
                         save_settings(&s.settings);
-                        s.settings_status = Some("Saved privacy preferences".to_string());
+                        s.settings_status = Some("Saved privacy settings".to_string());
                         s.settings_status_is_error = false;
                     }
 
@@ -942,7 +988,7 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
 
                     ui.heading(
-                        egui::RichText::new("AI Provider")
+                        egui::RichText::new("AI Model")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -950,7 +996,7 @@ impl eframe::App for LittleHelperApp {
                             }),
                     );
                     ui.label(
-                        egui::RichText::new("Choose which AI service to use (requires API key for cloud providers).")
+                        egui::RichText::new("Pick where replies come from. Cloud options need a key.")
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
                             } else {
@@ -1007,8 +1053,8 @@ impl eframe::App for LittleHelperApp {
 
                     // API Key input section
                     ui.add_space(8.0);
-                    ui.collapsing("Advanced: Edit API Keys", |ui| {
-                        ui.label(egui::RichText::new("Enter API keys for cloud providers:").size(11.0).weak());
+                    ui.collapsing("Add API keys", |ui| {
+                        ui.label(egui::RichText::new("Add a key if you want to use cloud models.").size(11.0).weak());
                         ui.add_space(4.0);
 
                         // OpenAI API Key
@@ -1072,7 +1118,7 @@ impl eframe::App for LittleHelperApp {
                         });
 
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("Note: API keys are stored locally in ~/.config/little-helper/settings.json").size(10.0).weak());
+                        ui.label(egui::RichText::new("Keys stay on this device.").size(10.0).weak());
                     });
 
                     ui.add_space(8.0);
@@ -1080,7 +1126,7 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
 
                     ui.heading(
-                        egui::RichText::new("Build Tools")
+                        egui::RichText::new("Build tools")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1088,7 +1134,7 @@ impl eframe::App for LittleHelperApp {
                             }),
                     );
                     ui.label(
-                        egui::RichText::new("Set up Spec Kit so Build Helper can create and run specs without the terminal.")
+                        egui::RichText::new("Set up Spec Kit so Build Helper can work without the terminal.")
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
                             } else {
@@ -1097,7 +1143,7 @@ impl eframe::App for LittleHelperApp {
                     );
                     ui.add_space(6.0);
 
-                    ui.label(egui::RichText::new("Spec Kit path").size(11.0));
+                    ui.label(egui::RichText::new("Spec Kit location").size(11.0));
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut s.spec_kit_path_input);
                         if ui.button("Use default").clicked() {
@@ -1116,7 +1162,7 @@ impl eframe::App for LittleHelperApp {
                                 s.settings.build.spec_kit_path = Some(trimmed.to_string());
                             }
                             save_settings(&s.settings);
-                            s.settings_status = Some("Saved Build tools settings".to_string());
+                            s.settings_status = Some("Saved build tools settings".to_string());
                             s.settings_status_is_error = false;
                         }
                     });
@@ -1126,7 +1172,7 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
 
                     ui.heading(
-                        egui::RichText::new("Allowed Folders")
+                        egui::RichText::new("Allowed folders")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1134,7 +1180,7 @@ impl eframe::App for LittleHelperApp {
                             }),
                     );
                     ui.label(
-                        egui::RichText::new("Little Helper only previews files and proposes commands inside these folders.")
+                        egui::RichText::new("Little Helper only works inside these folders.")
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
                             } else {
@@ -1156,7 +1202,7 @@ impl eframe::App for LittleHelperApp {
                     if s.settings.allowed_dirs.is_empty() {
                         ui.colored_label(
                             egui::Color32::from_rgb(220, 120, 120),
-                            "No directories allowed. Add at least one path.",
+                            "No folders allowed. Add at least one folder.",
                         );
                     }
 
@@ -1183,8 +1229,7 @@ impl eframe::App for LittleHelperApp {
                             .retain(|existing| existing != &target);
                         ensure_allowed_dirs(&mut s.settings);
                         save_settings(&s.settings);
-                        s.settings_status =
-                            Some(format!("Removed {}", target));
+                        s.settings_status = Some(format!("Removed {}", target));
                         s.settings_status_is_error = false;
                     }
 
@@ -2223,11 +2268,11 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             );
                             ui.checkbox(
                                 &mut s.settings.share_system_summary,
-                                "Share system summary (hostname, tools) with the AI",
+                                "Share basic system info with the AI",
                             );
                             ui.checkbox(
                                 &mut s.settings.enable_internet_research,
-                                "Allow internet research (web searches & articles)",
+                                "Allow web research (searches and articles)",
                             );
                         });
 
@@ -2235,7 +2280,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                         ui.group(|ui| {
                             ui.label(
-                                egui::RichText::new("Allowed directories")
+                                egui::RichText::new("Allowed folders")
                                     .size(14.0)
                                     .color(if dark {
                                         egui::Color32::from_rgb(220, 210, 200)
@@ -2260,7 +2305,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             if s.settings.allowed_dirs.is_empty() {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(230, 120, 120),
-                                    "No directories selected yet.",
+                                    "No folders selected yet.",
                                 );
                                 ui.add_space(4.0);
                             }
@@ -2455,7 +2500,7 @@ static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
 fn validate_command_against_allowed(command: &str, allowed_dirs: &[String]) -> Result<(), String> {
     if allowed_dirs.is_empty() {
-        return Err("No directories are allowed. Add one in Settings first.".to_string());
+        return Err("No folders are allowed. Add one in Settings first.".to_string());
     }
 
     let regex = COMMAND_PATH_REGEX
@@ -2467,7 +2512,7 @@ fn validate_command_against_allowed(command: &str, allowed_dirs: &[String]) -> R
             let candidate = expand_user_path(raw);
             if !is_path_in_allowed_dirs(&candidate, allowed_dirs) {
                 return Err(format!(
-                    "Path `{}` is outside the allowed directories.",
+                    "Path `{}` is outside the allowed folders.",
                     raw
                 ));
             }

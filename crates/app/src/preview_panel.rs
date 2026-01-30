@@ -121,6 +121,22 @@ impl PreviewPanel {
         self.show_content(PreviewContent::Ascii { state });
     }
 
+    pub fn show_tip_if_idle(&mut self, title: &str, message: &str) {
+        let can_replace = matches!(
+            self.state.content,
+            None | Some(PreviewContent::ModeIntro { .. })
+                | Some(PreviewContent::Ascii { .. })
+                | Some(PreviewContent::SkillsList { .. })
+        );
+
+        if can_replace {
+            self.show_content(PreviewContent::Tip {
+                title: title.to_string(),
+                message: message.to_string(),
+            });
+        }
+    }
+
     /// Show a web preview (with optional metadata)
     pub fn show_web_preview(&mut self, url: &str, title: Option<String>, snippet: Option<String>) {
         self.show_content(PreviewContent::Web {
@@ -379,6 +395,7 @@ impl PreviewPanel {
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
                     PreviewContent::Security(_) => "Security Dashboard".to_string(),
                     PreviewContent::SkillsList { mode, .. } => format!("{} Skills", mode),
+                    PreviewContent::Tip { title, .. } => title.clone(),
                 };
                 ui.label(label);
             }
@@ -539,6 +556,33 @@ impl PreviewPanel {
                     ui.add(egui::Label::new(
                         egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
+                });
+            }
+            Some(PreviewContent::Tip { title, message }) => {
+                let card_fill = if is_dark_mode {
+                    egui::Color32::from_rgb(45, 45, 55)
+                } else {
+                    egui::Color32::from_rgb(245, 245, 250)
+                };
+
+                ui.vertical_centered(|ui| {
+                    egui::Frame::none()
+                        .fill(card_fill)
+                        .rounding(egui::Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.heading(egui::RichText::new(title).color(accent_color));
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new(message).color(text_color));
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Tip: click the ⚡ model name above to switch models.",
+                                )
+                                .size(11.0)
+                                .color(text_color),
+                            );
+                        });
                 });
             }
             Some(PreviewContent::File { path, file_type }) => {
