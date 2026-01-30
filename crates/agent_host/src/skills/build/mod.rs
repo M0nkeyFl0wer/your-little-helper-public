@@ -6,6 +6,7 @@ mod project_scaffold;
 mod spec_check;
 mod spec_init;
 mod spec_run;
+mod spec_utils;
 
 pub use project_scaffold::ProjectScaffoldSkill;
 pub use spec_check::SpecCheckSkill;

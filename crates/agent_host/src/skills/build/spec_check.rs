@@ -3,8 +3,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
-use std::path::PathBuf;
 use std::process::Command;
+
+use super::spec_utils::{resolve_spec_kit_path, resolve_target_folder};
 
 /// Check project spec status and validate structure
 pub struct SpecCheckSkill;
@@ -32,41 +33,34 @@ impl Skill for SpecCheckSkill {
     }
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
-        let directory = input
-            .params
-            .get("directory")
-            .and_then(|v| v.as_str())
-            .map(|s| PathBuf::from(s))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let folder = resolve_target_folder(&input);
 
         // Check for spec-kit markers
-        let specs_dir = directory.join("specs");
-        let constitution = directory.join("CONSTITUTION.md");
-        let speckit_dir = directory.join(".speckit");
+        let specs_dir = folder.join("specs");
+        let constitution = folder.join("CONSTITUTION.md");
+        let speckit_dir = folder.join(".speckit");
 
         if !specs_dir.exists() && !constitution.exists() {
             return Ok(SkillOutput::text(format!(
                 "This doesn't look like a spec-driven project.\n\n\
-                Directory: {}\n\n\
+                Folder: {}\n\n\
                 Missing:\n\
                 - specs/ directory\n\
                 - CONSTITUTION.md\n\n\
                 Would you like me to initialize it as a spec-driven project?\n\
                 Just say 'init project <name>' to get started.",
-                directory.display()
+                folder.display()
             )));
         }
 
         // Try running spec-kit check
-        let spec_kit_path = dirs::home_dir()
-            .map(|h| h.join("Projects/spec-kit-assistant/spec-assistant.js"))
-            .unwrap_or_default();
+        let spec_kit_path = resolve_spec_kit_path(&input);
 
         if spec_kit_path.exists() {
             let output = Command::new("node")
                 .arg(&spec_kit_path)
                 .arg("check")
-                .current_dir(&directory)
+                .current_dir(&folder)
                 .output();
 
             if let Ok(result) = output {
@@ -79,7 +73,7 @@ impl Skill for SpecCheckSkill {
         }
 
         // Manual check if spec-kit not available
-        let mut status_lines = vec![format!("Project: {}", directory.display()), String::new()];
+        let mut status_lines = vec![format!("Project folder: {}", folder.display()), String::new()];
 
         // Check constitution
         if constitution.exists() {

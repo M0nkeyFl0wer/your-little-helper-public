@@ -60,6 +60,15 @@ pub mod settings {
         pub enabled: bool,
     }
 
+    /// Build-mode settings (spec-kit integration)
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct BuildSettings {
+        /// Optional path to spec-assistant.js
+        pub spec_kit_path: Option<String>,
+        /// Default folder for new projects
+        pub default_project_folder: Option<String>,
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct AppSettings {
         pub allowed_dirs: Vec<String>,
@@ -69,6 +78,8 @@ pub mod settings {
         pub user_profile: UserProfile,
         #[serde(default)]
         pub slack: SlackSettings,
+        #[serde(default)]
+        pub build: BuildSettings,
         #[serde(default = "default_true")]
         pub enable_campaign_context: bool,
         #[serde(default = "default_true")]
@@ -104,6 +115,7 @@ pub mod settings {
                 max_results: 200,
                 user_profile: UserProfile::default(),
                 slack: SlackSettings::default(),
+                build: BuildSettings::default(),
                 enable_campaign_context: true,
                 enable_persona_context: true,
                 share_system_summary: false,

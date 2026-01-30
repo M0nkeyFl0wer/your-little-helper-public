@@ -3,8 +3,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
-use std::path::PathBuf;
 use std::process::Command;
+
+use super::spec_utils::{resolve_spec_kit_path, resolve_target_folder};
 
 /// Run AI swarms to implement project specs
 pub struct SpecRunSkill;
@@ -43,26 +44,19 @@ impl Skill for SpecRunSkill {
             input.query.clone()
         };
 
-        let directory = input
-            .params
-            .get("directory")
-            .and_then(|v| v.as_str())
-            .map(|s| PathBuf::from(s))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let folder = resolve_target_folder(&input);
 
         let spec = input.params.get("spec").and_then(|v| v.as_str());
 
         // Check if spec-kit-assistant is available
-        let spec_kit_path = dirs::home_dir()
-            .map(|h| h.join("Projects/spec-kit-assistant/spec-assistant.js"))
-            .unwrap_or_default();
+        let spec_kit_path = resolve_spec_kit_path(&input);
 
         if !spec_kit_path.exists() {
             return Ok(SkillOutput::text(format!(
                 "Spec Kit Assistant not found.\n\n\
                 To use AI swarms for implementation:\n\
-                1. Clone spec-kit-assistant to ~/Projects/\n\
-                2. Run: cd ~/Projects/spec-kit-assistant && npm install\n\n\
+                1. Put spec-kit-assistant in your Projects folder\n\
+                2. Or set the Spec Kit path in Settings → Build\n\n\
                 In the meantime, I can help you implement '{}' manually.\n\
                 Would you like me to break this down into steps?",
                 description
@@ -74,7 +68,7 @@ impl Skill for SpecRunSkill {
         cmd.arg(&spec_kit_path)
             .arg("run")
             .arg(&description)
-            .current_dir(&directory);
+            .current_dir(&folder);
 
         if let Some(spec_name) = spec {
             cmd.arg("--spec").arg(spec_name);
@@ -93,7 +87,7 @@ impl Skill for SpecRunSkill {
                         "Swarm deployed to implement: {}\n\n\
                         {}\n\n\
                         The AI agents are working on your request. \
-                        Check the project directory for changes.",
+                        Check the project folder for changes.",
                         description, stdout
                     )))
                 } else {
