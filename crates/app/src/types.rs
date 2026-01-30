@@ -59,7 +59,7 @@ pub enum AppScreen {
 }
 
 /// Chat mode - determines agent behavior and available skills
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ChatMode {
     /// Tech support - diagnose and fix problems
     Fix,
@@ -118,6 +118,14 @@ pub struct AppState {
     pub mode_input_drafts: std::collections::HashMap<ChatMode, String>,
     /// Per-mode chat threads
     pub mode_chat_histories: std::collections::HashMap<ChatMode, Vec<ChatMessage>>,
+    /// Unified thread history across all modes
+    pub thread_history: crate::thread_history::ThreadHistory,
+    /// Current thread ID (for continuing conversations)
+    pub current_thread_id: Option<String>,
+    /// Whether to show thread history view
+    pub show_thread_history: bool,
+    /// Thread history search query
+    pub thread_search_query: String,
     /// Whether the AI is currently thinking/processing
     pub is_thinking: bool,
     /// What the agent is currently doing
@@ -219,12 +227,16 @@ impl Default for AppState {
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
                 let mut h = HashMap::new();
-                h.insert(ChatMode::Fix, vec![welcome_msg]);
+                h.insert(ChatMode::Fix, vec![welcome_msg.clone()]);
                 h.insert(ChatMode::Research, Vec::new());
                 h.insert(ChatMode::Data, Vec::new());
                 h.insert(ChatMode::Content, Vec::new());
                 h
             },
+            thread_history: crate::thread_history::ThreadHistory::new(),
+            current_thread_id: None,
+            show_thread_history: false,
+            thread_search_query: String::new(),
             is_thinking: false,
             thinking_status: String::new(),
             agent_host: AgentHost::new(settings),
