@@ -9,7 +9,7 @@
 //! - Apply templates: "Use the weekly status template"
 //! - Reference research: "What do I know about file organization?"
 
-use crate::context_manager::{ContextDocument, ContextManager, ContextType, DistributionLevel};
+use crate::context_manager::{ContextManager, ContextType, DistributionLevel};
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction};

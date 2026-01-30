@@ -4,17 +4,15 @@ use parking_lot::Mutex;
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 
-use shared::skill::{Mode, Permission};
 
 // Default mascot image (boss's dog!)
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
 // Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
 mod secrets;
-use secrets::{OPENAI_API_KEY, PRELOAD_SKIP_ONBOARDING, PRELOAD_USER_NAME};
+use secrets::OPENAI_API_KEY;
 
 // Support contact info (gitignored - your personal contact stays private)
 mod support_info;
@@ -36,7 +34,6 @@ pub use types::*;
 
 // Utils module - helper functions
 mod utils;
-pub use utils::*;
 
 mod state;
 pub use state::*;

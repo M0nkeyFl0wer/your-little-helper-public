@@ -3,14 +3,9 @@
 //! This module contains AppState implementations and methods for managing
 //! application state, chat history, and async operations.
 
-use crate::context::{
-    get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas,
-};
-use crate::preview_panel;
 use crate::types::*;
 use crate::utils::*;
 use shared::agent_api::ChatMessage as ApiChatMessage;
-use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 /// Run AI generation in background thread (non-blocking)

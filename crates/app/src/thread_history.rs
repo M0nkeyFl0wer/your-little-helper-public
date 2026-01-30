@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 /// Simplified message for storage (avoids serialization issues)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,47 +360,59 @@ fn fuzzy_match_score(query_chars: &[char], target: &str) -> f64 {
         return 1.0;
     }
 
-    let target_chars: Vec<char> = target.chars().collect();
-    let mut query_idx = 0;
-    let mut target_idx = 0;
-    let mut score = 0.0;
-    let mut consecutive_bonus = 0.0;
+    let target_lower = target.to_lowercase();
+    let target_chars: Vec<char> = target_lower.chars().collect();
 
-    while query_idx < query_chars.len() && target_idx < target_chars.len() {
-        if query_chars[query_idx] == target_chars[target_idx] {
-            // Base match score
-            score += 1.0;
+    // Try to find the query as a consecutive substring
+    if let Some(start_idx) = find_consecutive_match(query_chars, &target_chars) {
+        let mut score = 0.0;
+        let end_idx = start_idx + query_chars.len();
 
-            // Consecutive character bonus
-            if target_idx > 0 && query_idx > 0 {
-                consecutive_bonus += 0.5;
-            }
+        // Base score for matching
+        score += query_chars.len() as f64;
 
-            // Word boundary bonus (after space, hyphen, etc.)
-            if target_idx == 0 || is_word_boundary(target_chars[target_idx - 1]) {
-                score += 0.8;
-            }
-
-            query_idx += 1;
-        } else {
-            consecutive_bonus = 0.0;
+        // Word boundary bonus (if match starts at beginning or after whitespace)
+        if start_idx == 0 || is_word_boundary(target_chars[start_idx - 1]) {
+            score += 0.8;
         }
-        target_idx += 1;
-    }
 
-    // If all query chars matched
-    if query_idx == query_chars.len() {
-        // Normalize by query length and add bonuses
+        // Consecutive character bonus
+        score += (query_chars.len().saturating_sub(1)) as f64 * 0.5;
+
+        // Bonus for starting at the very beginning
+        let start_bonus = if start_idx == 0 { 0.5 } else { 0.0 };
+
+        // Normalize by query length
         let base_score = score / query_chars.len() as f64;
-        let bonus = consecutive_bonus / query_chars.len() as f64;
 
         // Penalize long targets slightly
-        let length_penalty = (target_chars.len() as f64 - query_chars.len() as f64) * 0.01;
+        let length_penalty = (target_chars.len() as f64 - query_chars.len() as f64) * 0.005;
 
-        (base_score + bonus - length_penalty).max(0.0)
+        (base_score + start_bonus - length_penalty).max(0.0)
     } else {
-        0.0 // Not all characters matched
+        0.0 // No consecutive match found
     }
+}
+
+/// Find if query appears consecutively in target, return starting index if found
+fn find_consecutive_match(query: &[char], target: &[char]) -> Option<usize> {
+    if query.len() > target.len() {
+        return None;
+    }
+
+    for start in 0..=target.len() - query.len() {
+        let mut matched = true;
+        for i in 0..query.len() {
+            if query[i] != target[start + i] {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Some(start);
+        }
+    }
+    None
 }
 
 fn is_word_boundary(c: char) -> bool {
