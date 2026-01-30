@@ -216,8 +216,94 @@ jobs:
           name: LittleHelper-Mac
           path: LittleHelper.dmg
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev pkg-config
+
+      - name: Create secrets.rs with pre-configured API key
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
+        run: |
+          cat > crates/app/src/secrets.rs << EOF
+          // Auto-generated during build - API key pre-configured for beta testers
+          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
+          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
+          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
+          EOF
+
+      - name: Create support_info.rs
+        env:
+          SUPPORT_URL: ${{ secrets.SUPPORT_LINK }}
+        run: |
+          cat > crates/app/src/support_info.rs << EOF
+          // Auto-generated during build
+          pub const CREATOR_NAME: &str = "Ben";
+          pub const SUPPORT_LINK: &str = "${SUPPORT_URL}";
+          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
+          EOF
+
+      - name: Build Release
+        run: cargo build --release
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/app AppDir/usr/bin/little-helper
+          chmod +x AppDir/usr/bin/little-helper
+
+          # Create desktop entry
+          cat > AppDir/usr/share/applications/little-helper.desktop << EOF
+          [Desktop Entry]
+          Name=Little Helper
+          Exec=little-helper
+          Icon=little-helper
+          Type=Application
+          Categories=Utility;
+          Comment=Your AI assistant for files, fixes, research, and content
+          EOF
+          
+          # Copy desktop entry to AppDir root for AppImage
+          cp AppDir/usr/share/applications/little-helper.desktop AppDir/
+          
+          # Create icon (using a placeholder - you should add your actual icon)
+          touch AppDir/usr/share/icons/hicolor/256x256/apps/little-helper.png
+          ln -sf usr/share/icons/hicolor/256x256/apps/little-helper.png AppDir/little-helper.png
+
+      - name: Download AppImageTool
+        run: |
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+
+      - name: Create AppImage
+        run: |
+          ./appimagetool AppDir LittleHelper.AppImage
+          
+      - name: Create tarball
+        run: |
+          tar -czf LittleHelper-Linux.tar.gz -C target/release app
+          
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Linux
+          path: |
+            LittleHelper.AppImage
+            LittleHelper-Linux.tar.gz
+
   create-release:
-    needs: [build-windows, build-mac-universal]
+    needs: [build-windows, build-mac-universal, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -233,6 +319,11 @@ jobs:
         with:
           name: LittleHelper-Mac
 
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LittleHelper-Linux
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -243,14 +334,18 @@ jobs:
             ### Downloads
             - **Windows**: `LittleHelper-Setup.exe` - Double-click to install
             - **Mac (Universal)**: `LittleHelper.dmg` - Works on both Intel and Apple Silicon Macs
+            - **Linux**: `LittleHelper.AppImage` - Make executable and run, or use the `.tar.gz`
 
             ### First Time Opening
             Since this is a beta, you might see a security warning. This is normal!
 
             **Windows**: Click "More info" → "Run anyway"
             **Mac**: Right-click the app → "Open" → "Open"
+            **Linux**: Right-click AppImage → Properties → Permissions → Allow executing as program
 
             Have fun, and let Ben know what you think!
           files: |
             LittleHelper-Setup.exe
             LittleHelper.dmg
+            LittleHelper.AppImage
+            LittleHelper-Linux.tar.gz
