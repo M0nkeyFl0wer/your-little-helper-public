@@ -38,58 +38,6 @@ pub use types::*;
 mod utils;
 pub use utils::*;
 
-struct AppState {
-    settings: AppSettings,
-    current_screen: AppScreen,
-    current_mode: ChatMode,
-    previous_mode: Option<ChatMode>, // For detecting mode changes
-    input_text: String,
-    mode_input_drafts: std::collections::HashMap<ChatMode, String>, // Preserve input per mode
-    mode_chat_histories: std::collections::HashMap<ChatMode, Vec<ChatMessage>>, // Per-mode chat threads
-    is_thinking: bool,
-    thinking_status: String, // What the agent is currently doing
-    #[allow(dead_code)] // Available for future agentic features
-    agent_host: AgentHost,
-
-    // Preview panel (new interactive preview companion)
-    preview_panel: preview_panel::PreviewPanel,
-
-    // Legacy preview panel (for file viewers)
-    show_preview: bool,
-    active_viewer: ActiveViewer,
-    pending_preview: Option<PathBuf>, // File to auto-open after response
-
-    // Onboarding
-    onboarding_name: String,
-
-    // Pending command approvals
-    pending_commands: Vec<String>,
-
-    // Background command execution channel
-    command_result_rx: Option<Receiver<CommandExecResult>>,
-
-    // Background mascot texture
-    mascot_texture: Option<egui::TextureHandle>,
-    mascot_loaded: bool,
-
-    // Async AI response channel
-    ai_result_rx: Option<Receiver<AiResult>>,
-
-    // Web preview service and async fetch channel
-    web_preview_service: Arc<WebPreviewService>,
-    web_preview_rx: Option<Receiver<WebPreviewResult>>,
-
-    // Slack integration
-    show_slack_dialog: bool,
-    slack_message_to_send: Option<String>,
-    slack_selected_channel: String,
-    slack_status: Option<String>, // Status message after send attempt
-    show_settings_dialog: bool,
-    new_allowed_dir: String,
-    settings_status: Option<String>,
-    settings_status_is_error: bool,
-}
-
 impl Default for AppState {
     fn default() -> Self {
         let (mut settings, _) = load_settings_or_default();
