@@ -1,109 +1,118 @@
-//! ASCII art library for Little Helper
-//!
-//! This module provides professional ASCII art for various states and modes.
+//! ASCII art library for Little Helper (dogs edition)
 
 use shared::preview_types::AsciiState;
 
 /// Get ASCII art for a given state
 pub fn get_ascii_art(state: AsciiState) -> &'static str {
     match state {
-        AsciiState::Welcome => WELCOME_ART,
-        AsciiState::Thinking => THINKING_ART,
-        AsciiState::Success => SUCCESS_ART,
-        AsciiState::Error => ERROR_ART,
+        AsciiState::Welcome => WELCOME_DOG,
+        AsciiState::Thinking => THINKING_DOG,
+        AsciiState::Success => SUCCESS_DOG,
+        AsciiState::Error => ERROR_DOG,
     }
 }
 
 /// Get ASCII art for a mode introduction
 pub fn get_mode_art(mode: &str) -> &'static str {
     match mode.to_lowercase().as_str() {
-        "find" => FIND_MODE_ART,
-        "fix" => FIX_HELPER_ART,
-        "research" => RESEARCH_HELPER_ART,
-        "data" => DATA_HELPER_ART,
-        "content" => CONTENT_HELPER_ART,
-        _ => WELCOME_ART,
+        "find" => FIND_DOG,
+        "fix" => FIX_DOG,
+        "research" => RESEARCH_DOG,
+        "data" => DATA_DOG,
+        "content" => CONTENT_DOG,
+        "build" => BUILD_DOG,
+        _ => WELCOME_DOG,
     }
 }
 
-// Professional box drawing characters for clean borders
-const WELCOME_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║     Welcome to Little Helper      ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Welcome dog
+const WELCOME_DOG: &str = r#"
+ / \__
+(    @\___
+ /         O
+/   (_____/
+/_____/   U
 "#;
 
-// Clean thinking indicator with animated feel
-const THINKING_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║         ◉  Thinking...  ◉         ║
-    ╚═══════════════════════════════════╝
+// Thinking dog
+const THINKING_DOG: &str = r#"
+ / \__
+(    @\___
+ /  . .   O
+/   (___/
+/_____/ U
 "#;
 
-// Success indicator
-const SUCCESS_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║      ✓  Done!  ✓                  ║
-    ╚═══════════════════════════════════╝
+// Success dog
+const SUCCESS_DOG: &str = r#"
+ / \__
+(    @\___
+ /  /\   O
+/  /  \ /
+/_____/ U
 "#;
 
-// Error indicator
-const ERROR_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║      ✗  Error  ✗                  ║
-    ╚═══════════════════════════════════╝
+// Error dog
+const ERROR_DOG: &str = r#"
+ / \__
+(    x\___
+ /   --  O
+/   (___/
+/_____/ U
 "#;
 
-// Find mode art - simple and clean
-const FIND_MODE_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║      Find Helper                  ║
-    ║      🔍 File Detective            ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Find mode dog
+const FIND_DOG: &str = r#"
+ / \__
+(    @\___
+ /   /\  O
+/   /  \ /
+/_____/ U
 "#;
 
-// Fix Helper art
-const FIX_HELPER_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║      Fix Helper                   ║
-    ║      🔧 Tech Support              ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Fix Helper dog
+const FIX_DOG: &str = r#"
+ / \__
+(    @\___
+ /  |  | O
+/   |__|/
+/_____/ U
 "#;
 
-// Research Helper art
-const RESEARCH_HELPER_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║      Research Helper              ║
-    ║      📚 Knowledge Seeker          ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Research Helper dog
+const RESEARCH_DOG: &str = r#"
+ / \__
+(    @\___
+ /   __  O
+/   (__) /
+/_____/ U
 "#;
 
-// Data Helper art
-const DATA_HELPER_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║      Data Helper                  ║
-    ║      📊 Data Analyst              ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Data Helper dog
+const DATA_DOG: &str = r#"
+ / \__
+(    @\___
+ /  [__] O
+/   [__]/
+/_____/ U
 "#;
 
-// Content Helper art
-const CONTENT_HELPER_ART: &str = r#"
-    ╔═══════════════════════════════════╗
-    ║                                   ║
-    ║      Content Helper               ║
-    ║      ✏️ Creative Writer           ║
-    ║                                   ║
-    ╚═══════════════════════════════════╝
+// Content Helper dog
+const CONTENT_DOG: &str = r#"
+ / \__
+(    @\___
+ /  \_/  O
+/   / \ /
+/_____/ U
+"#;
+
+// Build Helper dog
+const BUILD_DOG: &str = r#"
+ / \__
+(    @\___
+ /  /|  O
+/  / | /
+/_____/ U
 "#;
 
 /// Render ASCII art with theme-aware colors
@@ -140,5 +149,6 @@ mod tests {
         assert!(!get_mode_art("research").is_empty());
         assert!(!get_mode_art("data").is_empty());
         assert!(!get_mode_art("content").is_empty());
+        assert!(!get_mode_art("build").is_empty());
     }
 }
