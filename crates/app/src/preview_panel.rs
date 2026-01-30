@@ -358,6 +358,7 @@ impl PreviewPanel {
                         format!("Versions: {} ({} versions)", file_name, versions.len())
                     }
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
+                    PreviewContent::Security(_) => "Security Dashboard".to_string(),
                 };
                 ui.label(label);
             }
@@ -901,6 +902,13 @@ impl PreviewPanel {
                     ui.colored_label(egui::Color32::RED, "Error");
                     ui.label(message);
                     ui.small(format!("Source: {}", source));
+                });
+            }
+            Some(PreviewContent::Security(_)) => {
+                // Security dashboard - placeholder for now
+                ui.vertical_centered(|ui| {
+                    ui.heading("Security Dashboard");
+                    ui.label("Security features coming soon!");
                 });
             }
             None => {
