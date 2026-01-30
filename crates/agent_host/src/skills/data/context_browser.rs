@@ -9,7 +9,7 @@
 //! - Apply templates: "Use the weekly status template"
 //! - Reference research: "What do I know about file organization?"
 
-use crate::context_manager::{ContextDocument, ContextManager, ContextType};
+use crate::context_manager::{ContextDocument, ContextManager, ContextType, DistributionLevel};
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction};
@@ -294,9 +294,9 @@ impl ContextBrowser {
     fn setup_if_empty(&mut self) -> Result<()> {
         let docs = self.manager.all_documents();
         if docs.is_empty() {
-            println!("Setting up beta testing context package...");
-            self.manager.setup_beta_package()?;
-            println!("✓ Beta package installed with {} sample documents", self.manager.all_documents().len());
+            println!("Setting up internal context package...");
+            self.manager.setup_package(DistributionLevel::Internal)?;
+            println!("✓ Context package installed with {} sample documents", self.manager.all_documents().len());
         }
         Ok(())
     }
