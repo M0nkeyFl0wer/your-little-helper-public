@@ -11,6 +11,7 @@ pub mod executor;
 pub mod prompts;
 pub mod skill_executor;
 pub mod skills;
+pub mod token_tracker;
 
 pub use prompts::{
     get_mode_introduction, get_mode_prompt, get_system_prompt, ModeIntroduction, ModePrompt,

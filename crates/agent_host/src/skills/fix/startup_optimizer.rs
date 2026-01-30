@@ -12,7 +12,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction};
+use std::collections::HashMap;
 use std::process::Command;
 use std::time::SystemTime;
 
@@ -385,6 +386,133 @@ impl StartupOptimizer {
         
         output
     }
+    
+    /// Disable a specific startup program
+    pub fn disable_startup_program(&self, program_name: &str, source: &str) -> anyhow::Result<String> {
+        #[cfg(target_os = "macos")]
+        return self.disable_macos_startup(program_name, source);
+        
+        #[cfg(target_os = "windows")]
+        return self.disable_windows_startup(program_name, source);
+        
+        #[cfg(target_os = "linux")]
+        return self.disable_linux_startup(program_name, source);
+        
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        Err(anyhow::anyhow!("Unsupported platform"))
+    }
+    
+    /// Disable macOS startup program
+    #[cfg(target_os = "macos")]
+    fn disable_macos_startup(&self, program_name: &str, source: &str) -> anyhow::Result<String> {
+        match source {
+            "Login Items" => {
+                // Use osascript to remove from login items
+                let script = format!(
+                    r#"tell application "System Events" to delete login item "{}""#,
+                    program_name
+                );
+                let output = std::process::Command::new("osascript")
+                    .arg("-e")
+                    .arg(&script)
+                    .output()?;
+                
+                if output.status.success() {
+                    Ok(format!("Removed {} from Login Items", program_name))
+                } else {
+                    Err(anyhow::anyhow!("Failed to remove from Login Items: {}", 
+                        String::from_utf8_lossy(&output.stderr)))
+                }
+            }
+            "LaunchAgent" => {
+                // Move plist file to disabled folder
+                let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home dir"))?;
+                let plist_path = home.join(format!("Library/LaunchAgents/{}.plist", program_name));
+                let disabled_dir = home.join("Library/LaunchAgents/Disabled");
+                
+                std::fs::create_dir_all(&disabled_dir)?;
+                let disabled_path = disabled_dir.join(format!("{}.plist", program_name));
+                
+                std::fs::rename(&plist_path, &disabled_path)?;
+                
+                // Unload the service
+                let _ = std::process::Command::new("launchctl")
+                    .args(&["unload", &plist_path.to_string_lossy()])
+                    .output();
+                
+                Ok(format!("Disabled LaunchAgent {} (moved to Disabled folder)", program_name))
+            }
+            _ => Err(anyhow::anyhow!("Unknown source type: {}", source))
+        }
+    }
+    
+    /// Disable Windows startup program
+    #[cfg(target_os = "windows")]
+    fn disable_windows_startup(&self, program_name: &str, source: &str) -> anyhow::Result<String> {
+        match source {
+            "Registry Run" => {
+                // Remove from registry
+                let ps_script = format!(
+                    r#"Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name '{}' -ErrorAction SilentlyContinue"#,
+                    program_name
+                );
+                let output = std::process::Command::new("powershell")
+                    .args(&["-Command", &ps_script])
+                    .output()?;
+                
+                if output.status.success() {
+                    Ok(format!("Removed {} from Registry Run", program_name))
+                } else {
+                    Err(anyhow::anyhow!("Failed to remove from registry"))
+                }
+            }
+            "Startup Folder" => {
+                // Remove shortcut from startup folder
+                if let Some(app_data) = dirs::config_dir() {
+                    let startup_path = app_data.join(format!(
+                        "Microsoft/Windows/Start Menu/Programs/Startup/{}.lnk", 
+                        program_name
+                    ));
+                    std::fs::remove_file(&startup_path)?;
+                    Ok(format!("Removed {} from Startup folder", program_name))
+                } else {
+                    Err(anyhow::anyhow!("Could not find startup folder"))
+                }
+            }
+            _ => Err(anyhow::anyhow!("Unknown source type: {}", source))
+        }
+    }
+    
+    /// Disable Linux startup program
+    #[cfg(target_os = "linux")]
+    fn disable_linux_startup(&self, program_name: &str, source: &str) -> anyhow::Result<String> {
+        match source {
+            "systemd" => {
+                // Disable the systemd user service
+                let output = std::process::Command::new("systemctl")
+                    .args(&["--user", "disable", program_name])
+                    .output()?;
+                
+                if output.status.success() {
+                    Ok(format!("Disabled systemd service {}", program_name))
+                } else {
+                    Err(anyhow::anyhow!("Failed to disable systemd service: {}",
+                        String::from_utf8_lossy(&output.stderr)))
+                }
+            }
+            "Desktop Autostart" => {
+                // Remove desktop file from autostart
+                if let Some(config_dir) = dirs::config_dir() {
+                    let desktop_file = config_dir.join(format!("autostart/{}.desktop", program_name));
+                    std::fs::remove_file(&desktop_file)?;
+                    Ok(format!("Removed {} from autostart", program_name))
+                } else {
+                    Err(anyhow::anyhow!("Could not find autostart directory"))
+                }
+            }
+            _ => Err(anyhow::anyhow!("Unknown source type: {}", source))
+        }
+    }
 }
 
 #[async_trait]
@@ -429,13 +557,41 @@ impl Skill for StartupOptimizer {
         
         let formatted_text = self.format_results(&result);
         
+        // Create suggested actions for optimizable programs
+        let mut suggested_actions = Vec::new();
+        for program in &result.programs {
+            if self.is_unused(program) && program.enabled {
+                let mut params = HashMap::new();
+                params.insert("program_name".to_string(), serde_json::json!(program.name));
+                params.insert("source".to_string(), serde_json::json!(program.source));
+                
+                suggested_actions.push(SuggestedAction {
+                    label: format!("Disable {} (save {:.1}s boot time)", program.name, program.boot_time_impact),
+                    skill_id: "disable_startup_program".to_string(),
+                    params,
+                });
+            }
+        }
+        
+        // Add bulk action if multiple optimizable
+        let optimizable_count = result.programs.iter().filter(|p| self.is_unused(p) && p.enabled).count();
+        if optimizable_count > 1 {
+            suggested_actions.push(SuggestedAction {
+                label: format!("Disable all {} optimizable apps (save {:.1}s total)", 
+                    optimizable_count, 
+                    result.current_boot_time - result.optimized_boot_time),
+                skill_id: "disable_all_startup_programs".to_string(),
+                params: HashMap::new(),
+            });
+        }
+        
         Ok(SkillOutput {
             result_type: shared::skill::ResultType::Text,
             text: Some(formatted_text),
             files: Vec::new(),
             data: Some(serde_json::to_value(result)?),
             citations: Vec::new(),
-            suggested_actions: Vec::new(),
+            suggested_actions,
         })
     }
 }
