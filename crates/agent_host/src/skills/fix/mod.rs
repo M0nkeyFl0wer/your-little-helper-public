@@ -8,12 +8,14 @@
 //! - Privacy auditing
 //! - Log analysis (future)
 
+pub mod device_capability;
 pub mod error_explainer;
 pub mod privacy_auditor;
 pub mod process_monitor;
 pub mod startup_optimizer;
 pub mod system_diagnostics;
 
+pub use device_capability::DeviceCapabilityDetector;
 pub use error_explainer::ErrorExplainer;
 pub use privacy_auditor::PrivacyAuditor;
 pub use process_monitor::ProcessMonitor;
@@ -30,4 +32,5 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(Arc::new(ErrorExplainer::new()));
     registry.register(Arc::new(StartupOptimizer::new()));
     registry.register(Arc::new(PrivacyAuditor::new()));
+    registry.register(Arc::new(DeviceCapabilityDetector::new()));
 }
