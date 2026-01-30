@@ -69,6 +69,8 @@ pub enum ChatMode {
     Data,
     /// Content creation with personas
     Content,
+    /// Build projects with spec-kit workflows
+    Build,
 }
 
 impl ChatMode {
@@ -79,6 +81,7 @@ impl ChatMode {
             ChatMode::Research => "research",
             ChatMode::Data => "data",
             ChatMode::Content => "content",
+            ChatMode::Build => "build",
         }
     }
 }
@@ -183,11 +186,20 @@ pub struct AppState {
     pub new_allowed_dir: String,
     pub settings_status: Option<String>,
     pub settings_status_is_error: bool,
-    
+
     // API key input fields (temporary storage for settings dialog)
     pub openai_api_key_input: String,
     pub anthropic_api_key_input: String,
     pub gemini_api_key_input: String,
+
+    // Build mode inputs and status
+    pub spec_kit_path_input: String,
+    pub build_folder_input: String,
+    pub build_project_name_input: String,
+    pub build_spec_name_input: String,
+    pub build_description_input: String,
+    pub build_status: Option<String>,
+    pub build_status_is_error: bool,
 }
 
 impl Default for AppState {
@@ -242,6 +254,7 @@ impl Default for AppState {
                 h.insert(ChatMode::Research, Vec::new());
                 h.insert(ChatMode::Data, Vec::new());
                 h.insert(ChatMode::Content, Vec::new());
+                h.insert(ChatMode::Build, Vec::new());
                 h
             },
             thread_history: crate::thread_history::ThreadHistory::new(),
@@ -254,6 +267,7 @@ impl Default for AppState {
                 m.insert(ChatMode::Research, false);
                 m.insert(ChatMode::Data, false);
                 m.insert(ChatMode::Content, false);
+                m.insert(ChatMode::Build, false);
                 m
             },
             thinking_status: {
@@ -262,6 +276,7 @@ impl Default for AppState {
                 m.insert(ChatMode::Research, String::new());
                 m.insert(ChatMode::Data, String::new());
                 m.insert(ChatMode::Content, String::new());
+                m.insert(ChatMode::Build, String::new());
                 m
             },
             thinking_mode: None,
@@ -299,6 +314,22 @@ impl Default for AppState {
             openai_api_key_input: String::new(),
             anthropic_api_key_input: String::new(),
             gemini_api_key_input: String::new(),
+            spec_kit_path_input: settings
+                .build
+                .spec_kit_path
+                .clone()
+                .unwrap_or_default(),
+            build_folder_input: settings
+                .build
+                .default_project_folder
+                .clone()
+                .or_else(|| dirs::home_dir().map(|h| h.to_string_lossy().to_string()))
+                .unwrap_or_default(),
+            build_project_name_input: String::new(),
+            build_spec_name_input: String::new(),
+            build_description_input: String::new(),
+            build_status: None,
+            build_status_is_error: false,
         }
     }
 }
@@ -306,6 +337,86 @@ impl Default for AppState {
 impl AppState {
     pub fn is_path_permitted(&self, path: &Path) -> bool {
         is_path_in_allowed_dirs(path, &self.settings.allowed_dirs)
+    }
+
+    pub fn spec_kit_path(&self) -> PathBuf {
+        if let Some(path) = &self.settings.build.spec_kit_path {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                return crate::utils::expand_user_path(trimmed);
+            }
+        }
+
+        dirs::home_dir()
+            .map(|h| h.join("Projects/spec-kit-assistant/spec-assistant.js"))
+            .unwrap_or_default()
+    }
+
+    pub fn resolve_build_folder(&self) -> Result<PathBuf, String> {
+        let raw = self.build_folder_input.trim();
+        if raw.is_empty() {
+            return Err("Please choose a folder first.".to_string());
+        }
+
+        let path = crate::utils::expand_user_path(raw);
+        if !path.exists() || !path.is_dir() {
+            return Err("That folder doesn't exist yet. Pick an existing folder.".to_string());
+        }
+
+        if !self.is_path_permitted(&path) {
+            return Err("That folder is outside your allowed folders. Add it in Settings.".to_string());
+        }
+
+        Ok(path)
+    }
+
+    fn shell_quote(arg: &str) -> String {
+        if arg.contains(' ') || arg.contains('"') {
+            format!("\"{}\"", arg.replace('"', "\\\""))
+        } else {
+            arg.to_string()
+        }
+    }
+
+    pub fn run_spec_kit_command(&mut self, args: Vec<String>) {
+        let spec_kit_path = self.spec_kit_path();
+        if !spec_kit_path.exists() {
+            self.build_status = Some(
+                "Spec Kit not found. Set it up in Settings → Build Tools.".to_string(),
+            );
+            self.build_status_is_error = true;
+            return;
+        }
+
+        let folder = match self.resolve_build_folder() {
+            Ok(path) => path,
+            Err(err) => {
+                self.build_status = Some(err);
+                self.build_status_is_error = true;
+                return;
+            }
+        };
+
+        let mut cmd_parts = vec!["node".to_string(), Self::shell_quote(&spec_kit_path.to_string_lossy())];
+        for arg in args {
+            cmd_parts.push(Self::shell_quote(&arg));
+        }
+
+        let command = cmd_parts.join(" ");
+
+        let (tx, rx) = channel::<CommandExecResult>();
+        self.command_result_rx = Some(rx);
+        self.thinking_mode = Some(self.current_mode);
+        self.is_thinking.insert(self.current_mode, true);
+        self.thinking_status
+            .insert(self.current_mode, "Running Spec Kit".to_string());
+        self.build_status = Some("Running Spec Kit...".to_string());
+        self.build_status_is_error = false;
+
+        std::thread::spawn(move || {
+            let output = run_user_command(&command);
+            let _ = tx.send(CommandExecResult { command, output });
+        });
     }
 
     /// Get chat history for current mode
@@ -450,7 +561,8 @@ impl AppState {
             if let Ok(result) = rx.try_recv() {
                 self.command_result_rx = None;
                 // Clear thinking state for the mode that was processing
-                if let Some(mode) = self.thinking_mode {
+                let active_mode = self.thinking_mode;
+                if let Some(mode) = active_mode {
                     self.is_thinking.insert(mode, false);
                     self.thinking_status.insert(mode, String::new());
                 }
@@ -470,6 +582,14 @@ impl AppState {
                             ),
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
+                        if active_mode == Some(ChatMode::Build) {
+                            self.build_status = Some(if cmd_result.success {
+                                "Spec Kit finished successfully".to_string()
+                            } else {
+                                "Spec Kit reported an error".to_string()
+                            });
+                            self.build_status_is_error = !cmd_result.success;
+                        }
                     }
                     Err(err) => {
                         self.push_chat(ChatMessage {
@@ -477,6 +597,10 @@ impl AppState {
                             content: format!("Command `{}` failed to run: {}", result.command, err),
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
+                        if active_mode == Some(ChatMode::Build) {
+                            self.build_status = Some("Spec Kit command failed".to_string());
+                            self.build_status_is_error = true;
+                        }
                     }
                 }
             }
@@ -981,6 +1105,27 @@ ALWAYS:
                     user_name, ddd_workflow, personas, campaign_docs, capabilities
                 )
             },
+            ChatMode::Build => format!(
+                r#"You are Little Helper in BUILD mode, helping {}.
+
+YOUR ROLE: Practical builder who creates projects and runs spec-driven workflows without asking the user to use a terminal.
+
+RULES:
+- Always say "folder" (never "directory")
+- Offer simple steps and buttons; avoid terminal jargon
+- When you need a location, ask which folder to use
+- Use spec-kit commands when available (spec init / spec check / spec run)
+
+WORKFLOW:
+1. Ask what they want to build
+2. Ask which folder to use
+3. Use spec-kit to create specs and run implementation
+4. Summarize progress clearly
+
+{}
+"#,
+                user_name, capabilities
+            ),
         };
 
         // Convert chat history to API format
