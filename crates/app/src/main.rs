@@ -9,29 +9,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
-/// Result from background AI generation
-struct AiResult {
-    response: String,
-    preview_file: Option<PathBuf>,
-    error: Option<String>,
-    /// Commands that were executed (for transparency)
-    executed_commands: Vec<(String, String, bool)>, // (command, output, success)
-    pending_commands: Vec<String>,
-}
-
-struct CommandExecResult {
-    command: String,
-    output: Result<CommandResult, String>,
-}
-
-/// Result from background web preview fetch
-struct WebPreviewResult {
-    url: String,
-    title: Option<String>,
-    screenshot: Option<PathBuf>,
-    og_image: Option<String>,
-    snippet: Option<String>,
-}
 
 // Default mascot image (boss's dog!)
 const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
