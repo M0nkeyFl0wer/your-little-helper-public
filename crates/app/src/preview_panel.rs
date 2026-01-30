@@ -354,7 +354,13 @@ impl PreviewPanel {
                     PreviewContent::Web { url, title, .. } => {
                         title.clone().unwrap_or_else(|| url.clone())
                     }
-                    PreviewContent::ModeIntro { mode } => format!("{} Mode", mode),
+                    PreviewContent::ModeIntro { mode } => match mode.to_lowercase().as_str() {
+                        "fix" => "Fix Helper".to_string(),
+                        "research" => "Research Helper".to_string(),
+                        "data" => "Data Helper".to_string(),
+                        "content" => "Content Helper".to_string(),
+                        _ => format!("{} Helper", mode),
+                    },
                     PreviewContent::Ascii { state } => format!("{}", state),
                     PreviewContent::Image { .. } => "Image".to_string(),
                     PreviewContent::SearchResults {

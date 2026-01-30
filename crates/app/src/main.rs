@@ -1010,7 +1010,8 @@ impl eframe::App for LittleHelperApp {
                             if s.settings.model.openai_auth.api_key.is_some() {
                                 ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
                             }
-                            if ui.text_edit_singleline(&mut openai_key).changed() {
+                            let edit = egui::TextEdit::singleline(&mut openai_key).password(true);
+                            if ui.add(edit).changed() {
                                 s.openai_api_key_input = openai_key;
                             }
                             if !s.openai_api_key_input.is_empty() && ui.button("Save").clicked() {
@@ -1029,7 +1030,8 @@ impl eframe::App for LittleHelperApp {
                                 ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
                             }
                             let mut anthropic_key = s.anthropic_api_key_input.clone();
-                            if ui.text_edit_singleline(&mut anthropic_key).changed() {
+                            let edit = egui::TextEdit::singleline(&mut anthropic_key).password(true);
+                            if ui.add(edit).changed() {
                                 s.anthropic_api_key_input = anthropic_key;
                             }
                             if !s.anthropic_api_key_input.is_empty() && ui.button("Save").clicked() {
@@ -1048,7 +1050,8 @@ impl eframe::App for LittleHelperApp {
                                 ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
                             }
                             let mut gemini_key = s.gemini_api_key_input.clone();
-                            if ui.text_edit_singleline(&mut gemini_key).changed() {
+                            let edit = egui::TextEdit::singleline(&mut gemini_key).password(true);
+                            if ui.add(edit).changed() {
                                 s.gemini_api_key_input = gemini_key;
                             }
                             if !s.gemini_api_key_input.is_empty() && ui.button("Save").clicked() {
