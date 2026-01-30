@@ -1,5 +1,13 @@
 # Little Helper
 
+```
+ / \__
+(    @\___
+ /         O
+/   (_____/
+/_____/   U
+```
+
 A beautiful, private AI assistant for your desktop. Chat with AI to find files, get tech support, research topics, and work with data - all running locally on your machine.
 
 ## Download
