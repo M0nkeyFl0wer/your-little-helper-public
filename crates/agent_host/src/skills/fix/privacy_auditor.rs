@@ -18,7 +18,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction};
 use std::collections::HashMap;
 use std::process::Command;
 use std::time::SystemTime;
@@ -472,6 +472,68 @@ impl PrivacyAuditor {
         
         output
     }
+    
+    /// Revoke a permission for an app
+    pub fn revoke_permission(&self, app_name: &str, permission_type: PermissionType) -> anyhow::Result<String> {
+        // Platform-specific implementations that open system settings
+        // since direct revocation requires elevated permissions
+        #[cfg(target_os = "macos")]
+        return self.open_macos_privacy_settings(permission_type);
+        
+        #[cfg(target_os = "windows")]
+        return self.open_windows_privacy_settings(permission_type);
+        
+        #[cfg(target_os = "linux")]
+        return self.open_linux_privacy_settings(permission_type);
+        
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        Err(anyhow::anyhow!("Unsupported platform"))
+    }
+    
+    /// Open macOS privacy settings
+    #[cfg(target_os = "macos")]
+    fn open_macos_privacy_settings(&self, permission_type: PermissionType) -> anyhow::Result<String> {
+        let url = match permission_type {
+            PermissionType::Camera => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+            PermissionType::Microphone => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            PermissionType::Location => "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices",
+            _ => "x-apple.systempreferences:com.apple.preference.security?Privacy",
+        };
+        
+        std::process::Command::new("open")
+            .arg(url)
+            .output()?;
+            
+        Ok(format!("Opened System Settings to Privacy & Security for {:?}", permission_type))
+    }
+    
+    /// Open Windows privacy settings
+    #[cfg(target_os = "windows")]
+    fn open_windows_privacy_settings(&self, permission_type: PermissionType) -> anyhow::Result<String> {
+        let settings_page = match permission_type {
+            PermissionType::Camera => "privacy-webcam",
+            PermissionType::Microphone => "privacy-microphone",
+            PermissionType::Location => "privacy-location",
+            _ => "privacy",
+        };
+        
+        std::process::Command::new("start")
+            .arg(format!("ms-settings:{}", settings_page))
+            .output()?;
+            
+        Ok(format!("Opened Windows Settings for {:?}", permission_type))
+    }
+    
+    /// Open Linux privacy settings
+    #[cfg(target_os = "linux")]
+    fn open_linux_privacy_settings(&self, permission_type: PermissionType) -> anyhow::Result<String> {
+        // Try to open GNOME Settings or KDE Settings
+        let _ = std::process::Command::new("gnome-control-center")
+            .arg("privacy")
+            .spawn();
+            
+        Ok(format!("Opened system settings for {:?}. Please manually revoke the permission.", permission_type))
+    }
 }
 
 #[async_trait]
@@ -512,7 +574,7 @@ impl Skill for PrivacyAuditor {
             .sum();
         
         let result = PrivacyAuditResult {
-            apps,
+            apps: apps.clone(),
             summary,
             review_needed,
             total_permissions,
@@ -520,13 +582,42 @@ impl Skill for PrivacyAuditor {
         
         let formatted_text = self.format_results(&result);
         
+        // Build suggested actions for unusual permissions
+        let mut suggested_actions: Vec<SuggestedAction> = Vec::new();
+        
+        // Add revoke actions for each unusual app with specific permissions
+        for app in &apps {
+            if app.risk_level == RiskLevel::Unusual {
+                for perm in &app.permissions {
+                    if perm.allowed {
+                        let mut params = HashMap::new();
+                        params.insert("app_name".to_string(), serde_json::json!(app.name));
+                        params.insert("permission_type".to_string(), serde_json::json!(format!("{:?}", perm.permission_type)));
+                        
+                        suggested_actions.push(SuggestedAction {
+                            label: format!("Revoke {} for {}", perm.permission_type.description(), app.name),
+                            skill_id: "revoke_permission".to_string(),
+                            params,
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Add general "Open Privacy Settings" action
+        suggested_actions.push(SuggestedAction {
+            label: "Open system privacy settings".to_string(),
+            skill_id: "open_privacy_settings".to_string(),
+            params: HashMap::new(),
+        });
+        
         Ok(SkillOutput {
             result_type: shared::skill::ResultType::Text,
             text: Some(formatted_text),
             files: Vec::new(),
             data: Some(serde_json::to_value(result)?),
             citations: Vec::new(),
-            suggested_actions: Vec::new(),
+            suggested_actions,
         })
     }
 }
