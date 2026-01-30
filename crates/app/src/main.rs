@@ -722,7 +722,7 @@ impl eframe::App for LittleHelperApp {
                 let mut slack_msg: Option<String> = None;
 
                 if s.current_mode == ChatMode::Build {
-                    render_build_panel(s, ui, dark);
+                    render_build_panel(&mut *s, ui, dark);
                     ui.add_space(12.0);
                 }
 

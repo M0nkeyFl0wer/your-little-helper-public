@@ -94,7 +94,6 @@ impl Skill for SpecInitSkill {
                         {}",
                         project_name,
                         project_dir.display(),
-                        project_name,
                         stdout
                     )))
                 } else {
