@@ -7,6 +7,7 @@
 //! - Provide user-friendly summaries of command output
 //! - Invoke skills with permission handling
 
+pub mod context_manager;
 pub mod executor;
 pub mod prompts;
 pub mod skill_executor;
