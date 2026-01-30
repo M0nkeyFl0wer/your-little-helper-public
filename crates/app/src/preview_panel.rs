@@ -104,6 +104,18 @@ impl PreviewPanel {
         });
     }
 
+    /// Show skills list for a mode
+    pub fn show_skills(
+        &mut self,
+        mode: &str,
+        skills: Vec<shared::preview_types::SkillPreviewInfo>,
+    ) {
+        self.show_content(PreviewContent::SkillsList {
+            mode: mode.to_string(),
+            skills,
+        });
+    }
+
     /// Show ASCII art state
     pub fn show_ascii(&mut self, state: AsciiState) {
         self.show_content(PreviewContent::Ascii { state });
@@ -359,6 +371,7 @@ impl PreviewPanel {
                     }
                     PreviewContent::Error { message, .. } => format!("Error: {}", message),
                     PreviewContent::Security(_) => "Security Dashboard".to_string(),
+                    PreviewContent::SkillsList { mode, .. } => format!("{} Skills", mode),
                 };
                 ui.label(label);
             }
@@ -909,6 +922,36 @@ impl PreviewPanel {
                 ui.vertical_centered(|ui| {
                     ui.heading("Security Dashboard");
                     ui.label("Security features coming soon!");
+                });
+            }
+            Some(PreviewContent::SkillsList { mode, skills }) => {
+                ui.vertical(|ui| {
+                    ui.heading(format!("Available Skills - {} Mode", mode));
+                    ui.add_space(16.0);
+
+                    if skills.is_empty() {
+                        ui.label("No skills available for this mode.");
+                    } else {
+                        for skill in skills {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(accent_color, "•");
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new(&skill.name).strong().size(14.0));
+                                    if skill.requires_approval {
+                                        ui.label(
+                                            egui::RichText::new("(requires approval)")
+                                                .small()
+                                                .color(egui::Color32::YELLOW),
+                                        );
+                                    }
+                                });
+                                ui.add_space(4.0);
+                                ui.label(&skill.description);
+                                ui.add_space(8.0);
+                            });
+                        }
+                    }
                 });
             }
             None => {

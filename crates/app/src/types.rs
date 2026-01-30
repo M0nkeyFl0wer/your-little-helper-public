@@ -133,6 +133,10 @@ pub struct AppState {
     /// Available for future agentic features
     #[allow(dead_code)]
     pub agent_host: agent_host::AgentHost,
+    /// Context manager for documents and personas
+    pub context_manager: agent_host::context_manager::ContextManager,
+    /// Skill registry for available tools
+    pub skill_registry: agent_host::skills::SkillRegistry,
 
     // Preview panel (new interactive preview companion)
     pub preview_panel: crate::preview_panel::PreviewPanel,
@@ -239,7 +243,15 @@ impl Default for AppState {
             thread_search_query: String::new(),
             is_thinking: false,
             thinking_status: String::new(),
-            agent_host: AgentHost::new(settings),
+            agent_host: AgentHost::new(settings.clone()),
+            context_manager: agent_host::context_manager::ContextManager::new(
+                agent_host::context_manager::ContextManager::default_dir()
+            ).unwrap_or_else(|_| {
+                agent_host::context_manager::ContextManager::new(
+                    std::path::PathBuf::from("./context")
+                ).expect("Failed to create context manager")
+            }),
+            skill_registry: agent_host::skills::init_empty_registry(),
             preview_panel,
             show_preview: true,
             active_viewer: ActiveViewer::Panel,

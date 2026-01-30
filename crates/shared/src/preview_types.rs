@@ -98,6 +98,11 @@ pub enum PreviewContent {
     Error { message: String, source: String },
     /// Security dashboard (Fix/Secure mode)
     Security(SecurityView),
+    /// Skills list for a mode
+    SkillsList {
+        mode: String,
+        skills: Vec<SkillPreviewInfo>,
+    },
 }
 
 /// Source for an image to display
@@ -753,6 +758,16 @@ impl CleanupRecommendations {
             format!("{} bytes", self.total_bytes)
         }
     }
+}
+
+/// Skill information for preview display
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SkillPreviewInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub permission_level: String, // "Safe" or "Sensitive"
+    pub requires_approval: bool,
 }
 
 /// All security preview views
