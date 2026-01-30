@@ -3,8 +3,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
-use std::path::PathBuf;
 use std::process::Command;
+
+use super::spec_utils::{resolve_spec_kit_path, resolve_target_folder};
 
 /// Initialize a new spec-driven project with spec-kit
 pub struct SpecInitSkill;
@@ -49,24 +50,17 @@ impl Skill for SpecInitSkill {
                     .to_string()
             });
 
-        let directory = input
-            .params
-            .get("directory")
-            .and_then(|v| v.as_str())
-            .map(|s| PathBuf::from(s))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let folder = resolve_target_folder(&input);
 
         // Check if spec-kit-assistant is available
-        let spec_kit_path = dirs::home_dir()
-            .map(|h| h.join("Projects/spec-kit-assistant/spec-assistant.js"))
-            .unwrap_or_default();
+        let spec_kit_path = resolve_spec_kit_path(&input);
 
         if !spec_kit_path.exists() {
             return Ok(SkillOutput::text(format!(
                 "Spec Kit Assistant not found at expected location.\n\n\
                 To use spec-driven development:\n\
-                1. Clone spec-kit-assistant to ~/Projects/\n\
-                2. Run: cd ~/Projects/spec-kit-assistant && npm install\n\n\
+                1. Put spec-kit-assistant in your Projects folder\n\
+                2. Or set the Spec Kit path in Settings → Build\n\n\
                 Alternatively, I can help you create a basic project structure manually.\n\
                 Would you like me to create a simple {} project instead?",
                 project_name
@@ -78,7 +72,7 @@ impl Skill for SpecInitSkill {
             .arg(&spec_kit_path)
             .arg("init")
             .arg(&project_name)
-            .current_dir(&directory)
+            .current_dir(&folder)
             .output();
 
         match output {
@@ -87,13 +81,13 @@ impl Skill for SpecInitSkill {
                 let stderr = String::from_utf8_lossy(&result.stderr);
 
                 if result.status.success() {
-                    let project_dir = directory.join(&project_name);
+                    let project_dir = folder.join(&project_name);
 
                     Ok(SkillOutput::text(format!(
                         "Project '{}' initialized with spec-driven structure!\n\n\
-                        Created at: {}\n\n\
+                        Created in folder: {}\n\n\
                         Next steps:\n\
-                        1. cd {}\n\
+                        1. Open the folder\n\
                         2. Create your spec: specs/001-your-feature/spec.md\n\
                         3. Run 'spec check' to validate\n\
                         4. Use 'spec run' to implement with AI swarms\n\n\
