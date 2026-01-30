@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 
+use shared::skill::{Mode, Permission};
+
 // Default mascot image (boss's dog!)
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
@@ -275,6 +277,31 @@ impl eframe::App for LittleHelperApp {
 
             let mode_str = s.current_mode.as_str();
             s.preview_panel.show_mode_intro(mode_str);
+            
+            // Load context documents and skills for the new mode
+            let shared_mode = match s.current_mode {
+                ChatMode::Fix => shared::skill::Mode::Fix,
+                ChatMode::Research => shared::skill::Mode::Research,
+                ChatMode::Data => shared::skill::Mode::Data,
+                ChatMode::Content => shared::skill::Mode::Content,
+            };
+            
+            // Get available skills for this mode and show them in preview
+            let skills_info = s.skill_registry.skills_info_for_mode(shared_mode);
+            let skill_previews: Vec<shared::preview_types::SkillPreviewInfo> = skills_info
+                .into_iter()
+                .map(|info| shared::preview_types::SkillPreviewInfo {
+                    id: info.id.to_string(),
+                    name: info.name.to_string(),
+                    description: info.description.to_string(),
+                    permission_level: format!("{:?}", info.permission_level),
+                    requires_approval: info.user_permission == shared::skill::Permission::Ask,
+                })
+                .collect();
+            
+            if !skill_previews.is_empty() {
+                s.preview_panel.show_skills(mode_str, skill_previews);
+            }
         }
         s.previous_mode = Some(s.current_mode);
 
