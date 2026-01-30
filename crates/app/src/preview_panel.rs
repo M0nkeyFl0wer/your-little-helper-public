@@ -377,23 +377,21 @@ impl PreviewPanel {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Close button
-                if ui.button("✕").clicked() {
+                // Minimize/Collapse button
+                if ui.button("−").clicked() {
                     self.hide();
                 }
 
-                // Fullscreen button
-                let fs_label = if self.state.fullscreen { "⊟" } else { "⊞" };
-                if ui.button(fs_label).clicked() {
-                    self.toggle_fullscreen();
-                }
-
-                // Zoom controls
-                if ui.button("−").clicked() {
+                // Zoom out button
+                if ui.button("⊖").clicked() {
                     self.zoom_out();
                 }
+
+                // Zoom level display
                 ui.label(format!("{}%", (self.state.zoom * 100.0) as i32));
-                if ui.button("+").clicked() {
+
+                // Zoom in button
+                if ui.button("⊕").clicked() {
                     self.zoom_in();
                 }
             });

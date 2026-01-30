@@ -251,8 +251,9 @@ impl eframe::App for LittleHelperApp {
             ctx.request_repaint();
         }
 
-        // Request repaint if we're waiting for AI (to keep polling)
-        if s.is_thinking {
+        // Request repaint if any mode is waiting for AI (to keep polling)
+        let any_thinking = s.is_thinking.values().any(|&v| v);
+        if any_thinking {
             ctx.request_repaint();
         }
 
@@ -435,14 +436,15 @@ impl eframe::App for LittleHelperApp {
 
                         ui.add_space(12.0);
 
-                        // Model indicator
-                        let provider = s
+                        // Model indicator - clone provider string to avoid borrow issues
+                        let provider_str: String = s
                             .settings
                             .model
                             .provider_preference
                             .first()
-                            .map(|s| s.as_str())
-                            .unwrap_or("none");
+                            .cloned()
+                            .unwrap_or_else(|| "none".to_string());
+                        let provider = provider_str.as_str();
                         let model_name = match provider {
                             "openai" => &s.settings.model.openai_model,
                             "anthropic" => &s.settings.model.anthropic_model,
@@ -450,16 +452,26 @@ impl eframe::App for LittleHelperApp {
                             "local" => &s.settings.model.local_model,
                             _ => "unknown",
                         };
-                        ui.label(
-                            egui::RichText::new(format!("⚡ {}", model_name))
-                                .size(11.0)
-                                .color(if dark {
-                                    egui::Color32::from_rgb(140, 180, 140)
-                                } else {
-                                    egui::Color32::from_rgb(80, 130, 80)
-                                }),
-                        )
-                        .on_hover_text(format!("Provider: {}", provider));
+                        // Clickable model indicator
+                        let model_btn = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("⚡ {}", model_name))
+                                    .size(11.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(140, 180, 140)
+                                    } else {
+                                        egui::Color32::from_rgb(80, 130, 80)
+                                    }),
+                            )
+                            .frame(false)
+                        );
+                        if model_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if model_btn.clicked() {
+                            s.show_settings_dialog = true;
+                        }
+                        model_btn.on_hover_text(format!("Provider: {} (click to change)", provider));
 
                         ui.add_space(8.0);
 
@@ -717,8 +729,10 @@ impl eframe::App for LittleHelperApp {
                     .cloned()
                     .unwrap_or_default();
                 let allowed_dirs = s.settings.allowed_dirs.clone();
-                let is_thinking = s.is_thinking;
-                let thinking_status = s.thinking_status.clone();
+                // Only show thinking if current mode matches the thinking mode
+                let is_thinking = s.thinking_mode == Some(current_mode) && 
+                    s.is_thinking.get(&current_mode).copied().unwrap_or(false);
+                let thinking_status = s.thinking_status.get(&current_mode).cloned().unwrap_or_default();
 
                 egui::ScrollArea::vertical()
                     .max_height(chat_height)
@@ -743,7 +757,7 @@ impl eframe::App for LittleHelperApp {
                                 .fill(if dark {
                                     egui::Color32::from_rgb(50, 50, 58)
                                 } else {
-                                    egui::Color32::from_rgb(245, 245, 248)
+                                    egui::Color32::from_rgb(230, 230, 235)
                                 })
                                 .rounding(egui::Rounding::same(12.0))
                                 .inner_margin(egui::Margin::same(12.0))
@@ -769,7 +783,7 @@ impl eframe::App for LittleHelperApp {
                                                 .color(if dark {
                                                     egui::Color32::from_rgb(160, 160, 180)
                                                 } else {
-                                                    egui::Color32::from_rgb(100, 100, 120)
+                                                    egui::Color32::from_rgb(60, 60, 70)
                                                 })
                                                 .italics(),
                                         );
@@ -982,9 +996,76 @@ impl eframe::App for LittleHelperApp {
                         if has_api_key {
                             ui.label(egui::RichText::new("✓ API key configured").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
                         } else {
-                            ui.label(egui::RichText::new("⚠ No API key configured - add one in ~/.config/little-helper/settings.json").color(egui::Color32::from_rgb(220, 140, 60)).size(11.0));
+                            ui.label(egui::RichText::new("⚠ No API key configured").color(egui::Color32::from_rgb(220, 140, 60)).size(11.0));
                         }
                     }
+
+                    // API Key input section
+                    ui.add_space(8.0);
+                    ui.collapsing("Advanced: Edit API Keys", |ui| {
+                        ui.label(egui::RichText::new("Enter API keys for cloud providers:").size(11.0).weak());
+                        ui.add_space(4.0);
+
+                        // OpenAI API Key
+                        ui.horizontal(|ui| {
+                            ui.label("OpenAI:");
+                            let mut openai_key = s.openai_api_key_input.clone();
+                            if s.settings.model.openai_auth.api_key.is_some() {
+                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
+                            }
+                            if ui.text_edit_singleline(&mut openai_key).changed() {
+                                s.openai_api_key_input = openai_key;
+                            }
+                            if !s.openai_api_key_input.is_empty() && ui.button("Save").clicked() {
+                                s.settings.model.openai_auth.api_key = Some(s.openai_api_key_input.clone());
+                                save_settings(&s.settings);
+                                s.openai_api_key_input.clear();
+                                s.settings_status = Some("OpenAI API key saved".to_string());
+                                s.settings_status_is_error = false;
+                            }
+                        });
+
+                        // Anthropic API Key
+                        ui.horizontal(|ui| {
+                            ui.label("Anthropic:");
+                            if s.settings.model.anthropic_auth.api_key.is_some() {
+                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
+                            }
+                            let mut anthropic_key = s.anthropic_api_key_input.clone();
+                            if ui.text_edit_singleline(&mut anthropic_key).changed() {
+                                s.anthropic_api_key_input = anthropic_key;
+                            }
+                            if !s.anthropic_api_key_input.is_empty() && ui.button("Save").clicked() {
+                                s.settings.model.anthropic_auth.api_key = Some(s.anthropic_api_key_input.clone());
+                                save_settings(&s.settings);
+                                s.anthropic_api_key_input.clear();
+                                s.settings_status = Some("Anthropic API key saved".to_string());
+                                s.settings_status_is_error = false;
+                            }
+                        });
+
+                        // Gemini API Key
+                        ui.horizontal(|ui| {
+                            ui.label("Gemini:");
+                            if s.settings.model.gemini_auth.api_key.is_some() {
+                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
+                            }
+                            let mut gemini_key = s.gemini_api_key_input.clone();
+                            if ui.text_edit_singleline(&mut gemini_key).changed() {
+                                s.gemini_api_key_input = gemini_key;
+                            }
+                            if !s.gemini_api_key_input.is_empty() && ui.button("Save").clicked() {
+                                s.settings.model.gemini_auth.api_key = Some(s.gemini_api_key_input.clone());
+                                save_settings(&s.settings);
+                                s.gemini_api_key_input.clear();
+                                s.settings_status = Some("Gemini API key saved".to_string());
+                                s.settings_status_is_error = false;
+                            }
+                        });
+
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("Note: API keys are stored locally in ~/.config/little-helper/settings.json").size(10.0).weak());
+                    });
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -1292,7 +1373,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
         // Mode-specific tips
         let (mode_name, tips) = match current_mode {
             ChatMode::Fix => (
-                "Fix Mode",
+                "Fix Helper",
                 vec![
                     "Tell me what's broken - I'll diagnose it",
                     "Need a file? I can find that too",
@@ -1302,7 +1383,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                 ],
             ),
             ChatMode::Research => (
-                "Research Mode",
+                "Research Helper",
                 vec![
                     "Ask me to research any topic",
                     "I'll search multiple sources with citations",
@@ -1311,7 +1392,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                 ],
             ),
             ChatMode::Data => (
-                "Data Mode",
+                "Data Helper",
                 vec![
                     "Work with CSV, JSON, Excel files",
                     "Data tables render right here",
@@ -1320,7 +1401,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                 ],
             ),
             ChatMode::Content => (
-                "Content Mode",
+                "Content Helper",
                 vec![
                     "Create content for any platform",
                     "I know your campaign personas",
