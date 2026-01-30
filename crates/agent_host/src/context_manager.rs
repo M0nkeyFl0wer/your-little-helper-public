@@ -71,6 +71,17 @@ impl ContextType {
     }
 }
 
+/// Distribution level for context packages
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistributionLevel {
+    /// Internal team only - full project context
+    Internal,
+    /// External beta testers - curated project context
+    ExternalBeta,
+    /// Public release - generic documentation only
+    Public,
+}
+
 /// A context document
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextDocument {
@@ -414,9 +425,39 @@ impl ContextManager {
         Ok(prompt)
     }
 
-    /// Setup beta testing package with pre-loaded coworker context
-    pub fn setup_beta_package(&mut self) -> Result<()> {
-        // Example Persona: Tech-Savvy Early Adopter
+    /// Setup context package based on distribution level
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// // For internal team testing
+    /// manager.setup_package(DistributionLevel::Internal)?;
+    ///
+    /// // For external beta testers (outside team but trusted)
+    /// manager.setup_package(DistributionLevel::ExternalBeta)?;
+    ///
+    /// // For public release
+    /// manager.setup_package(DistributionLevel::Public)?;
+    /// ```
+    pub fn setup_package(&mut self, level: DistributionLevel) -> Result<()> {
+        match level {
+            DistributionLevel::Internal => self.setup_internal_package(),
+            DistributionLevel::ExternalBeta => self.setup_external_beta_package(),
+            DistributionLevel::Public => self.setup_public_package(),
+        }
+    }
+
+    /// Setup for INTERNAL TEAM - Full project context
+    ///
+    /// Includes all project-specific research, personas, and internal documents.
+    /// Use this for your immediate team members.
+    fn setup_internal_package(&mut self) -> Result<()> {
+        // ========================================================================
+        // INTERNAL TEAM DOCUMENTS
+        // ========================================================================
+        // Full project context including sensitive research and proprietary info.
+        // NOT for external distribution.
+        // ========================================================================
         let persona_content = r#"# Tech-Savvy Early Adopter
 
 ## Profile
@@ -889,6 +930,249 @@ This is precedent-setting work that balances ecological integrity with economic 
                 "British Columbia".to_string(),
                 "Indigenous".to_string(),
             ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Setup for EXTERNAL BETA TESTERS
+    ///
+    /// Curated project context for trusted testers outside the immediate team.
+    /// Includes helpful personas and templates but excludes sensitive project details.
+    fn setup_external_beta_package(&mut self) -> Result<()> {
+        // ========================================================================
+        // EXTERNAL BETA DOCUMENTS
+        // ========================================================================
+        // Curated selection suitable for external beta testers.
+        // Includes personas and templates but excludes proprietary research.
+        // ========================================================================
+
+        // Generic persona (non-project-specific)
+        let persona_content = r#"# Tech-Savvy Early Adopter
+
+## Profile
+- Role: Software Developer / Technical Lead
+- Tech Comfort: High
+- Primary Use: Development workflows, automation
+
+## Goals
+- Save time on repetitive tasks
+- Stay in flow state
+- Reduce context switching
+
+## Communication Style
+- Prefers concise, technical answers
+- Wants code examples
+- Appreciates keyboard shortcuts
+"#;
+
+        self.add_document(
+            "Tech Savvy Early Adopter",
+            ContextType::Persona,
+            persona_content,
+            "General persona for technical users",
+            vec![
+                "persona".to_string(),
+                "beta".to_string(),
+                "technical".to_string(),
+            ],
+        )?;
+
+        // Generic capabilities (without internal project details)
+        let capabilities_content = r#"# Little Helper - Capabilities Guide
+
+## Core Modes
+
+**Fix Mode**: System diagnostics, troubleshooting, file organization
+**Research Mode**: Deep research with web search and citations  
+**Data Mode**: CSV analysis, data visualization, file conversion
+**Content Mode**: Writing assistance, templates, content creation
+
+## Key Features
+- Local AI processing (privacy-first)
+- Command approval workflow (safety)
+- Multiple AI providers (flexibility)
+- Built-in file viewers
+
+## Getting Started
+Try: "Find my recent downloads" or "Help me organize this folder"
+"#;
+
+        self.add_document(
+            "Little Helper Capabilities",
+            ContextType::Research,
+            capabilities_content,
+            "Overview of features and capabilities",
+            vec!["reference".to_string(), "capabilities".to_string()],
+        )?;
+
+        // Generic templates
+        let template_content = r#"# Template: Weekly Status Update
+
+## Format
+
+### What I Worked On
+- [Task]: [Description]
+  - [Accomplishment]
+
+### Key Wins
+1. [Achievement]
+
+### Blockers
+- [Issue]: [Status]
+
+### Next Week
+1. [Priority]
+
+## Tips
+Keep it concise - 2-3 minute read time.
+Focus on outcomes, not just activities.
+"#;
+
+        self.add_document(
+            "Weekly Status Update",
+            ContextType::Template,
+            template_content,
+            "Template for weekly status reports",
+            vec![
+                "template".to_string(),
+                "status".to_string(),
+                "weekly".to_string(),
+            ],
+        )?;
+
+        // Generic skills
+        let skill_content = r#"# Effective Prompting Guide
+
+## The CO-STAR Framework
+- **Context**: Background information
+- **Objective**: What you want
+- **Style**: Tone and format
+- **Tone**: Personality
+- **Audience**: Who it's for
+- **Response**: Output format
+
+## Tips
+1. Be specific
+2. Provide examples
+3. Iterate
+4. Specify length
+5. Ask for alternatives
+
+## Example
+Good: "Write a project status email. Tone: professional. Include: completed tasks, blockers, next steps."
+"#;
+
+        self.add_document(
+            "Effective Prompting Guide",
+            ContextType::Skill,
+            skill_content,
+            "How to write effective prompts",
+            vec!["skill".to_string(), "prompting".to_string()],
+        )?;
+
+        Ok(())
+    }
+
+    /// Setup for PUBLIC RELEASES
+    ///
+    /// This version includes only generic, non-project-specific documents
+    /// suitable for general users. Use this for any public distribution.
+    fn setup_public_package(&mut self) -> Result<()> {
+        // Generic help documentation suitable for all users
+        let prompting_content = r#"# Effective Prompting Guide
+
+## The CO-STAR Framework
+
+### Context (C)
+Provide background information
+- "I'm working on a Rust project..."
+- "This is for a technical audience..."
+
+### Objective (O)
+Be specific about what you want
+- Weak: "Help with code"
+- Strong: "Refactor this function to use Result instead of unwrap"
+
+### Style (S)
+Specify the tone and format
+- "Explain like I'm 5"
+- "Technical documentation style"
+
+### Tone (T)
+Set the personality
+- "Professional but friendly"
+- "Direct and concise"
+
+### Audience (A)
+Who is the output for?
+- "Non-technical manager"
+- "Senior developer"
+
+### Response (R)
+Specify output format
+- "Code only, no explanation"
+- "Include examples"
+
+## Tips for Better Results
+
+1. **Be specific**: Include numbers, dates, file paths
+2. **Provide examples**: "Like this: [example]"
+3. **Iterate**: Start simple, add constraints
+4. **Specify length**: "In 3 bullet points"
+5. **Ask for alternatives**: "Give me 3 different approaches"
+
+## What to Avoid
+
+- Vague requests: "Do something with this"
+- Multiple tasks per prompt
+- Assuming knowledge
+- No constraints
+"#;
+
+        self.add_document(
+            "Effective Prompting Guide",
+            ContextType::Skill,
+            prompting_content,
+            "How to write effective prompts for better AI responses",
+            vec![
+                "skill".to_string(),
+                "prompting".to_string(),
+                "tips".to_string(),
+            ],
+        )?;
+
+        // Generic file organization guide
+        let organization_content = r#"# File Organization Best Practices
+
+## The PARA Method
+
+**Projects**: Active work with clear goals
+**Areas**: Ongoing responsibilities
+**Resources**: Reference material
+**Archives**: Completed/outdated items
+
+## Naming Conventions
+
+**Dates**: YYYY-MM-DD-project-name.md
+**Versions**: filename_v1.md, filename_v2.md
+**Status**: DRAFT_, REVIEW_, FINAL_
+
+## Quick Tips
+
+1. Process inbox daily
+2. Each file in exactly one location
+3. Use descriptive names
+4. Archive completed items weekly
+5. Keep backups in cloud storage
+"#;
+
+        self.add_document(
+            "File Organization Guide",
+            ContextType::Reference,
+            organization_content,
+            "Best practices for organizing files and folders",
+            vec!["reference".to_string(), "organization".to_string()],
         )?;
 
         Ok(())
