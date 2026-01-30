@@ -1,13 +1,10 @@
-use agent_host::{AgentHost, CommandResult};
+use agent_host::CommandResult;
 use eframe::egui;
 use parking_lot::Mutex;
-use services::web_preview::WebPreviewService;
-use shared::agent_api::ChatMessage as ApiChatMessage;
-use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 
 // Default mascot image (boss's dog!)
@@ -28,7 +25,6 @@ mod preview_panel;
 
 // Campaign context loader
 mod context;
-pub use context::{get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas};
 
 // Types module - core type definitions
 mod types;
@@ -39,6 +35,7 @@ mod utils;
 pub use utils::*;
 
 mod state;
+pub use state::*;
 
 /// Extract file paths from text
 fn extract_paths(text: &str, allowed_dirs: &[String]) -> Vec<PathBuf> {
