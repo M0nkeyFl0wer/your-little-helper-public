@@ -3,7 +3,7 @@
 //! This module contains all the main type definitions used throughout the app,
 //! including result types, screen states, chat types, and the main AppState.
 
-use agent_host::{AgentHost, CommandResult};
+use agent_host::{classify_command, execute_with_sudo, AgentHost, CommandResult, DangerLevel};
 use eframe::egui;
 use services::web_preview::WebPreviewService;
 use shared::agent_api::ChatMessage as ApiChatMessage;
@@ -11,7 +11,7 @@ use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewConte
 use shared::settings::AppSettings;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 
 use crate::context::{
@@ -141,6 +141,11 @@ pub struct AppState {
     // Pending command approvals
     pub pending_commands: Vec<String>,
 
+    // Sudo password handling
+    pub password_dialog: crate::modals::PasswordDialog,
+    /// Command waiting for sudo password
+    pub pending_sudo_command: Option<String>,
+
     // Background command execution channel
     pub command_result_rx: Option<Receiver<CommandExecResult>>,
 
@@ -229,6 +234,8 @@ impl Default for AppState {
             pending_preview: None,
             onboarding_name: String::new(),
             pending_commands: Vec::new(),
+            password_dialog: crate::modals::PasswordDialog::new("sudo_password"),
+            pending_sudo_command: None,
             command_result_rx: None,
             mascot_texture: None,
             mascot_loaded: false,
@@ -506,6 +513,18 @@ impl AppState {
             return;
         }
 
+        // Check if command needs sudo
+        let danger_level = classify_command(&command);
+        if danger_level == DangerLevel::NeedsSudo {
+            // Show password dialog
+            self.password_dialog.open_with_message(format!(
+                "Command '{}' requires administrator privileges.\n\nEnter your password:",
+                command
+            ));
+            self.pending_sudo_command = Some(command);
+            return;
+        }
+
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
         self.is_thinking = true;
@@ -513,6 +532,27 @@ impl AppState {
 
         std::thread::spawn(move || {
             let output = run_user_command(&command);
+            let _ = tx.send(CommandExecResult { command, output });
+        });
+    }
+
+    /// Execute a sudo command with the provided password
+    pub fn execute_sudo_command(&mut self, command: String, password: String) {
+        let (tx, rx) = channel::<CommandExecResult>();
+        self.command_result_rx = Some(rx);
+        self.is_thinking = true;
+        self.thinking_status = format!("Running {} (with privileges)", command);
+        self.pending_sudo_command = None;
+
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new();
+            let output = match runtime {
+                Ok(rt) => rt.block_on(async {
+                    execute_with_sudo(&command, &password, 60).await
+                        .map_err(|e| e.to_string())
+                }),
+                Err(e) => Err(format!("Failed to create runtime: {}", e)),
+            };
             let _ = tx.send(CommandExecResult { command, output });
         });
     }
