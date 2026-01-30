@@ -282,6 +282,7 @@ impl eframe::App for LittleHelperApp {
                 ChatMode::Research => shared::skill::Mode::Research,
                 ChatMode::Data => shared::skill::Mode::Data,
                 ChatMode::Content => shared::skill::Mode::Content,
+                ChatMode::Build => shared::skill::Mode::Build,
             };
             
             // Get available skills for this mode and show them in preview
@@ -363,11 +364,12 @@ impl eframe::App for LittleHelperApp {
 
                     ui.add_space(32.0);
 
-                    // Mode buttons (4 tabs: Fix, Research, Data, Content)
+                    // Mode buttons
                     mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode);
                     mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode);
                     mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode);
                     mode_button(ui, "Content", ChatMode::Content, &mut s.current_mode);
+                    mode_button(ui, "Build", ChatMode::Build, &mut s.current_mode);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
@@ -719,6 +721,11 @@ impl eframe::App for LittleHelperApp {
                 let mut clicked_path: Option<PathBuf> = None;
                 let mut slack_msg: Option<String> = None;
 
+                if s.current_mode == ChatMode::Build {
+                    render_build_panel(s, ui, dark);
+                    ui.add_space(12.0);
+                }
+
                 // Get current mode's chat history (clone to avoid borrow issues)
                 let current_mode = s.current_mode;
                 let chat_history: Vec<ChatMessage> = s.mode_chat_histories
@@ -841,6 +848,7 @@ impl eframe::App for LittleHelperApp {
                         ChatMode::Research => "What should I research?",
                         ChatMode::Data => "What data would you like to work with?",
                         ChatMode::Content => "What content would you like to create?",
+                        ChatMode::Build => "What would you like to build?",
                     };
 
                     let response = ui.add_sized(
@@ -1072,7 +1080,53 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
 
                     ui.heading(
-                        egui::RichText::new("Allowed Directories")
+                        egui::RichText::new("Build Tools")
+                            .color(if dark {
+                                egui::Color32::from_rgb(220, 220, 230)
+                            } else {
+                                egui::Color32::from_rgb(40, 40, 50)
+                            }),
+                    );
+                    ui.label(
+                        egui::RichText::new("Set up Spec Kit so Build Helper can create and run specs without the terminal.")
+                            .color(if dark {
+                                egui::Color32::from_rgb(180, 180, 190)
+                            } else {
+                                egui::Color32::from_rgb(80, 80, 90)
+                            }),
+                    );
+                    ui.add_space(6.0);
+
+                    ui.label(egui::RichText::new("Spec Kit path").size(11.0));
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut s.spec_kit_path_input);
+                        if ui.button("Use default").clicked() {
+                            if let Some(home) = dirs::home_dir() {
+                                s.spec_kit_path_input = home
+                                    .join("Projects/spec-kit-assistant/spec-assistant.js")
+                                    .to_string_lossy()
+                                    .to_string();
+                            }
+                        }
+                        if ui.button("Save").clicked() {
+                            let trimmed = s.spec_kit_path_input.trim();
+                            if trimmed.is_empty() {
+                                s.settings.build.spec_kit_path = None;
+                            } else {
+                                s.settings.build.spec_kit_path = Some(trimmed.to_string());
+                            }
+                            save_settings(&s.settings);
+                            s.settings_status = Some("Saved Build tools settings".to_string());
+                            s.settings_status_is_error = false;
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.heading(
+                        egui::RichText::new("Allowed Folders")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1143,7 +1197,7 @@ impl eframe::App for LittleHelperApp {
                             let input = s.new_allowed_dir.trim();
                             if input.is_empty() {
                                 s.settings_status =
-                                    Some("Enter a directory path before adding.".to_string());
+                                    Some("Enter a folder path before adding.".to_string());
                                 s.settings_status_is_error = true;
                             } else if let Some(normalized) =
                                 normalize_allowed_dir_input(input)
@@ -1155,7 +1209,7 @@ impl eframe::App for LittleHelperApp {
                                     .any(|dir| dir == &path_str)
                                 {
                                     s.settings_status =
-                                        Some("Directory already in allowlist.".to_string());
+                                        Some("Folder already in allowlist.".to_string());
                                     s.settings_status_is_error = true;
                                 } else {
                                     s.settings.allowed_dirs.push(path_str.clone());
@@ -1167,7 +1221,7 @@ impl eframe::App for LittleHelperApp {
                                 s.new_allowed_dir.clear();
                             } else {
                                 s.settings_status =
-                                    Some("Directory must exist on disk.".to_string());
+                                    Some("Folder must exist on disk.".to_string());
                                 s.settings_status_is_error = true;
                             }
                         }
@@ -1334,6 +1388,139 @@ fn send_slack_message_sync(webhook_url: &str, channel: &str, message: &str) -> R
     }
 }
 
+fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
+    let heading_color = if dark {
+        egui::Color32::from_rgb(220, 220, 230)
+    } else {
+        egui::Color32::from_rgb(40, 40, 50)
+    };
+
+    let subtle_color = if dark {
+        egui::Color32::from_rgb(160, 160, 180)
+    } else {
+        egui::Color32::from_rgb(80, 80, 90)
+    };
+
+    let spec_kit_path = s.spec_kit_path();
+    let spec_kit_ready = spec_kit_path.exists();
+
+    egui::Frame::none()
+        .fill(if dark {
+            egui::Color32::from_rgb(35, 35, 42)
+        } else {
+            egui::Color32::from_rgb(245, 247, 250)
+        })
+        .rounding(egui::Rounding::same(10.0))
+        .inner_margin(egui::Margin::same(12.0))
+        .show(ui, |ui| {
+            ui.heading(
+                egui::RichText::new("Build Helper")
+                    .color(heading_color)
+                    .size(16.0),
+            );
+            ui.label(
+                egui::RichText::new("Spec Kit keeps projects organized with specs, plans, and tasks.")
+                    .color(subtle_color)
+                    .size(11.0),
+            );
+
+            ui.add_space(6.0);
+
+            let status_text = if spec_kit_ready {
+                "Spec Kit: Ready"
+            } else {
+                "Spec Kit: Not found"
+            };
+            let status_color = if spec_kit_ready {
+                egui::Color32::from_rgb(100, 180, 100)
+            } else {
+                egui::Color32::from_rgb(220, 140, 60)
+            };
+            ui.label(egui::RichText::new(status_text).color(status_color).size(11.0));
+            ui.label(
+                egui::RichText::new(format!("Path: {}", spec_kit_path.display()))
+                    .color(subtle_color)
+                    .size(10.0),
+            );
+
+            if let Some(status) = &s.build_status {
+                let color = if s.build_status_is_error {
+                    egui::Color32::from_rgb(220, 120, 120)
+                } else {
+                    egui::Color32::from_rgb(100, 180, 100)
+                };
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(status).color(color).size(11.0));
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            ui.label(egui::RichText::new("Project folder").color(subtle_color));
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut s.build_folder_input);
+                if ui.button("Use Home").clicked() {
+                    if let Some(home) = dirs::home_dir() {
+                        s.build_folder_input = home.to_string_lossy().to_string();
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Project name").color(subtle_color));
+            ui.text_edit_singleline(&mut s.build_project_name_input);
+
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Spec name (optional)").color(subtle_color));
+            ui.text_edit_singleline(&mut s.build_spec_name_input);
+
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("What should we build?").color(subtle_color));
+            ui.text_edit_singleline(&mut s.build_description_input);
+
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("Start Project").clicked() {
+                    let name = s.build_project_name_input.trim();
+                    if name.is_empty() {
+                        s.build_status = Some("Please enter a project name.".to_string());
+                        s.build_status_is_error = true;
+                    } else {
+                        s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
+                        save_settings(&s.settings);
+                        s.run_spec_kit_command(vec!["init".to_string(), name.to_string()]);
+                    }
+                }
+
+                if ui.button("Check Project").clicked() {
+                    s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
+                    save_settings(&s.settings);
+                    s.run_spec_kit_command(vec!["check".to_string()]);
+                }
+
+                if ui.button("Run Spec").clicked() {
+                    let description = s.build_description_input.trim();
+                    if description.is_empty() {
+                        s.build_status = Some("Please describe what to build.".to_string());
+                        s.build_status_is_error = true;
+                    } else {
+                        let mut args = vec!["run".to_string(), description.to_string()];
+                        let spec_name = s.build_spec_name_input.trim();
+                        if !spec_name.is_empty() {
+                            args.push("--spec".to_string());
+                            args.push(spec_name.to_string());
+                        }
+                        s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
+                        save_settings(&s.settings);
+                        s.run_spec_kit_command(args);
+                    }
+                }
+            });
+        });
+}
+
 fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut ChatMode) {
     let is_selected = *current == mode;
     let btn = egui::Button::new(egui::RichText::new(label).size(14.0).color(if is_selected {
@@ -1407,6 +1594,15 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                     "I know your campaign personas",
                     "Drafts preview here before saving",
                     "Try: \"write a tweet about healthcare\"",
+                ],
+            ),
+            ChatMode::Build => (
+                "Build Helper",
+                vec![
+                    "Start a new project with Spec Kit",
+                    "Plan and run specs without using a terminal",
+                    "We'll use folders and buttons only",
+                    "Try: \"start a new project\"",
                 ],
             ),
         };
@@ -2093,7 +2289,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ui.add_space(4.0);
                             if ui
                                 .button("Add folder…")
-                                .on_hover_text("Choose a directory Little Helper can access")
+                                .on_hover_text("Choose a folder Little Helper can access")
                                 .clicked()
                             {
                                 if let Some(path) = rfd::FileDialog::new().pick_folder() {

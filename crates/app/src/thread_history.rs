@@ -150,6 +150,7 @@ impl Thread {
             crate::types::ChatMode::Research => "🔬",
             crate::types::ChatMode::Data => "📊",
             crate::types::ChatMode::Content => "✍️",
+            crate::types::ChatMode::Build => "🐶",
         };
 
         let time_str = format_time_ago(self.last_activity);
