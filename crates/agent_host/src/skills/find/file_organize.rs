@@ -9,7 +9,6 @@ use shared::skill::{
     FileAction, FileResult, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput,
     SkillOutput, SuggestedAction,
 };
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::skills::common::SafeFileOps;
@@ -449,20 +448,20 @@ impl Skill for FileOrganize {
 
 /// Extract a file path from a natural language query
 fn extract_file_path_from_query(query: &str) -> Option<String> {
-    // Look for words with file extensions
+    // First, look for quoted paths (handles "my file.doc" with spaces)
+    if let (Some(start), Some(end)) = (query.find('"'), query.rfind('"')) {
+        if end > start {
+            return Some(query[start + 1..end].to_string());
+        }
+    }
+
+    // Then look for words with file extensions
     for word in query.split_whitespace() {
         let clean = word.trim_matches(|c: char| {
             !c.is_alphanumeric() && c != '.' && c != '/' && c != '\\' && c != '_' && c != '-'
         });
         if clean.contains('.') && !clean.starts_with('.') && clean.len() > 2 {
             return Some(clean.to_string());
-        }
-    }
-
-    // Look for quoted paths
-    if let (Some(start), Some(end)) = (query.find('"'), query.rfind('"')) {
-        if end > start {
-            return Some(query[start + 1..end].to_string());
         }
     }
 

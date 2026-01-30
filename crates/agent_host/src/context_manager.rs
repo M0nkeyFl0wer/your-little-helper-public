@@ -15,7 +15,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use shared::skill::Mode;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 /// Types of context documents
@@ -429,7 +429,9 @@ impl ContextManager {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
+    /// use agent_host::context_manager::{ContextManager, DistributionLevel};
+    ///
     /// // For internal team testing
     /// manager.setup_package(DistributionLevel::Internal)?;
     ///

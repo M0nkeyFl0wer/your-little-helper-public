@@ -355,7 +355,7 @@ impl PrivacyAuditor {
     /// Detect Linux privacy permissions
     #[cfg(target_os = "linux")]
     fn detect_linux_privacy(&self) -> Result<Vec<AppPrivacy>> {
-        let mut apps = Vec::new();
+        let apps = Vec::new();
         
         // Linux privacy varies by desktop environment
         // - Flatpak: ~/.local/share/flatpak/db/permissions

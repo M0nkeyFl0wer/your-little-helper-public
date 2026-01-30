@@ -7,7 +7,7 @@
 //! - Escape key cancellation
 
 use super::{Modal, ModalResult};
-use egui::{Align2, Area, Context, Frame, Id, Key, RichText, TextEdit, Vec2};
+use egui::{Align2, Area, Context, Id, Key, RichText, TextEdit, Vec2};
 use zeroize::Zeroizing;
 
 /// Password dialog for sudo/admin commands.
