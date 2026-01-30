@@ -76,7 +76,6 @@ impl Modal for PasswordDialog {
 
         // Semi-transparent background overlay
         Area::new(self.id.with("overlay"))
-            .order(Order::Foreground)
             .anchor(Align2::LEFT_TOP, Vec2::ZERO)
             .show(ctx, |ui| {
                 let screen_rect = ctx.screen_rect();
