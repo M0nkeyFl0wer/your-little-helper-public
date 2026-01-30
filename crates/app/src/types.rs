@@ -397,12 +397,19 @@ impl AppState {
             }
         };
 
-        let mut cmd_parts = vec!["node".to_string(), Self::shell_quote(&spec_kit_path.to_string_lossy())];
+        let mut cmd_parts = vec![
+            "node".to_string(),
+            Self::shell_quote(&spec_kit_path.to_string_lossy()),
+        ];
         for arg in args {
             cmd_parts.push(Self::shell_quote(&arg));
         }
 
-        let command = cmd_parts.join(" ");
+        let command = format!(
+            "cd {} && {}",
+            Self::shell_quote(&folder.to_string_lossy()),
+            cmd_parts.join(" ")
+        );
 
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
