@@ -779,6 +779,118 @@ Good: "Generate 5 tweet variations announcing our beta launch. Style: casual tec
             ],
         )?;
 
+        // Marine Protected Areas Research - Great Bear Sea
+        let mpa_content = r#"# Marine Protected Areas - Great Bear Sea Network
+
+## Overview
+
+The Great Bear Sea MPA Network covers 30,000 square kilometres from northern Vancouver Island to Alaska. It is one of the world's largest Indigenous-co-governed marine protected area networks, designed to protect biodiversity and support thriving coastal communities.
+
+**Core Philosophy**: This is not about locking the ocean away. It is about fostering resourcefulness and resistance in the face of industrial pressure. By allowing life in core areas to flourish unspoiled, we create a powerful engine of renewal that naturally seeds abundance into adjacent fishing grounds.
+
+## Current Status (September 2025)
+
+### Major Milestones
+- **Feb 2023**: Endorsement of Great Bear Sea MPA Network Action Plan by 15 First Nations, Canada & BC
+- **June 2024**: Launch of $335M Project Finance for Permanence (PFP) - global conservation finance model
+- **July 2025**: New 1,450-hectare Wildlife Management Area established in Kishkosh & Kitkiata Inlets
+- **2025 ongoing**: Central Coast NMCAR (~7,800 km²) feasibility completed, moving to establishment negotiations
+
+### Implementation by Category
+
+**Category 1 - Enhanced Protections (By 2025)**
+- Haida Gwaii (Masset Inlet, Skidegate): Complete - WMA + Fisheries Act marine refuge
+- Central Coast (Kitkiata/Kishkosh): Complete - WMA established
+- North Vancouver Island (Heydon, Loughborough): Complete - Marine refuge
+- Central Coast (NMCAR): In progress - ~7,800 km² proposed
+- Haida Gwaii (Offshore): In progress - Oceans Act MPA designation
+
+**Category 2 - Implementation by 2030**
+- Haida Gwaii offshore sites (437, 439)
+- Queen Charlotte Sound zones (510-511)
+- Kiltuish Butedale Profile zones
+
+**Category 3 - Further Work Required**
+- Northern North Coast sub-region
+- North Vancouver Island sub-region
+
+## Key Facts
+
+- **Coverage**: 30% of Great Bear Sea (18.5% existing protected areas + 11.5% new)
+- **First Nations Partners**: 15 Indigenous Nations co-governing
+- **Guardian Teams**: 8 of 15 Nations hiring new Indigenous Guardians (2025)
+- **PFP Investment**: $335 million over 20+ years
+- **Jobs Created**: Expected to support 3,000+ jobs
+- **Species at Risk**: Protection for 84 species
+
+## Major Threats
+
+1. **Jurisdictional Delays**: Complex federal/provincial/Indigenous governance
+2. **Industry Pushback**: Commercial fishing resistance to access restrictions
+3. **Climate Change**: Warming and acidification outpacing management plans
+4. **Shipping/Tankers**: Oil/LNG traffic risks spills and noise pollution
+5. **Funding Gaps**: Long-term Guardian and monitoring funding needs
+6. **Enforcement**: Adequate patrols and compliance monitoring
+
+## Stakeholders
+
+**Indigenous Partners**: 15 First Nations including Gitga'at, Gitxaała, Wuikinuxv, Heiltsuk, Nuxalk, Kitasoo Xai'xais
+
+**Government**: DFO (Fisheries and Oceans Canada), Province of BC
+
+**Industry**: Commercial fishing, aquaculture, shipping, tourism
+
+**ENGOs**: Nature United, Coastal First Nations, various conservation groups
+
+## Project Finance for Permanence (PFP)
+
+PFP is a cutting-edge conservation financing model:
+- **$335M pooled investment** from federal, provincial, philanthropic, and private sources
+- **20+ year commitment** for stewardship, jobs, and governance
+- **3,000+ jobs** in stewardship, restoration, and local businesses
+- **Global model** now being replicated worldwide
+
+Funding streams assigned for:
+- Stewardship (Guardian programs, research, monitoring)
+- Prosperity (community development, local businesses, training)
+- Collaborative planning and action
+
+## Key Links
+
+- [Great Bear Sea Website](https://ourgreatbearsea.ca/)
+- [Coastal First Nations](https://coastalfirstnations.ca/initiatives/great-bear-sea-marine-protected-areas/)
+- [DFO Great Bear Sea](https://www.dfo-mpo.gc.ca/oceans/collaboration/indigenous-led-projects-dirigees-par-autochtones/great-bear-sea-mer-eng.html)
+- [Nature United](https://www.natureunited.ca/newsroom/action-plan-for-great-bear-sea/)
+
+## Why This Matters
+
+The Great Bear Sea MPA Network represents a promise for a future where:
+- The boats are full
+- The communities are strong
+- The ocean's natural bounty remains generous
+- Indigenous stewardship leads conservation
+- Sustainable fishing thrives alongside protection
+
+This is precedent-setting work that balances ecological integrity with economic needs and reconciliation.
+"#;
+
+        self.add_document(
+            "Marine Protected Areas - Great Bear Sea",
+            ContextType::Research,
+            mpa_content,
+            "Comprehensive research on the Great Bear Sea MPA Network implementation, status, and key facts",
+            vec![
+                "research".to_string(),
+                "MPA".to_string(),
+                "marine".to_string(),
+                "conservation".to_string(),
+                "Great Bear Sea".to_string(),
+                "FOPO".to_string(),
+                "British Columbia".to_string(),
+                "Indigenous".to_string(),
+            ],
+        )?;
+
         Ok(())
     }
 
