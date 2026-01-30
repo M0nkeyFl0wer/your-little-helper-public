@@ -366,7 +366,6 @@ fn fuzzy_match_score(query_chars: &[char], target: &str) -> f64 {
     // Try to find the query as a consecutive substring
     if let Some(start_idx) = find_consecutive_match(query_chars, &target_chars) {
         let mut score = 0.0;
-        let end_idx = start_idx + query_chars.len();
 
         // Base score for matching
         score += query_chars.len() as f64;
