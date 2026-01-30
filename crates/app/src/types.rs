@@ -126,10 +126,12 @@ pub struct AppState {
     pub show_thread_history: bool,
     /// Thread history search query
     pub thread_search_query: String,
-    /// Whether the AI is currently thinking/processing
-    pub is_thinking: bool,
-    /// What the agent is currently doing
-    pub thinking_status: String,
+    /// Whether the AI is currently thinking/processing (per mode)
+    pub is_thinking: std::collections::HashMap<ChatMode, bool>,
+    /// What the agent is currently doing (per mode)
+    pub thinking_status: std::collections::HashMap<ChatMode, String>,
+    /// Which mode currently has an active AI request
+    pub thinking_mode: Option<ChatMode>,
     /// Available for future agentic features
     #[allow(dead_code)]
     pub agent_host: agent_host::AgentHost,
@@ -181,6 +183,11 @@ pub struct AppState {
     pub new_allowed_dir: String,
     pub settings_status: Option<String>,
     pub settings_status_is_error: bool,
+    
+    // API key input fields (temporary storage for settings dialog)
+    pub openai_api_key_input: String,
+    pub anthropic_api_key_input: String,
+    pub gemini_api_key_input: String,
 }
 
 impl Default for AppState {
@@ -241,8 +248,23 @@ impl Default for AppState {
             current_thread_id: None,
             show_thread_history: false,
             thread_search_query: String::new(),
-            is_thinking: false,
-            thinking_status: String::new(),
+            is_thinking: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(ChatMode::Fix, false);
+                m.insert(ChatMode::Research, false);
+                m.insert(ChatMode::Data, false);
+                m.insert(ChatMode::Content, false);
+                m
+            },
+            thinking_status: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(ChatMode::Fix, String::new());
+                m.insert(ChatMode::Research, String::new());
+                m.insert(ChatMode::Data, String::new());
+                m.insert(ChatMode::Content, String::new());
+                m
+            },
+            thinking_mode: None,
             agent_host: AgentHost::new(settings.clone()),
             context_manager: agent_host::context_manager::ContextManager::new(
                 agent_host::context_manager::ContextManager::default_dir()
@@ -274,6 +296,9 @@ impl Default for AppState {
             new_allowed_dir: String::new(),
             settings_status: None,
             settings_status_is_error: false,
+            openai_api_key_input: String::new(),
+            anthropic_api_key_input: String::new(),
+            gemini_api_key_input: String::new(),
         }
     }
 }
@@ -308,8 +333,12 @@ impl AppState {
         if let Some(rx) = &self.ai_result_rx {
             // Non-blocking check for result
             if let Ok(result) = rx.try_recv() {
-                self.is_thinking = false;
-                self.thinking_status.clear();
+                // Clear thinking state for the mode that was processing
+                if let Some(mode) = self.thinking_mode {
+                    self.is_thinking.insert(mode, false);
+                    self.thinking_status.insert(mode, String::new());
+                }
+                self.thinking_mode = None;
                 self.ai_result_rx = None;
 
                 // Return to welcome view (unless Rick Roll is showing)
@@ -420,8 +449,12 @@ impl AppState {
         if let Some(rx) = &self.command_result_rx {
             if let Ok(result) = rx.try_recv() {
                 self.command_result_rx = None;
-                self.is_thinking = false;
-                self.thinking_status.clear();
+                // Clear thinking state for the mode that was processing
+                if let Some(mode) = self.thinking_mode {
+                    self.is_thinking.insert(mode, false);
+                    self.thinking_status.insert(mode, String::new());
+                }
+                self.thinking_mode = None;
 
                 match result.output {
                     Ok(cmd_result) => {
@@ -532,8 +565,9 @@ impl AppState {
                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
             });
             self.command_result_rx = None;
-            self.is_thinking = false;
-            self.thinking_status.clear();
+            // Clear thinking for current mode
+            self.is_thinking.insert(self.current_mode, false);
+            self.thinking_status.insert(self.current_mode, String::new());
             return;
         }
 
@@ -551,8 +585,10 @@ impl AppState {
 
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
-        self.is_thinking = true;
-        self.thinking_status = format!("Running {}", command);
+        // Set thinking for current mode
+        self.thinking_mode = Some(self.current_mode);
+        self.is_thinking.insert(self.current_mode, true);
+        self.thinking_status.insert(self.current_mode, format!("Running {}", command));
 
         std::thread::spawn(move || {
             let output = run_user_command(&command);
@@ -564,8 +600,10 @@ impl AppState {
     pub fn execute_sudo_command(&mut self, command: String, password: String) {
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
-        self.is_thinking = true;
-        self.thinking_status = format!("Running {} (with privileges)", command);
+        // Set thinking for current mode
+        self.thinking_mode = Some(self.current_mode);
+        self.is_thinking.insert(self.current_mode, true);
+        self.thinking_status.insert(self.current_mode, format!("Running {} (with privileges)", command));
         self.pending_sudo_command = None;
 
         std::thread::spawn(move || {
@@ -644,10 +682,11 @@ impl AppState {
         };
         self.push_chat(user_msg);
 
-        // Clear input and show thinking state
+        // Clear input and show thinking state for current mode
         let _query = self.input_text.clone();
         self.input_text.clear();
-        self.is_thinking = true;
+        self.thinking_mode = Some(self.current_mode);
+        self.is_thinking.insert(self.current_mode, true);
 
         // Show Matrix animation while processing (unless Rick Roll is showing)
         if !matches!(self.active_viewer, ActiveViewer::RickRoll) {
@@ -975,7 +1014,10 @@ ALWAYS:
     ) {
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
-        self.thinking_status = "Thinking...".to_string();
+        // Set thinking status for the mode that initiated the request
+        if let Some(mode) = self.thinking_mode {
+            self.thinking_status.insert(mode, "Thinking...".to_string());
+        }
 
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
