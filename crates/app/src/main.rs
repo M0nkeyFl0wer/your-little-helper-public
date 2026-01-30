@@ -23,6 +23,7 @@ mod ascii_art;
 mod modals;
 mod onboarding;
 mod preview_panel;
+mod thread_history;
 
 // Campaign context loader
 mod context;
