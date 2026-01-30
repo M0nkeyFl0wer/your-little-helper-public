@@ -53,6 +53,14 @@ mod preview_panel;
 mod context;
 use context::{get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas};
 
+// Types module - core type definitions
+mod types;
+pub use types::*;
+
+// Utils module - helper functions
+mod utils;
+pub use utils::*;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
     Onboarding,
