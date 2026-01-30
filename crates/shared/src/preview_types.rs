@@ -103,6 +103,8 @@ pub enum PreviewContent {
         mode: String,
         skills: Vec<SkillPreviewInfo>,
     },
+    /// Helpful tip
+    Tip { title: String, message: String },
 }
 
 /// Source for an image to display
