@@ -38,48 +38,6 @@ pub use types::*;
 mod utils;
 pub use utils::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AppScreen {
-    Onboarding,
-    Chat,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum ChatMode {
-    Fix,      // Tech support - diagnose and fix problems
-    Research, // Deep research with citations
-    Data,     // Work with data and files
-    Content,  // Content creation with personas
-}
-
-impl ChatMode {
-    /// Get the mode name as a string for the agent system
-    fn as_str(&self) -> &'static str {
-        match self {
-            ChatMode::Fix => "fix",
-            ChatMode::Research => "research",
-            ChatMode::Data => "data",
-            ChatMode::Content => "content",
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ChatMessage {
-    role: String, // "user" or "assistant"
-    content: String,
-    #[allow(dead_code)] // Will be used for chat history display
-    timestamp: String,
-}
-
-/// Active viewer in the preview panel
-enum ActiveViewer {
-    Panel,                         // Default preview panel content (mode intro, files, etc)
-    Matrix,                        // Matrix rain animation while processing
-    RickRoll,                      // Easter egg!
-    CommandOutput(String, String), // (command, output) for showing command results
-}
-
 struct AppState {
     settings: AppSettings,
     current_screen: AppScreen,
