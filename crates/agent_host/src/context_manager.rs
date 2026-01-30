@@ -1175,6 +1175,124 @@ Specify output format
             vec!["reference".to_string(), "organization".to_string()],
         )?;
 
+        // Generic personas for public release - useful for any user
+        let general_user_persona = r#"# General User Persona
+
+## Profile
+- **Role**: Everyday computer user
+- **Tech Comfort**: Moderate
+- **Primary Use**: Productivity, organization, getting things done
+
+## Goals
+- Save time on routine tasks
+- Stay organized
+- Get quick answers without searching
+- Reduce digital clutter
+
+## Communication Preferences
+- Clear, straightforward explanations
+- Step-by-step instructions when needed
+- Practical examples
+- No unnecessary jargon
+
+## Common Tasks
+- Finding and organizing files
+- Writing emails and documents
+- Researching topics quickly
+- Managing schedules and tasks
+- Troubleshooting basic tech issues
+"#;
+
+        self.add_document(
+            "General User",
+            ContextType::Persona,
+            general_user_persona,
+            "Default persona for everyday productivity tasks",
+            vec![
+                "persona".to_string(),
+                "general".to_string(),
+                "default".to_string(),
+            ],
+        )?;
+
+        let creative_persona = r#"# Creative Professional Persona
+
+## Profile
+- **Role**: Writer, designer, marketer, or content creator
+- **Tech Comfort**: Moderate to high
+- **Primary Use**: Content creation, ideation, editing
+
+## Goals
+- Generate creative ideas quickly
+- Polish and refine content
+- Maintain consistent voice and style
+- Meet deadlines efficiently
+
+## Communication Preferences
+- Creative, inspiring tone
+- Constructive feedback
+- Alternative suggestions
+- Collaborative brainstorming
+
+## Common Tasks
+- Writing articles, emails, social posts
+- Brainstorming campaign ideas
+- Editing and proofreading
+- Creating templates
+- Researching trends and topics
+"#;
+
+        self.add_document(
+            "Creative Professional",
+            ContextType::Persona,
+            creative_persona,
+            "Persona for content creation and creative work",
+            vec![
+                "persona".to_string(),
+                "creative".to_string(),
+                "writing".to_string(),
+            ],
+        )?;
+
+        let tech_persona = r#"# Technical User Persona
+
+## Profile
+- **Role**: Developer, IT professional, or tech enthusiast
+- **Tech Comfort**: High
+- **Primary Use**: Automation, system management, development
+
+## Goals
+- Automate repetitive tasks
+- Troubleshoot technical issues
+- Stay in flow state
+- Work efficiently with code and systems
+
+## Communication Preferences
+- Concise, technical answers
+- Code examples and commands
+- Direct solutions
+- Keyboard shortcuts and automation
+
+## Common Tasks
+- Writing and debugging code
+- System administration
+- File and data processing
+- Researching technical topics
+- Creating scripts and tools
+"#;
+
+        self.add_document(
+            "Technical User",
+            ContextType::Persona,
+            tech_persona,
+            "Persona for technical and development work",
+            vec![
+                "persona".to_string(),
+                "technical".to_string(),
+                "developer".to_string(),
+            ],
+        )?;
+
         Ok(())
     }
 
