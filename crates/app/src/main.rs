@@ -388,12 +388,18 @@ impl eframe::App for LittleHelperApp {
 
                     ui.add_space(32.0);
 
-                    // Mode buttons
-                    mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode);
-                    mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode);
-                    mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode);
-                    mode_button(ui, "Content", ChatMode::Content, &mut s.current_mode);
-                    mode_button(ui, "Build", ChatMode::Build, &mut s.current_mode);
+                    // Mode buttons - check processing states first to avoid borrow issues
+                    let fix_processing = s.is_thinking.get(&ChatMode::Fix).copied().unwrap_or(false);
+                    let research_processing = s.is_thinking.get(&ChatMode::Research).copied().unwrap_or(false);
+                    let data_processing = s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
+                    let content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
+                    let build_processing = s.is_thinking.get(&ChatMode::Build).copied().unwrap_or(false);
+                    
+                    mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode, fix_processing);
+                    mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode, research_processing);
+                    mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode, data_processing);
+                    mode_button(ui, "Content", ChatMode::Content, &mut s.current_mode, content_processing);
+                    mode_button(ui, "Build", ChatMode::Build, &mut s.current_mode, build_processing);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
@@ -566,7 +572,14 @@ impl eframe::App for LittleHelperApp {
                             ActiveViewer::CommandOutput(cmd, _) => {
                                 format!("Output: {}", cmd.chars().take(30).collect::<String>())
                             }
-                            ActiveViewer::Matrix => "Processing...".to_string(),
+                            ActiveViewer::Matrix => {
+                                // Only show "Processing..." if current mode is the one processing
+                                if s.thinking_mode == Some(s.current_mode.clone()) {
+                                    "Processing...".to_string()
+                                } else {
+                                    "Preview Panel".to_string()
+                                }
+                            }
                             ActiveViewer::RickRoll => "Never Gonna Give You Up".to_string(),
                         };
 
@@ -770,6 +783,59 @@ impl eframe::App for LittleHelperApp {
                 if s.current_mode == ChatMode::Build {
                     render_build_panel(&mut *s, ui, dark);
                     ui.add_space(12.0);
+                }
+
+                // Handover notification: show if another mode is processing
+                if let Some(thinking_mode) = s.thinking_mode {
+                    if thinking_mode != s.current_mode && s.is_thinking.get(&thinking_mode).copied().unwrap_or(false) {
+                        let mode_name = match thinking_mode {
+                            ChatMode::Fix => "Fix Helper",
+                            ChatMode::Research => "Research Helper",
+                            ChatMode::Data => "Data Helper",
+                            ChatMode::Content => "Content Helper",
+                            ChatMode::Build => "Build Helper",
+                        };
+                        let elapsed = s.thinking_started_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+                        let time_str = if elapsed < 60 {
+                            format!("{}s", elapsed)
+                        } else {
+                            format!("{}m {}s", elapsed / 60, elapsed % 60)
+                        };
+                        
+                        egui::Frame::none()
+                            .fill(if dark {
+                                egui::Color32::from_rgb(45, 45, 55)
+                            } else {
+                                egui::Color32::from_rgb(240, 240, 245)
+                            })
+                            .rounding(egui::Rounding::same(8.0))
+                            .inner_margin(egui::Margin::same(10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("⏳ {} is still working... ({})", mode_name, time_str))
+                                            .size(13.0)
+                                            .color(if dark {
+                                                egui::Color32::from_rgb(180, 180, 200)
+                                            } else {
+                                                egui::Color32::from_rgb(80, 80, 100)
+                                            }),
+                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.button("Stop it").clicked() {
+                                            // Cancel the operation by clearing thinking state
+                                            s.is_thinking.insert(thinking_mode, false);
+                                            s.thinking_status.insert(thinking_mode, String::new());
+                                            s.thinking_mode = None;
+                                            s.thinking_started_at = None;
+                                            s.ai_result_rx = None;
+                                            s.command_result_rx = None;
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(8.0);
+                    }
                 }
 
                 // Get current mode's chat history (clone to avoid borrow issues)
@@ -1566,13 +1632,33 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
         });
 }
 
-fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut ChatMode) {
+fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut ChatMode, is_processing: bool) {
     let is_selected = *current == mode;
-    let btn = egui::Button::new(egui::RichText::new(label).size(14.0).color(if is_selected {
+    
+    // Build label with processing indicator
+    let label_text = if is_processing && !is_selected {
+        // Pulsing dot effect based on time
+        let time = ui.ctx().input(|i| i.time);
+        let pulse = ((time * 4.0).sin() + 1.0) / 2.0; // 0.0 to 1.0
+        let alpha = (128.0 + pulse * 127.0) as u8; // 128-255 range
+        format!("{} ●", label)
+    } else {
+        label.to_string()
+    };
+    
+    let text_color = if is_selected {
         egui::Color32::WHITE
+    } else if is_processing {
+        // Pulsing color for processing indicator
+        let time = ui.ctx().input(|i| i.time);
+        let pulse = ((time * 4.0).sin() + 1.0) / 2.0;
+        let alpha = (128.0 + pulse * 127.0) as u8;
+        egui::Color32::from_rgba_unmultiplied(100, 200, 255, alpha)
     } else {
         egui::Color32::from_rgb(70, 70, 90)
-    }))
+    };
+    
+    let btn = egui::Button::new(egui::RichText::new(label_text).size(14.0).color(text_color))
     .fill(if is_selected {
         egui::Color32::from_rgb(70, 130, 180)
     } else {
