@@ -6,6 +6,129 @@
 use agent_host::CommandResult;
 use shared::settings::AppSettings;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+
+fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
+    // Allow pipes and simple redirects, but block multi-command chaining and substitution.
+    // This prevents common shell-injection vectors when commands are executed via a shell.
+    //
+    // Forbidden (outside quotes): ; && || ` $( ) <<
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev = '\0';
+    let mut chars = command.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Skip escaped char
+            let _ = chars.next();
+            prev = c;
+            continue;
+        }
+        if !in_double && c == '\'' {
+            in_single = !in_single;
+            prev = c;
+            continue;
+        }
+        if !in_single && c == '"' {
+            in_double = !in_double;
+            prev = c;
+            continue;
+        }
+
+        if in_single || in_double {
+            prev = c;
+            continue;
+        }
+
+        // Multi-command chaining
+        if c == ';' {
+            return Some(";");
+        }
+        if c == '&' {
+            if chars.peek().copied() == Some('&') {
+                return Some("&&");
+            }
+            // Allow 2>&1 only
+            if prev.is_ascii_digit() && chars.peek().copied() == Some('>') {
+                // ok
+            } else {
+                return Some("&");
+            }
+        }
+        if c == '|' {
+            if chars.peek().copied() == Some('|') {
+                return Some("||");
+            }
+        }
+        // Substitution / heredocs
+        if c == '`' {
+            return Some("`");
+        }
+        if c == '$' {
+            if chars.peek().copied() == Some('(') {
+                return Some("$()");
+            }
+        }
+        if c == '<' {
+            if chars.peek().copied() == Some('<') {
+                return Some("<<");
+            }
+        }
+
+        prev = c;
+    }
+
+    None
+}
+
+fn strip_glob_prefix(path: &str) -> &str {
+    let wildcard_pos = path
+        .find(|c| matches!(c, '*' | '?' | '[' | ']'))
+        .unwrap_or(path.len());
+    if wildcard_pos == path.len() {
+        return path;
+    }
+
+    // Trim to the last separator before the wildcard
+    let prefix = &path[..wildcard_pos];
+    let sep_pos = prefix.rfind(|c| c == '/' || c == '\\').unwrap_or(0);
+    if sep_pos == 0 {
+        prefix
+    } else {
+        &prefix[..sep_pos]
+    }
+}
+
+fn normalize_windows_env_vars(s: &str) -> String {
+    // Best-effort expansion for common Windows env vars used in example commands.
+    let mut out = s.to_string();
+    if out.contains("%USERNAME%") {
+        if let Ok(user) = std::env::var("USERNAME") {
+            out = out.replace("%USERNAME%", &user);
+        }
+    }
+    out
+}
+
+fn is_sensitive_path(path: &Path) -> bool {
+    let s = path.to_string_lossy().to_lowercase();
+    // Credentials and secrets commonly stored here.
+    s.contains("/.ssh/")
+        || s.contains("\\\\.ssh\\\\")
+        || s.contains("/.aws/")
+        || s.contains("\\\\.aws\\\\")
+        || s.contains("/.gnupg/")
+        || s.contains("\\\\.gnupg\\\\")
+        || s.contains("/library/keychains")
+        || s.contains("\\\\library\\\\keychains")
+        || s.ends_with("/.npmrc")
+        || s.ends_with("\\\\.npmrc")
+        || s.ends_with("/.env")
+        || s.ends_with("\\\\.env")
+}
 
 /// Expand a path string that may start with ~ to the full home directory path
 pub fn expand_user_path(path_str: &str) -> PathBuf {
@@ -152,12 +275,57 @@ pub fn validate_command_against_allowed(
     command: &str,
     allowed_dirs: &[String],
 ) -> Result<(), String> {
-    // Extract any paths from the command
-    for word in command.split_whitespace() {
-        let path = expand_user_path(word);
-        if path.exists() && !is_path_in_allowed_dirs(&path, allowed_dirs) {
-            return Err(format!("Path '{}' is outside allowed directories", word));
+    if allowed_dirs.is_empty() {
+        return Err("No folders are allowed. Add one in Settings first.".to_string());
+    }
+
+    if let Some(op) = contains_forbidden_shell_ops(command) {
+        return Err(format!(
+            "This command includes a blocked shell feature ({}). Please run one step at a time.",
+            op
+        ));
+    }
+
+    // Block environment dumps (high risk for accidental secret exposure)
+    let cmd_trim = command.trim().to_lowercase();
+    if cmd_trim == "env" || cmd_trim.starts_with("env ") || cmd_trim == "printenv" {
+        return Err("For privacy, printing all environment variables is blocked.".to_string());
+    }
+
+    let regex = COMMAND_PATH_REGEX.get_or_init(|| {
+        regex::Regex::new(r#"(?P<path>(?:~|/|\./|\.\./|[A-Za-z]:\\)[^\s"'`]+)"#).unwrap()
+    });
+
+    for capture in regex.captures_iter(command) {
+        if let Some(path_match) = capture.name("path") {
+            let raw = path_match.as_str();
+            let raw = normalize_windows_env_vars(raw);
+            let raw = strip_glob_prefix(raw.as_str());
+            let candidate = expand_user_path(raw);
+
+            // Sensitive locations are blocked by default.
+            if is_sensitive_path(&candidate) {
+                return Err(format!(
+                    "This command touches a sensitive path (`{}`). For safety, Little Helper blocks this by default.",
+                    raw
+                ));
+            }
+
+            // If the path doesn't exist (e.g. redirect target), validate its parent.
+            let to_check = if candidate.exists() {
+                candidate
+            } else {
+                candidate
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or(candidate)
+            };
+
+            if !is_path_in_allowed_dirs(&to_check, allowed_dirs) {
+                return Err(format!("Path `{}` is outside the allowed folders.", raw));
+            }
         }
     }
+
     Ok(())
 }

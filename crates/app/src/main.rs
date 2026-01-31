@@ -2623,28 +2623,4 @@ fn normalize_allowed_dir_input(input: &str) -> Option<PathBuf> {
     absolute.canonicalize().ok().or(Some(absolute))
 }
 
-static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
-
-fn validate_command_against_allowed(command: &str, allowed_dirs: &[String]) -> Result<(), String> {
-    if allowed_dirs.is_empty() {
-        return Err("No folders are allowed. Add one in Settings first.".to_string());
-    }
-
-    let regex = COMMAND_PATH_REGEX
-        .get_or_init(|| regex::Regex::new(r#"(?P<path>(?:~|/|[A-Za-z]:\\)[^\s"'`]+)"#).unwrap());
-
-    for capture in regex.captures_iter(command) {
-        if let Some(path_match) = capture.name("path") {
-            let raw = path_match.as_str();
-            let candidate = expand_user_path(raw);
-            if !is_path_in_allowed_dirs(&candidate, allowed_dirs) {
-                return Err(format!(
-                    "Path `{}` is outside the allowed folders.",
-                    raw
-                ));
-            }
-        }
-    }
-
-    Ok(())
-}
+// Command validation lives in crates/app/src/utils.rs
