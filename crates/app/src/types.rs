@@ -13,8 +13,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures::future::AbortHandle;
+use sysinfo::System;
 
 use crate::context::{
     get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas,
@@ -213,6 +215,17 @@ pub struct AppState {
     pub build_description_input: String,
     pub build_status: Option<String>,
     pub build_status_is_error: bool,
+
+    // Session usage (approx)
+    pub session_input_tokens_est: u64,
+    pub session_output_tokens_est: u64,
+    pub last_prompt_tokens_est: u32,
+    pub last_response_tokens_est: u32,
+
+    // Settings stats cache
+    pub settings_perf_last_update: Option<Instant>,
+    pub settings_cpu_percent: f32,
+    pub settings_mem_mb: u64,
 }
 
 impl Default for AppState {
@@ -348,11 +361,114 @@ impl Default for AppState {
             build_description_input: String::new(),
             build_status: None,
             build_status_is_error: false,
+
+            session_input_tokens_est: 0,
+            session_output_tokens_est: 0,
+            last_prompt_tokens_est: 0,
+            last_response_tokens_est: 0,
+            settings_perf_last_update: None,
+            settings_cpu_percent: 0.0,
+            settings_mem_mb: 0,
         }
     }
 }
 
 impl AppState {
+    fn estimate_tokens(text: &str) -> u32 {
+        // Rough heuristic: ~4 chars per token for English.
+        (text.chars().count() as u32).saturating_div(4).max(1)
+    }
+
+    pub fn model_context_hint_tokens(&self) -> u32 {
+        // Very rough context limits for display only.
+        // We use a smaller "comfort" window for stable performance.
+        let provider = self
+            .settings
+            .model
+            .provider_preference
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+
+        let model = match provider {
+            "openai" => self.settings.model.openai_model.as_str(),
+            "anthropic" => self.settings.model.anthropic_model.as_str(),
+            "gemini" => self.settings.model.gemini_model.as_str(),
+            _ => self.settings.model.local_model.as_str(),
+        };
+        let m = model.to_lowercase();
+
+        if provider == "gemini" && m.contains("1.5") {
+            1_000_000
+        } else if provider == "anthropic" {
+            200_000
+        } else if provider == "openai" {
+            128_000
+        } else {
+            8_192
+        }
+    }
+
+    fn build_api_messages_with_budget(&self, system_prompt: String) -> (Vec<ApiChatMessage>, u32, usize) {
+        // Budget: keep prompts small and fast even on cloud models.
+        const COMFORT_TOTAL_TOKENS: u32 = 8_000;
+        const RESERVED_FOR_REPLY: u32 = 2_000;
+        let budget = COMFORT_TOTAL_TOKENS.saturating_sub(RESERVED_FOR_REPLY);
+
+        let mut msgs: Vec<ApiChatMessage> = vec![ApiChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }];
+
+        let mut used = Self::estimate_tokens(&msgs[0].content);
+
+        // Add recent messages from newest backwards until we hit budget.
+        let history = self.chat_history();
+        let mut kept_rev: Vec<ApiChatMessage> = Vec::new();
+        let mut dropped = 0usize;
+
+        for msg in history.iter().rev() {
+            let t = Self::estimate_tokens(&msg.content);
+            if used.saturating_add(t) > budget {
+                dropped += 1;
+                continue;
+            }
+            used = used.saturating_add(t);
+            kept_rev.push(ApiChatMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+            });
+        }
+
+        kept_rev.reverse();
+        msgs.extend(kept_rev);
+
+        (msgs, used, dropped)
+    }
+
+    pub fn update_settings_perf(&mut self) {
+        let now = Instant::now();
+        if self
+            .settings_perf_last_update
+            .map(|t| now.duration_since(t) < std::time::Duration::from_secs(1))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        self.settings_perf_last_update = Some(now);
+
+        let mut sys = System::new();
+        sys.refresh_processes();
+
+        if let Ok(pid) = sysinfo::get_current_pid() {
+            if let Some(proc_) = sys.process(pid) {
+                // cpu_usage is a % of a single core (sysinfo semantics)
+                self.settings_cpu_percent = proc_.cpu_usage();
+                // memory is in KB
+                self.settings_mem_mb = (proc_.memory() / 1024) as u64;
+            }
+        }
+    }
     pub fn is_path_permitted(&self, path: &Path) -> bool {
         is_path_in_allowed_dirs(path, &self.settings.allowed_dirs)
     }
@@ -552,6 +668,11 @@ impl AppState {
                             }
                         }
                     }
+
+                    self.last_response_tokens_est = Self::estimate_tokens(&result.response);
+                    self.session_output_tokens_est = self
+                        .session_output_tokens_est
+                        .saturating_add(self.last_response_tokens_est as u64);
 
                     // Clean up response - remove action tags (both old and new style)
                     let clean_response = clean_ai_response(&result.response);
@@ -1181,19 +1302,21 @@ WORKFLOW:
             ),
         };
 
-        // Convert chat history to API format
-        let mut api_messages = vec![ApiChatMessage {
-            role: "system".to_string(),
-            content: system_prompt.to_string(),
-        }];
+        let (api_messages, prompt_tokens_est, dropped) =
+            self.build_api_messages_with_budget(system_prompt);
 
-        // Add recent chat history (last 10 messages to keep context manageable)
-        let recent_messages = self.chat_history().iter().rev().take(10).rev();
-        for msg in recent_messages {
-            api_messages.push(ApiChatMessage {
-                role: msg.role.clone(),
-                content: msg.content.clone(),
-            });
+        self.last_prompt_tokens_est = prompt_tokens_est;
+        self.session_input_tokens_est = self
+            .session_input_tokens_est
+            .saturating_add(prompt_tokens_est as u64);
+
+        if dropped > 0 {
+            if let Some(mode) = self.thinking_mode {
+                self.thinking_status.insert(
+                    mode,
+                    format!("Making room (trimmed {} older messages)...", dropped),
+                );
+            }
         }
 
         // Start async AI generation with capability flags
@@ -1216,9 +1339,12 @@ WORKFLOW:
 
         let (abort_handle, abort_reg) = futures::future::AbortHandle::new_pair();
         self.ai_abort_handles.insert(mode, abort_handle);
-        // Set thinking status for the mode that initiated the request
+        // Set thinking status for the mode that initiated the request (unless already set)
         if let Some(mode) = self.thinking_mode {
-            self.thinking_status.insert(mode, "Thinking...".to_string());
+            let current = self.thinking_status.get(&mode).cloned().unwrap_or_default();
+            if current.trim().is_empty() {
+                self.thinking_status.insert(mode, "Thinking...".to_string());
+            }
         }
         self.thinking_started_at
             .insert(mode, std::time::Instant::now());

@@ -1191,6 +1191,79 @@ impl eframe::App for LittleHelperApp {
                     ui.separator();
                     ui.add_space(8.0);
 
+                    ui.collapsing("Status (advanced)", |ui| {
+                        s.update_settings_perf();
+                        let ctx_hint = s.model_context_hint_tokens();
+                        let comfort_total: f32 = 8000.0;
+                        let used = s.last_prompt_tokens_est as f32;
+                        let ratio = (used / comfort_total).clamp(0.0, 1.0);
+
+                        ui.label(
+                            egui::RichText::new("A quick snapshot of performance and conversation size.")
+                                .size(11.0)
+                                .weak(),
+                        );
+                        ui.add_space(6.0);
+
+                        egui::Grid::new("settings_status_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("CPU (app)");
+                                ui.label(format!("{:.0}%", s.settings_cpu_percent));
+                                ui.end_row();
+
+                                ui.label("Memory (app)");
+                                ui.label(format!("{} MB", s.settings_mem_mb));
+                                ui.end_row();
+
+                                ui.label("Last prompt");
+                                ui.label(format!("~{} tokens", s.last_prompt_tokens_est));
+                                ui.end_row();
+
+                                ui.label("Last reply");
+                                ui.label(format!("~{} tokens", s.last_response_tokens_est));
+                                ui.end_row();
+
+                                ui.label("Session total");
+                                ui.label(format!(
+                                    "~{} in / ~{} out",
+                                    s.session_input_tokens_est, s.session_output_tokens_est
+                                ));
+                                ui.end_row();
+
+                                ui.label("Model context (approx)");
+                                ui.label(format!("~{} tokens", ctx_hint));
+                                ui.end_row();
+                            });
+
+                        ui.add_space(8.0);
+                        ui.label("Conversation capacity (comfort window)");
+                        ui.add(
+                            egui::ProgressBar::new(ratio)
+                                .show_percentage()
+                                .text(format!(
+                                    "~{} / 8000 tokens",
+                                    s.last_prompt_tokens_est
+                                )),
+                        );
+
+                        if ratio > 0.85 {
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "If things feel slow, I may trim older messages to make room."
+                                )
+                                .size(11.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(220, 180, 100)
+                                } else {
+                                    egui::Color32::from_rgb(160, 120, 60)
+                                }),
+                            );
+                        }
+                    });
+
                     ui.heading(
                         egui::RichText::new("Build tools")
                             .color(if dark {
