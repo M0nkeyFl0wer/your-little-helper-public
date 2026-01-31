@@ -2397,6 +2397,24 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 .strong()
                                 .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
                             );
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new("• Safe actions like reading files and checking info happen automatically")
+                                    .size(11.0)
+                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new("• Changes like moving files show you exactly what I'll do and wait for your OK")
+                                    .size(11.0)
+                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new("• Destructive actions like deleting or formatting are blocked unless you specifically allow them")
+                                    .size(11.0)
+                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
+                            );
                             ui.add_space(6.0);
                             let mut permission = s.settings.user_profile.terminal_permission_granted;
                             if ui
