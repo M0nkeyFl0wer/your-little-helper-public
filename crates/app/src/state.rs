@@ -136,6 +136,15 @@ pub fn run_ai_generation(
                     ));
                     continue;
                 }
+
+                // Apply folder and safety policy before showing to user.
+                if let Err(reason) = validate_command_against_allowed(cmd, &allowed_dirs) {
+                    results.push(format!(
+                        "[Command blocked: {}]\n$ {}",
+                        reason, cmd
+                    ));
+                    continue;
+                }
                 let danger = classify_command(cmd);
                 if danger == DangerLevel::Blocked {
                     all_executed_commands.push((
