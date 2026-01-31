@@ -2296,7 +2296,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ui.add_space(6.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "Little Helper only previews files and proposes commands inside these folders.",
+                                    "Little Helper only works inside these folders.",
                                 )
                                 .size(12.0)
                                 .color(if dark {
@@ -2305,7 +2305,23 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                     egui::Color32::from_rgb(100, 80, 70)
                                 }),
                             );
-                            ui.add_space(6.0);
+                            ui.add_space(8.0);
+                            
+                            // Privacy explanation for local models
+                            ui.label(
+                                egui::RichText::new(
+                                    "💡 If you're using a private local model, it's safe to give full access. \
+                                    Your AI never connects to the outside world (except for web searches when you ask). \
+                                    The more access you give, the more I can help you find things and get things done!"
+                                )
+                                .size(11.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(160, 180, 160)
+                                } else {
+                                    egui::Color32::from_rgb(60, 100, 60)
+                                }),
+                            );
+                            ui.add_space(12.0);
 
                             if s.settings.allowed_dirs.is_empty() {
                                 ui.colored_label(
