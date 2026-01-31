@@ -8,6 +8,8 @@ use crate::utils::*;
 use shared::agent_api::ChatMessage as ApiChatMessage;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+
+use futures::future::{AbortRegistration, Abortable};
 /// Run AI generation in background thread (non-blocking)
 pub fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
@@ -16,6 +18,7 @@ pub fn run_ai_generation(
     allow_web: bool,
     allowed_dirs: Vec<String>,
     tx: Sender<AiResult>,
+    abort_reg: AbortRegistration,
 ) {
     use agent_host::{classify_command, web_search, DangerLevel};
     use providers::router::ProviderRouter;
@@ -40,7 +43,7 @@ pub fn run_ai_generation(
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
     let cmd_re = regex::Regex::new(r"(?s)<command>(.*?)</command>").unwrap();
 
-    let result = rt.block_on(async {
+    let result = rt.block_on(Abortable::new(async {
         let mut msgs = messages;
         let mut file_to_preview: Option<PathBuf> = None;
         let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
@@ -178,21 +181,28 @@ pub fn run_ai_generation(
             all_executed_commands,
             pending_commands,
         ))
-    });
+    }, abort_reg));
 
     // Send result back to UI
     let ai_result = match result {
-        Ok((response, preview_file, executed_commands, pending_commands)) => AiResult {
+        Ok(Ok((response, preview_file, executed_commands, pending_commands))) => AiResult {
             response,
             preview_file,
             error: None,
             executed_commands,
             pending_commands,
         },
-        Err(e) => AiResult {
+        Ok(Err(e)) => AiResult {
             response: String::new(),
             preview_file: None,
             error: Some(e.to_string()),
+            executed_commands: Vec::new(),
+            pending_commands: Vec::new(),
+        },
+        Err(_aborted) => AiResult {
+            response: String::new(),
+            preview_file: None,
+            error: Some("Cancelled".to_string()),
             executed_commands: Vec::new(),
             pending_commands: Vec::new(),
         },
