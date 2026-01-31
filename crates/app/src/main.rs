@@ -2053,74 +2053,28 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                 ui.add_space(8.0);
 
-                // Welcome header
-                ui.label(
-                    egui::RichText::new("I'm your Little Helper")
-                        .size(24.0)
-                        .color(if dark {
-                            egui::Color32::from_rgb(240, 235, 230)
-                        } else {
-                            warm_brown
-                        }),
-                );
-
-                ui.add_space(20.0);
-
-                ui.label(
-                    egui::RichText::new("I'm here to make your day a little easier. Here's what I can do:")
-                        .size(15.0)
-                        .color(if dark {
-                            egui::Color32::from_rgb(200, 190, 180)
-                        } else {
-                            egui::Color32::from_rgb(120, 100, 85)
-                        }),
-                );
-
-                ui.add_space(20.0);
-
-                // Feature bullets with warm styling
-                let features = [
-                    ("Run terminal commands", "so you never have to"),
-                    ("Tech support", "patient help when things go wrong"),
-                    ("Deep research", "thorough answers with real sources"),
-                    ("Content creation", "drafting, scheduling, and managing"),
-                ];
-
-                for (title, desc) in features {
-                    ui.horizontal(|ui| {
-                        ui.add_space(40.0);
-                        ui.label(
-                            egui::RichText::new("~")
-                                .size(16.0)
-                                .color(warm_coral),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(title)
-                                .size(14.0)
-                                .strong()
-                                .color(if dark {
-                                    egui::Color32::from_rgb(230, 220, 210)
-                                } else {
-                                    warm_brown
-                                }),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!(" - {}", desc))
-                                .size(14.0)
-                                .color(if dark {
-                                    warm_tan
-                                } else {
-                                    egui::Color32::from_rgb(140, 120, 100)
-                                }),
-                        );
-                    });
-                    ui.add_space(4.0);
-                }
+                // Welcome header with dog icon
+                ui.horizontal(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(
+                        egui::RichText::new("🐕")
+                            .size(32.0)
+                    );
+                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new("I'm your Little Helper")
+                            .size(24.0)
+                            .color(if dark {
+                                egui::Color32::from_rgb(240, 235, 230)
+                            } else {
+                                warm_brown
+                            }),
+                    );
+                });
 
                 ui.add_space(30.0);
 
-                // Form container with warm styling
+                // Form container with warm styling - ask for name FIRST
                 egui::Frame::none()
                     .fill(if dark {
                         egui::Color32::from_rgb(50, 45, 42)
@@ -2138,9 +2092,9 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                     .show(ui, |ui| {
                         ui.set_max_width(420.0);
 
-                        // Name input - friendlier
+                        // Name input - ask right away
                         ui.label(
-                            egui::RichText::new("First, what's your name?")
+                            egui::RichText::new("What's your name?")
                                 .size(15.0)
                                 .color(if dark {
                                     egui::Color32::from_rgb(220, 210, 200)
@@ -2223,6 +2177,57 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                 );
                             }
                         });
+
+                        ui.add_space(30.0);
+                        
+                        // Show what I can do
+                        ui.label(
+                            egui::RichText::new("Here's what I can help you with:")
+                                .size(14.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(220, 210, 200)
+                                } else {
+                                    warm_brown
+                                }),
+                        );
+                        ui.add_space(12.0);
+
+                        let features = [
+                            ("🔧", "Fix problems", "without touching the terminal"),
+                            ("🔍", "Find anything", "files, answers, solutions"),
+                            ("📊", "Work with data", "CSV, JSON, spreadsheets"),
+                            ("✍️", "Create content", "drafts, ideas, schedules"),
+                        ];
+
+                        for (icon, title, desc) in features {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(icon)
+                                        .size(16.0),
+                                );
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new(title)
+                                        .size(13.0)
+                                        .strong()
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(230, 220, 210)
+                                        } else {
+                                            warm_brown
+                                        }),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!(" - {}", desc))
+                                        .size(13.0)
+                                        .color(if dark {
+                                            warm_tan
+                                        } else {
+                                            egui::Color32::from_rgb(140, 120, 100)
+                                        }),
+                                );
+                            });
+                            ui.add_space(6.0);
+                        }
 
                         ui.add_space(24.0);
 
