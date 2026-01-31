@@ -62,7 +62,7 @@ impl ProcessMonitor {
                     if parts.len() >= 11 {
                         let pid: u32 = parts[1].parse().unwrap_or(0);
                         let cpu_percent: f32 = parts[2].parse().unwrap_or(0.0);
-                        let mem_percent: f32 = parts[3].parse().unwrap_or(0.0);
+                        let _mem_percent: f32 = parts[3].parse().unwrap_or(0.0);
                         let rss_kb: u64 = parts[5].parse().unwrap_or(0);
                         let name = parts[10..].join(" ");
 

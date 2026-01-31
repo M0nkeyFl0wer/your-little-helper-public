@@ -104,7 +104,7 @@ pub struct PermissionStatus {
 }
 
 /// Risk level for app permissions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub enum RiskLevel {
     /// Expected and normal (Zoom with camera)
     Normal,
@@ -474,7 +474,7 @@ impl PrivacyAuditor {
     }
     
     /// Revoke a permission for an app
-    pub fn revoke_permission(&self, app_name: &str, permission_type: PermissionType) -> anyhow::Result<String> {
+    pub fn revoke_permission(&self, _app_name: &str, permission_type: PermissionType) -> anyhow::Result<String> {
         // Platform-specific implementations that open system settings
         // since direct revocation requires elevated permissions
         #[cfg(target_os = "macos")]
