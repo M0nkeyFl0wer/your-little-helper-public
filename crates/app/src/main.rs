@@ -468,12 +468,12 @@ impl eframe::App for LittleHelperApp {
                             .cloned()
                             .unwrap_or_else(|| "none".to_string());
                         let provider = provider_str.as_str();
-                        let model_name = match provider {
-                            "openai" => &s.settings.model.openai_model,
-                            "anthropic" => &s.settings.model.anthropic_model,
-                            "gemini" => &s.settings.model.gemini_model,
-                            "local" => &s.settings.model.local_model,
-                            _ => "unknown",
+                        let model_name: String = match provider {
+                            "openai" => s.settings.model.openai_model.clone(),
+                            "anthropic" => s.settings.model.anthropic_model.clone(),
+                            "gemini" => s.settings.model.gemini_model.clone(),
+                            "local" => s.settings.model.local_model.clone(),
+                            _ => "unknown".to_string(),
                         };
                         let show_hint = s.show_model_hint
                             && s
