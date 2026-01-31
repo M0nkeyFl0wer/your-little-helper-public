@@ -2463,7 +2463,9 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                         first_msg.content = format!(
                                             "Hey {}! Great to meet you.\n\n\
                                             I'm here whenever you need a hand. Just tell me what you're working on \
-                                            and I'll do my best to help out.",
+                                            and I'll do my best to help out.\n\n\
+                                            💡 Tip: Click 'Fix' at the top if you'd like me to run a security check \
+                                            and find things to improve on your computer!",
                                             user_name
                                         );
                                     }
