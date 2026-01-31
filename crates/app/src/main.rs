@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use shared::settings::AppSettings;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 
@@ -823,13 +823,8 @@ impl eframe::App for LittleHelperApp {
                                     );
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if ui.button("Stop it").clicked() {
-                                            // Cancel the operation by clearing thinking state
-                                            s.is_thinking.insert(thinking_mode, false);
-                                            s.thinking_status.insert(thinking_mode, String::new());
-                                            s.thinking_mode = None;
-                                            s.thinking_started_at = None;
-                                            s.ai_result_rx = None;
-                                            s.command_result_rx = None;
+                                            // Cancel the operation
+                                            s.cancel_ai(thinking_mode);
                                         }
                                     });
                                 });
@@ -1640,7 +1635,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
         // Pulsing dot effect based on time
         let time = ui.ctx().input(|i| i.time);
         let pulse = ((time * 4.0).sin() + 1.0) / 2.0; // 0.0 to 1.0
-        let alpha = (128.0 + pulse * 127.0) as u8; // 128-255 range
+        let _alpha = (128.0 + pulse * 127.0) as u8; // 128-255 range
         format!("{} ●", label)
     } else {
         label.to_string()

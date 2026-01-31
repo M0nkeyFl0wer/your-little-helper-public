@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 
+use futures::future::AbortHandle;
+
 use crate::context::{
     get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas,
 };
@@ -181,6 +183,9 @@ pub struct AppState {
     // Async AI response channel
     pub ai_result_rx: Option<Receiver<AiResult>>,
 
+    // Abort handles for in-flight AI work (per mode)
+    pub ai_abort_handles: HashMap<ChatMode, AbortHandle>,
+
     // Web preview service and async fetch channel
     pub web_preview_service: Arc<WebPreviewService>,
     pub web_preview_rx: Option<Receiver<WebPreviewResult>>,
@@ -313,6 +318,7 @@ impl Default for AppState {
             mascot_texture: None,
             mascot_loaded: false,
             ai_result_rx: None,
+            ai_abort_handles: HashMap::new(),
             web_preview_service: Arc::new(WebPreviewService::new()),
             web_preview_rx: None,
             show_slack_dialog: false,
@@ -467,6 +473,7 @@ impl AppState {
                 if let Some(mode) = self.thinking_mode {
                     self.is_thinking.insert(mode, false);
                     self.thinking_status.insert(mode, String::new());
+                    self.ai_abort_handles.remove(&mode);
                 }
                 self.thinking_mode = None;
                 self.thinking_started_at = None;
@@ -1181,6 +1188,10 @@ WORKFLOW:
     ) {
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
+        let mode = self.thinking_mode.unwrap_or(self.current_mode);
+
+        let (abort_handle, abort_reg) = futures::future::AbortHandle::new_pair();
+        self.ai_abort_handles.insert(mode, abort_handle);
         // Set thinking status for the mode that initiated the request
         if let Some(mode) = self.thinking_mode {
             self.thinking_status.insert(mode, "Thinking...".to_string());
@@ -1200,8 +1211,17 @@ WORKFLOW:
                 allow_web,
                 allowed_dirs,
                 tx,
+                abort_reg,
             );
         });
+    }
+
+    pub fn cancel_ai(&mut self, mode: ChatMode) {
+        if let Some(handle) = self.ai_abort_handles.remove(&mode) {
+            handle.abort();
+        }
+        self.thinking_status
+            .insert(mode, "Stopping...".to_string());
     }
 
     /// Open a file in the preview panel
