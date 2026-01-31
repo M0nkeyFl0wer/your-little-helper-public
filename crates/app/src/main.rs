@@ -2110,7 +2110,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
     // Warm color palette
     let warm_orange = egui::Color32::from_rgb(235, 140, 75);
-    let warm_coral = egui::Color32::from_rgb(230, 115, 100);
+    let _warm_coral = egui::Color32::from_rgb(230, 115, 100);
     let soft_cream = egui::Color32::from_rgb(255, 250, 245);
     let warm_brown = egui::Color32::from_rgb(90, 70, 60);
     let warm_tan = egui::Color32::from_rgb(180, 140, 110);
