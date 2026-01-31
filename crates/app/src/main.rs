@@ -342,18 +342,19 @@ impl eframe::App for LittleHelperApp {
 
         let dark = s.settings.user_profile.dark_mode;
 
-        if let Some(started_at) = s.thinking_started_at {
-            if !s.slow_response_hint_shown
-                && started_at.elapsed() >= Duration::from_secs(20)
-            {
-                s.slow_response_hint_shown = true;
-                s.show_model_hint = true;
-                s.model_hint_started_at = Some(std::time::Instant::now());
+        if let Some(mode) = s.thinking_mode {
+            if let Some(started_at) = s.thinking_started_at.get(&mode) {
+                let shown = s.slow_response_hint_shown.get(&mode).copied().unwrap_or(false);
+                if !shown && started_at.elapsed() >= Duration::from_secs(20) {
+                    s.slow_response_hint_shown.insert(mode, true);
+                    s.show_model_hint = true;
+                    s.model_hint_started_at = Some(std::time::Instant::now());
 
-                let tip_message =
-                    "This is taking longer than usual. Cloud models often respond faster.";
-                s.preview_panel
-                    .show_tip_if_idle("Want faster replies?", tip_message);
+                    let tip_message =
+                        "This is taking longer than usual. Cloud models often respond faster.";
+                    s.preview_panel
+                        .show_tip_if_idle("Want faster replies?", tip_message);
+                }
             }
         }
 
@@ -795,7 +796,11 @@ impl eframe::App for LittleHelperApp {
                             ChatMode::Content => "Content Helper",
                             ChatMode::Build => "Build Helper",
                         };
-                        let elapsed = s.thinking_started_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+                        let elapsed = s
+                            .thinking_started_at
+                            .get(&thinking_mode)
+                            .map(|t| t.elapsed().as_secs())
+                            .unwrap_or(0);
                         let time_str = if elapsed < 60 {
                             format!("{}s", elapsed)
                         } else {
