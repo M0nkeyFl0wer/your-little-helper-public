@@ -137,10 +137,10 @@ pub struct AppState {
     pub thinking_status: std::collections::HashMap<ChatMode, String>,
     /// Which mode currently has an active AI request
     pub thinking_mode: Option<ChatMode>,
-    /// When the current AI request started
-    pub thinking_started_at: Option<std::time::Instant>,
-    /// Whether we've shown a slow-response hint
-    pub slow_response_hint_shown: bool,
+    /// When an AI request started (per mode)
+    pub thinking_started_at: HashMap<ChatMode, std::time::Instant>,
+    /// Whether we've shown a slow-response hint (per mode)
+    pub slow_response_hint_shown: HashMap<ChatMode, bool>,
     /// Whether to show attention near the model indicator
     pub show_model_hint: bool,
     /// When the model hint started
@@ -293,8 +293,8 @@ impl Default for AppState {
                 m
             },
             thinking_mode: None,
-            thinking_started_at: None,
-            slow_response_hint_shown: false,
+            thinking_started_at: HashMap::new(),
+            slow_response_hint_shown: HashMap::new(),
             show_model_hint: false,
             model_hint_started_at: None,
             agent_host: AgentHost::new(settings.clone()),
@@ -474,9 +474,10 @@ impl AppState {
                     self.is_thinking.insert(mode, false);
                     self.thinking_status.insert(mode, String::new());
                     self.ai_abort_handles.remove(&mode);
+                    self.thinking_started_at.remove(&mode);
+                    self.slow_response_hint_shown.remove(&mode);
                 }
                 self.thinking_mode = None;
-                self.thinking_started_at = None;
                 self.show_model_hint = false;
                 self.model_hint_started_at = None;
                 self.ai_result_rx = None;
@@ -817,6 +818,29 @@ impl AppState {
     pub fn send_message(&mut self) {
         if self.input_text.trim().is_empty() {
             return;
+        }
+
+        // Only allow one in-flight request at a time.
+        if let Some(active_mode) = self.thinking_mode {
+            if active_mode != self.current_mode
+                && self.is_thinking.get(&active_mode).copied().unwrap_or(false)
+            {
+                self.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: format!(
+                        "{} is still working. If you want to switch tasks, click 'Stop it' in the banner at the top.",
+                        match active_mode {
+                            ChatMode::Fix => "Fix Helper",
+                            ChatMode::Research => "Research Helper",
+                            ChatMode::Data => "Data Helper",
+                            ChatMode::Content => "Content Helper",
+                            ChatMode::Build => "Build Helper",
+                        }
+                    ),
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+                return;
+            }
         }
 
         // Easter egg: Rick Roll when asking about Ben West
@@ -1196,8 +1220,9 @@ WORKFLOW:
         if let Some(mode) = self.thinking_mode {
             self.thinking_status.insert(mode, "Thinking...".to_string());
         }
-        self.thinking_started_at = Some(std::time::Instant::now());
-        self.slow_response_hint_shown = false;
+        self.thinking_started_at
+            .insert(mode, std::time::Instant::now());
+        self.slow_response_hint_shown.insert(mode, false);
 
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
