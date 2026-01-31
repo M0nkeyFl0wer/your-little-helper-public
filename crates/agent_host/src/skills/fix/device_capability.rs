@@ -260,7 +260,7 @@ impl DeviceCapabilityDetector {
     }
 
     #[cfg(target_os = "macos")]
-    fn parse_macos_vm_stats(&self, vm_stats: &str, total_ram: f32) -> f32 {
+    fn parse_macos_vm_stats(&self, vm_stats: &str, _total_ram: f32) -> f32 {
         // Parse vm_stat output to calculate available memory
         let mut free_pages = 0u64;
         let mut inactive_pages = 0u64;
@@ -556,7 +556,7 @@ impl DeviceCapabilityDetector {
     }
 
     /// Generate overall recommendation
-    fn generate_recommendation(&self, specs: &SystemSpecs, local_llm: &LocalLlmsuitability) -> Recommendation {
+    fn generate_recommendation(&self, _specs: &SystemSpecs, local_llm: &LocalLlmsuitability) -> Recommendation {
         let (mode, provider, reasoning) = if !local_llm.can_run_local {
             (
                 AiMode::ApiOnly,

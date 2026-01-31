@@ -310,7 +310,7 @@ impl StorageCleaner {
                         .arg(path)
                         .output();
                     
-                    if let Ok(output) = output {
+                    if let Ok(_output) = output {
                         // Parse df output
                         drives.push(MountedDrive {
                             name: "Google Drive".to_string(),

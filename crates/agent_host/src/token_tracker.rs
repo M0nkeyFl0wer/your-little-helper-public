@@ -488,7 +488,7 @@ impl TokenTracker {
 
     /// Get a cheaper alternative model
     fn get_cheaper_alternative(&self, current_model: &str) -> CostOptimization {
-        let current = get_model_pricing(current_model);
+        let _current = get_model_pricing(current_model);
 
         // Define cheaper alternatives
         let alternatives: Vec<(&str, &str, f64)> = vec![
@@ -500,7 +500,7 @@ impl TokenTracker {
 
         for (expensive, cheaper, savings) in alternatives {
             if current_model.to_lowercase().contains(expensive) {
-                let cheaper_pricing = get_model_pricing(cheaper);
+                let _cheaper_pricing = get_model_pricing(cheaper);
                 return CostOptimization {
                     current_model: current_model.to_string(),
                     suggested_model: cheaper.to_string(),

@@ -41,7 +41,7 @@ impl Skill for ProjectScaffoldSkill {
             .unwrap_or_else(|| {
                 // Try to extract from query like "create react app myapp"
                 let words: Vec<&str> = input.query.split_whitespace().collect();
-                for (i, word) in words.iter().enumerate() {
+                for (_i, word) in words.iter().enumerate() {
                     if ["react", "rust", "python", "node", "web"].contains(word) {
                         return word.to_string();
                     }
