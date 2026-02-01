@@ -1878,10 +1878,6 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
             ui.text_edit_singleline(&mut s.build_project_name_input);
 
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("Spec name (optional)").color(subtle_color));
-            ui.text_edit_singleline(&mut s.build_spec_name_input);
-
-            ui.add_space(6.0);
             ui.label(egui::RichText::new("What should we build?").color(subtle_color));
             ui.text_edit_singleline(&mut s.build_description_input);
 
@@ -1906,18 +1902,13 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
                     s.run_spec_kit_command(vec!["check".to_string()]);
                 }
 
-                if ui.button("Run Spec").clicked() {
+                if ui.button("Run Task").clicked() {
                     let description = s.build_description_input.trim();
                     if description.is_empty() {
                         s.build_status = Some("Please describe what to build.".to_string());
                         s.build_status_is_error = true;
                     } else {
-                        let mut args = vec!["run".to_string(), description.to_string()];
-                        let spec_name = s.build_spec_name_input.trim();
-                        if !spec_name.is_empty() {
-                            args.push("--spec".to_string());
-                            args.push(spec_name.to_string());
-                        }
+                        let args = vec!["run".to_string(), description.to_string()];
                         s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
                         save_settings(&s.settings);
                         s.run_spec_kit_command(args);

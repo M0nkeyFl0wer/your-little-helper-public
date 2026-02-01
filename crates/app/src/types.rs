@@ -215,7 +215,6 @@ pub struct AppState {
     pub spec_kit_path_input: String,
     pub build_folder_input: String,
     pub build_project_name_input: String,
-    pub build_spec_name_input: String,
     pub build_description_input: String,
     pub build_status: Option<String>,
     pub build_status_is_error: bool,
@@ -389,7 +388,6 @@ impl Default for AppState {
                 .or_else(|| dirs::home_dir().map(|h| h.to_string_lossy().to_string()))
                 .unwrap_or_default(),
             build_project_name_input: String::new(),
-            build_spec_name_input: String::new(),
             build_description_input: String::new(),
             build_status: None,
             build_status_is_error: false,
