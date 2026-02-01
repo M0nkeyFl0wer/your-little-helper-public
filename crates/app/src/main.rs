@@ -1289,6 +1289,40 @@ impl eframe::App for LittleHelperApp {
 
                     ui.add_space(8.0);
 
+                    // Superpowers (always visible)
+                    ui.heading(
+                        egui::RichText::new("Superpowers")
+                            .color(if dark {
+                                egui::Color32::from_rgb(220, 220, 230)
+                            } else {
+                                egui::Color32::from_rgb(40, 40, 50)
+                            }),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Turn this on to let me run safe terminal commands for you (I’ll still ask before anything risky).",
+                        )
+                        .color(if dark {
+                            egui::Color32::from_rgb(180, 180, 190)
+                        } else {
+                            egui::Color32::from_rgb(80, 80, 90)
+                        }),
+                    );
+                    if ui
+                        .checkbox(
+                            &mut s.settings.user_profile.terminal_permission_granted,
+                            "Enable terminal superpowers",
+                        )
+                        .changed()
+                    {
+                        save_settings(&s.settings);
+                        s.settings_status = Some("Saved superpowers setting".to_string());
+                        s.settings_status_is_error = false;
+                    }
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
                     // Scrollable content
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.heading(
@@ -1321,15 +1355,7 @@ impl eframe::App for LittleHelperApp {
                         needs_save = true;
                     }
 
-                    if ui
-                        .checkbox(
-                            &mut s.settings.user_profile.terminal_permission_granted,
-                            "Allow terminal commands (you approve each one)",
-                        )
-                        .changed()
-                    {
-                        needs_save = true;
-                    }
+                    // Terminal permission lives in the always-visible "Superpowers" section.
 
                     if needs_save {
                         save_settings(&s.settings);
@@ -1590,7 +1616,7 @@ impl eframe::App for LittleHelperApp {
                     });
 
                     ui.heading(
-                        egui::RichText::new("Build Helper (optional)")
+                        egui::RichText::new("Build Helper")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1615,7 +1641,7 @@ impl eframe::App for LittleHelperApp {
                         if ui.button("Use default").clicked() {
                             if let Some(home) = dirs::home_dir() {
                                 s.spec_kit_path_input = home
-                                    .join("Projects/spec-kit-assistant/spec-assistant.js")
+                                    .join("Projects/spec-kit-assistant/archive/legacy-node/spec-assistant.js")
                                     .to_string_lossy()
                                     .to_string();
                             }
@@ -2647,6 +2673,17 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ui.checkbox(
                                 &mut s.settings.enable_internet_research,
                                 "Allow web research (searches and articles)",
+                            );
+                            ui.checkbox(
+                                &mut s.settings.user_profile.terminal_permission_granted,
+                                "Enable terminal superpowers (recommended)",
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Tip: I’ll run safe commands automatically. I’ll still ask before anything risky.",
+                                )
+                                .size(11.0)
+                                .weak(),
                             );
                         });
 
