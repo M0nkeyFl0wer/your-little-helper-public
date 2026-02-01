@@ -166,29 +166,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev pkg-config
-
-      - name: Create secrets.rs with pre-configured API key
-        env:
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
-          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
-        run: |
-          cat > crates/app/src/secrets.rs << EOF
-          // Auto-generated during build - API key pre-configured for beta testers
-          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
-          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
-          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
-          EOF
-
-      - name: Create support_info.rs
-        env:
-          SUPPORT_URL: ${{ secrets.SUPPORT_LINK }}
-        run: |
-          cat > crates/app/src/support_info.rs << EOF
-          // Auto-generated during build
-          pub const CREATOR_NAME: &str = "Ben";
-          pub const SUPPORT_LINK: &str = "${SUPPORT_URL}";
-          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
-          EOF
+          # Needed to run appimagetool (it is an AppImage and wants libfuse.so.2)
+          sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
 
       - name: Build Release
         run: cargo build --release
