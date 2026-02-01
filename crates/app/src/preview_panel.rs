@@ -570,6 +570,12 @@ impl PreviewPanel {
 
                     // Example prompts section - clickable to populate chat input
                     ui.heading(egui::RichText::new("Try asking me:").size(14.0));
+                    ui.label(
+                        egui::RichText::new("Tip: These suggestions are clickable — click one to fill the prompt box.")
+                            .size(11.0)
+                            .color(text_color)
+                            .weak(),
+                    );
                     ui.add_space(5.0);
 
                     for example in intro.example_prompts.iter().take(3) {

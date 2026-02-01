@@ -103,7 +103,13 @@ pub mod settings {
                 allowed_dirs: vec![],
                 model: ModelProvider {
                     local_model: "llama3.2:3b".into(),
-                    provider_preference: vec!["anthropic".into(), "openai".into(), "gemini".into(), "local".into()], // Try cloud providers first, fall back to local
+                    // Default to local first; fall back to cloud when configured.
+                    provider_preference: vec![
+                        "local".into(),
+                        "anthropic".into(),
+                        "openai".into(),
+                        "gemini".into(),
+                    ],
                     openai_model: "gpt-4o-mini".into(),
                     anthropic_model: "claude-3-5-sonnet-20241022".into(),
                     gemini_model: "gemini-1.5-flash".into(),

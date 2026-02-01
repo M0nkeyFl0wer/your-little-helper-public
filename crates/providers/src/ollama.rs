@@ -3,6 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use std::env;
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaChatRequest<'a> {
@@ -33,7 +34,7 @@ impl OllamaClient {
         let base =
             env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
         Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(120)).build().unwrap_or_else(|_| Client::new()),
             base,
             model,
         }

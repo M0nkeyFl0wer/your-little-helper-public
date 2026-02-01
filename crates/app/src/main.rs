@@ -10,6 +10,32 @@ use std::sync::Arc;
 use std::time::Duration;
 
 
+fn try_read_clipboard_text() -> Option<String> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let text = clipboard.get_text().ok()?;
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() { None } else { Some(trimmed) }
+}
+
+fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
+    let mut out: Vec<String> = Vec::new();
+
+    let add = |out: &mut Vec<String>, p: &str| {
+        if !out.iter().any(|x| x == p) {
+            out.push(p.to_string());
+        }
+    };
+
+    add(&mut out, primary);
+    add(&mut out, "local"); // Always keep a local fallback
+    add(&mut out, "anthropic");
+    add(&mut out, "openai");
+    add(&mut out, "gemini");
+
+    *pref = out;
+}
+
+
 // Default mascot image (boss's dog!)
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
@@ -407,38 +433,58 @@ impl eframe::App for LittleHelperApp {
                     let research_unread = s.unread_modes.contains(&ChatMode::Research);
                     let build_unread = s.unread_modes.contains(&ChatMode::Build);
 
-                    mode_button(
-                        ui,
-                        "Find",
-                        ChatMode::Find,
-                        &mut s.current_mode,
-                        find_processing,
-                        find_unread,
-                    );
-                    mode_button(
-                        ui,
-                        "Fix",
-                        ChatMode::Fix,
-                        &mut s.current_mode,
-                        fix_processing,
-                        fix_unread,
-                    );
-                    mode_button(
-                        ui,
-                        "Research",
-                        ChatMode::Research,
-                        &mut s.current_mode,
-                        research_processing,
-                        research_unread,
-                    );
-                    mode_button(
-                        ui,
-                        "Build",
-                        ChatMode::Build,
-                        &mut s.current_mode,
-                        build_processing,
-                        build_unread,
-                    );
+                    egui::Frame::none()
+                        .fill(if dark {
+                            egui::Color32::from_rgb(30, 30, 36)
+                        } else {
+                            egui::Color32::from_rgb(235, 238, 243)
+                        })
+                        .rounding(egui::Rounding::same(10.0))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            if dark {
+                                egui::Color32::from_rgb(50, 50, 58)
+                            } else {
+                                egui::Color32::from_rgb(210, 215, 225)
+                            },
+                        ))
+                        .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+
+                            mode_button(
+                                ui,
+                                "Find",
+                                ChatMode::Find,
+                                &mut s.current_mode,
+                                find_processing,
+                                find_unread,
+                            );
+                            mode_button(
+                                ui,
+                                "Fix",
+                                ChatMode::Fix,
+                                &mut s.current_mode,
+                                fix_processing,
+                                fix_unread,
+                            );
+                            mode_button(
+                                ui,
+                                "Research",
+                                ChatMode::Research,
+                                &mut s.current_mode,
+                                research_processing,
+                                research_unread,
+                            );
+                            mode_button(
+                                ui,
+                                "Build",
+                                ChatMode::Build,
+                                &mut s.current_mode,
+                                build_processing,
+                                build_unread,
+                            );
+                        });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
@@ -565,19 +611,14 @@ impl eframe::App for LittleHelperApp {
 
                         ui.add_space(8.0);
 
-                        // Preview panel toggle
-                        if s.show_preview {
-                            if ui.button("Hide Preview").clicked() {
-                                s.close_preview();
-                            }
-                        } else {
+                        // Keep the top bar compact; preview controls live on the preview panel.
+                        if !s.show_preview {
                             if ui
-                                .button("Show Preview")
+                                .small_button("◂ Preview")
                                 .on_hover_text("Show the preview panel")
                                 .clicked()
                             {
                                 s.show_preview = true;
-                                // Show mode intro if no other content
                                 if matches!(s.active_viewer, ActiveViewer::Panel) {
                                     let mode_str = s.current_mode.as_str();
                                     s.preview_panel.show_mode_intro(mode_str);
@@ -625,9 +666,12 @@ impl eframe::App for LittleHelperApp {
                         ui.label(egui::RichText::new(title).size(16.0).strong());
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Hide").clicked() {
+                                s.close_preview();
+                            }
                             // Only show close button if not the welcome view
                             if !matches!(s.active_viewer, ActiveViewer::Panel) {
-                                if ui.small_button("X").clicked() {
+                                if ui.small_button("Back").clicked() {
                                     let mode_name = s.current_mode.as_str().to_string();
                                     s.active_viewer = ActiveViewer::Panel;
                                     s.preview_panel.show_mode_intro(&mode_name);
@@ -989,7 +1033,7 @@ impl eframe::App for LittleHelperApp {
                 let chat_height = ui.available_height() - 70.0;
 
                 let mut clicked_path: Option<PathBuf> = None;
-                let mut slack_msg: Option<String> = None;
+                // Slack is not included in the public edition
 
                 if s.current_mode == ChatMode::Build {
                     render_build_panel(&mut *s, ui, dark);
@@ -1072,9 +1116,7 @@ impl eframe::App for LittleHelperApp {
                             if action.clicked_path.is_some() {
                                 clicked_path = action.clicked_path;
                             }
-                            if action.send_to_slack.is_some() {
-                                slack_msg = action.send_to_slack;
-                            }
+                            // Slack sharing not supported (public edition)
                             ui.add_space(6.0);
                         }
 
@@ -1132,11 +1174,7 @@ impl eframe::App for LittleHelperApp {
                 }
 
                 // Handle Slack send request
-                if let Some(msg) = slack_msg {
-                    s.slack_message_to_send = Some(msg);
-                    s.show_slack_dialog = true;
-                    s.slack_status = None;
-                }
+                // (no-op)
 
                 ui.add_space(8.0);
 
@@ -1218,42 +1256,52 @@ impl eframe::App for LittleHelperApp {
 
         // Settings dialog
         if s.show_settings_dialog {
+            let mut open = true;
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                open = false;
+            }
+
+            let mut wants_close = false;
             egui::Window::new("Settings")
                 .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(true)
+                .open(&mut open)
+                // Keep the error message readable; don't cover the left-side chat.
+                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 12.0])
                 .show(ctx, |ui| {
-                    ui.set_min_width(420.0);
-                    ui.heading(
-                        egui::RichText::new("Privacy")
-                            .color(if dark {
+                    ui.set_min_width(460.0);
+                    ui.set_max_height(640.0);
+
+                    ui.horizontal(|ui| {
+                        ui.heading(
+                            egui::RichText::new("Settings").color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
                                 egui::Color32::from_rgb(40, 40, 50)
                             }),
-                    );
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Done").clicked() {
+                                wants_close = true;
+                            }
+                        });
+                    });
+
                     ui.add_space(8.0);
+
+                    // Scrollable content
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.heading(
+                            egui::RichText::new("Privacy").color(if dark {
+                                egui::Color32::from_rgb(220, 220, 230)
+                            } else {
+                                egui::Color32::from_rgb(40, 40, 50)
+                            }),
+                        );
+                        ui.add_space(8.0);
 
                     let mut needs_save = false;
 
-                    if ui
-                        .checkbox(
-                            &mut s.settings.enable_campaign_context,
-                            "Load campaign materials automatically",
-                        )
-                        .changed()
-                    {
-                        needs_save = true;
-                    }
-                    if ui
-                        .checkbox(
-                            &mut s.settings.enable_persona_context,
-                            "Load persona files from your profiles folder",
-                        )
-                        .changed()
-                    {
-                        needs_save = true;
-                    }
                     if ui
                         .checkbox(
                             &mut s.settings.share_system_summary,
@@ -1267,6 +1315,16 @@ impl eframe::App for LittleHelperApp {
                         .checkbox(
                             &mut s.settings.enable_internet_research,
                             "Allow web research (searches and articles)",
+                        )
+                        .changed()
+                    {
+                        needs_save = true;
+                    }
+
+                    if ui
+                        .checkbox(
+                            &mut s.settings.user_profile.terminal_permission_granted,
+                            "Allow terminal commands (you approve each one)",
                         )
                         .changed()
                     {
@@ -1321,7 +1379,10 @@ impl eframe::App for LittleHelperApp {
                             for (key, label) in &providers {
                                 if ui.selectable_value(&mut selected_provider, key.to_string(), *label).clicked() {
                                     // Update provider preference
-                                    s.settings.model.provider_preference = vec![key.to_string()];
+                                    set_primary_provider_preference(
+                                        &mut s.settings.model.provider_preference,
+                                        key,
+                                    );
                                     save_settings(&s.settings);
                                     s.settings_status = Some(format!("Switched to {}", label.split(' ').next().unwrap_or(key)));
                                     s.settings_status_is_error = false;
@@ -1364,6 +1425,14 @@ impl eframe::App for LittleHelperApp {
                             if ui.add(edit).changed() {
                                 s.openai_api_key_input = openai_key;
                             }
+                            if ui.button("Paste").clicked() {
+                                if let Some(text) = try_read_clipboard_text() {
+                                    s.openai_api_key_input = text;
+                                } else {
+                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
+                                    s.settings_status_is_error = true;
+                                }
+                            }
                             if !s.openai_api_key_input.is_empty() && ui.button("Save").clicked() {
                                 s.settings.model.openai_auth.api_key = Some(s.openai_api_key_input.clone());
                                 save_settings(&s.settings);
@@ -1383,6 +1452,14 @@ impl eframe::App for LittleHelperApp {
                             let edit = egui::TextEdit::singleline(&mut anthropic_key).password(true);
                             if ui.add(edit).changed() {
                                 s.anthropic_api_key_input = anthropic_key;
+                            }
+                            if ui.button("Paste").clicked() {
+                                if let Some(text) = try_read_clipboard_text() {
+                                    s.anthropic_api_key_input = text;
+                                } else {
+                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
+                                    s.settings_status_is_error = true;
+                                }
                             }
                             if !s.anthropic_api_key_input.is_empty() && ui.button("Save").clicked() {
                                 s.settings.model.anthropic_auth.api_key = Some(s.anthropic_api_key_input.clone());
@@ -1404,6 +1481,14 @@ impl eframe::App for LittleHelperApp {
                             if ui.add(edit).changed() {
                                 s.gemini_api_key_input = gemini_key;
                             }
+                            if ui.button("Paste").clicked() {
+                                if let Some(text) = try_read_clipboard_text() {
+                                    s.gemini_api_key_input = text;
+                                } else {
+                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
+                                    s.settings_status_is_error = true;
+                                }
+                            }
                             if !s.gemini_api_key_input.is_empty() && ui.button("Save").clicked() {
                                 s.settings.model.gemini_auth.api_key = Some(s.gemini_api_key_input.clone());
                                 save_settings(&s.settings);
@@ -1414,7 +1499,17 @@ impl eframe::App for LittleHelperApp {
                         });
 
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("Keys stay on this device.").size(10.0).weak());
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Keys stay on this device.").size(10.0).weak());
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("Get keys:").size(10.0).weak());
+                            ui.hyperlink_to("OpenAI", "https://platform.openai.com/api-keys");
+                            ui.label("·");
+                            ui.hyperlink_to("Anthropic", "https://console.anthropic.com/settings/keys");
+                            ui.label("·");
+                            ui.hyperlink_to("Gemini", "https://aistudio.google.com/app/apikey");
+                        });
                     });
 
                     ui.add_space(8.0);
@@ -1495,7 +1590,7 @@ impl eframe::App for LittleHelperApp {
                     });
 
                     ui.heading(
-                        egui::RichText::new("Build tools")
+                        egui::RichText::new("Build Helper (optional)")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1503,7 +1598,9 @@ impl eframe::App for LittleHelperApp {
                             }),
                     );
                     ui.label(
-                        egui::RichText::new("Set up Spec Kit so Build Helper can work without the terminal.")
+                        egui::RichText::new(
+                            "If you want the Build tab to scaffold projects, point this at Spec Kit’s `spec-assistant.js`."
+                        )
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
                             } else {
@@ -1641,164 +1738,17 @@ impl eframe::App for LittleHelperApp {
                         }
                     });
 
-                    ui.add_space(12.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
-                            s.show_settings_dialog = false;
-                        }
+                        ui.add_space(10.0);
                     });
                 });
+
+            if wants_close {
+                open = false;
+            }
+            s.show_settings_dialog = open;
         }
 
-        // Slack dialog window (modal-ish)
-        if s.show_slack_dialog {
-            egui::Window::new("Send to Slack")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.set_min_width(400.0);
-
-                    ui.add_space(8.0);
-
-                    // Channel selector
-                    ui.horizontal(|ui| {
-                        ui.label("Channel:");
-                        egui::ComboBox::from_id_source("slack_channel")
-                            .selected_text(&s.slack_selected_channel)
-                            .show_ui(ui, |ui| {
-                                // Common channel options
-                                let channels = [
-                                    "#general",
-                                    "#content",
-                                    "#drafts",
-                                    "#general",
-                                    "#team",
-                                    "#review",
-                                ];
-                                for channel in channels {
-                                    ui.selectable_value(&mut s.slack_selected_channel, channel.to_string(), channel);
-                                }
-                            });
-                    });
-
-                    ui.add_space(8.0);
-
-                    // Preview of message
-                    ui.label("Message preview:");
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .show(ui, |ui| {
-                            if let Some(msg) = &s.slack_message_to_send {
-                                let preview = if msg.len() > 500 {
-                                    format!("{}...", &msg[..500])
-                                } else {
-                                    msg.clone()
-                                };
-                                ui.label(&preview);
-                            }
-                        });
-
-                    ui.add_space(8.0);
-
-                    // Status message
-                    if let Some(status) = &s.slack_status {
-                        if status.starts_with("Error") {
-                            ui.colored_label(egui::Color32::RED, status);
-                        } else {
-                            ui.colored_label(egui::Color32::GREEN, status);
-                        }
-                        ui.add_space(8.0);
-                    }
-
-                    // Webhook URL check
-                    if s.settings.slack.webhook_url.is_none() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(200, 150, 50),
-                            "Slack webhook not configured. Set SLACK_WEBHOOK_URL environment variable."
-                        );
-                        ui.add_space(8.0);
-                    }
-
-                    // Buttons
-                    ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
-                            s.show_slack_dialog = false;
-                            s.slack_message_to_send = None;
-                            s.slack_status = None;
-                        }
-
-                        let can_send = s.settings.slack.webhook_url.is_some() || std::env::var("SLACK_WEBHOOK_URL").is_ok();
-
-                        if ui.add_enabled(can_send, egui::Button::new("Send")).clicked() {
-                            // Send to Slack
-                            if let Some(msg) = &s.slack_message_to_send {
-                                let webhook_url = s.settings.slack.webhook_url.clone()
-                                    .or_else(|| std::env::var("SLACK_WEBHOOK_URL").ok());
-
-                                if let Some(url) = webhook_url {
-                                    let channel = s.slack_selected_channel.clone();
-                                    let message = msg.clone();
-
-                                    // Spawn async send
-                                    let result = send_slack_message_sync(&url, &channel, &message);
-                                    match result {
-                                        Ok(_) => {
-                                            s.slack_status = Some(format!("Sent to {}", channel));
-                                            // Close after short delay would be nice, but for now just show success
-                                        }
-                                        Err(e) => {
-                                            s.slack_status = Some(format!("Error: {}", e));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                });
-        }
-    }
-}
-
-/// Send a Slack message synchronously (for UI thread)
-fn send_slack_message_sync(webhook_url: &str, channel: &str, message: &str) -> Result<(), String> {
-    // Build JSON payload
-    let payload = serde_json::json!({
-        "channel": channel,
-        "username": "Little Helper",
-        "icon_emoji": ":robot_face:",
-        "text": message
-    });
-
-    // Use ureq for simple sync HTTP (or we could spawn a thread)
-    // For now, use std::process to call curl as a simple solution
-    let payload_str = payload.to_string();
-
-    let output = std::process::Command::new("curl")
-        .args([
-            "-s",
-            "-S",
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            &payload_str,
-            webhook_url,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to send: {}", e))?;
-
-    if output.status.success() {
-        let response = String::from_utf8_lossy(&output.stdout);
-        if response.contains("ok") || response.is_empty() {
-            Ok(())
-        } else {
-            Err(format!("Slack error: {}", response))
-        }
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Request failed: {}", stderr))
+        // Slack is not included in the public edition
     }
 }
 
@@ -1833,7 +1783,9 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
                     .size(16.0),
             );
             ui.label(
-                egui::RichText::new("Spec Kit keeps projects organized with specs, plans, and tasks.")
+                egui::RichText::new(
+                    "Uses Spec Kit to scaffold a project and run a spec. If you don’t need this, ignore the Build tab."
+                )
                     .color(subtle_color)
                     .size(11.0),
             );
@@ -1856,6 +1808,20 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
                     .color(subtle_color)
                     .size(10.0),
             );
+
+            if !spec_kit_ready {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("What’s this?").size(11.0).color(subtle_color));
+                    ui.hyperlink_to("Spec Kit", "https://github.com/getspeckit/spec-kit");
+                    ui.label(egui::RichText::new("·").size(11.0).color(subtle_color));
+                    ui.label(
+                        egui::RichText::new("Set the path in Settings → Build Helper")
+                            .size(11.0)
+                            .color(subtle_color),
+                    );
+                });
+            }
 
             if let Some(status) = &s.build_status {
                 let color = if s.build_status_is_error {
@@ -1973,14 +1939,14 @@ fn mode_button(
     };
     
     let btn = egui::Button::new(egui::RichText::new(label_text).size(14.0).color(text_color))
-    .fill(if is_selected {
-        egui::Color32::from_rgb(70, 130, 180)
-    } else {
-        egui::Color32::TRANSPARENT
-    })
-    .rounding(egui::Rounding::same(8.0));
+        .fill(if is_selected {
+            egui::Color32::from_rgb(70, 130, 180)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 0)
+        })
+        .rounding(egui::Rounding::same(9.0));
 
-    if ui.add_sized([80.0, 32.0], btn).clicked() {
+    if ui.add_sized([90.0, 32.0], btn).clicked() {
         *current = mode;
     }
 }
@@ -2103,7 +2069,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
             ),
             ("🔍", "Search the web", "With sources and citations"),
             ("📄", "Preview files", "Text, images, CSV, JSON, HTML, PDF"),
-            ("💬", "Send to Slack", "Share responses to your channels"),
+            // Slack is not included in the public edition
         ];
 
         for (icon, name, desc) in capabilities {
@@ -2310,7 +2276,6 @@ fn render_rick_roll(ui: &mut egui::Ui, _dark: bool) {
 /// Result from rendering a message
 struct MessageAction {
     clicked_path: Option<PathBuf>,
-    send_to_slack: Option<String>,
 }
 
 /// Render a chat message, returning any actions taken
@@ -2323,7 +2288,6 @@ fn render_message(
     let is_user = msg.role == "user";
     let mut action = MessageAction {
         clicked_path: None,
-        send_to_slack: None,
     };
 
     if is_user {
@@ -2407,14 +2371,7 @@ fn render_message(
                     {
                         ui.output_mut(|o| o.copied_text = msg.content.clone());
                     }
-                    ui.add_space(8.0);
-                    if ui
-                        .small_button("Send to Slack")
-                        .on_hover_text("Share this response to a Slack channel")
-                        .clicked()
-                    {
-                        action.send_to_slack = Some(msg.content.clone());
-                    }
+                    // Slack sharing is not included in the public edition
                 });
             });
     }
@@ -2671,7 +2628,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                         ui.group(|ui| {
                             ui.label(
-                                egui::RichText::new("Privacy preferences")
+                                egui::RichText::new("Privacy")
                                     .size(14.0)
                                     .color(if dark {
                                         egui::Color32::from_rgb(220, 210, 200)
@@ -2681,14 +2638,8 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             );
                             ui.add_space(6.0);
 
-                            ui.checkbox(
-                                &mut s.settings.enable_campaign_context,
-                                "Load project materials automatically",
-                            );
-                            ui.checkbox(
-                                &mut s.settings.enable_persona_context,
-                                "Load persona files from ~/Process/personas",
-                            );
+                            // Keep onboarding minimal. Folder access and "help fix" permissions
+                            // are handled inside Find/Fix when needed.
                             ui.checkbox(
                                 &mut s.settings.share_system_summary,
                                 "Share basic system info with the AI",
@@ -2696,155 +2647,6 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ui.checkbox(
                                 &mut s.settings.enable_internet_research,
                                 "Allow web research (searches and articles)",
-                            );
-                        });
-
-                        ui.add_space(24.0);
-
-                        ui.group(|ui| {
-                            ui.label(
-                                egui::RichText::new("Allowed folders")
-                                    .size(14.0)
-                                    .color(if dark {
-                                        egui::Color32::from_rgb(220, 210, 200)
-                                    } else {
-                                        warm_brown
-                                    }),
-                            );
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "Little Helper only works inside these folders.",
-                                )
-                                .size(12.0)
-                                .color(if dark {
-                                    egui::Color32::from_rgb(210, 200, 190)
-                                } else {
-                                    egui::Color32::from_rgb(100, 80, 70)
-                                }),
-                            );
-                            ui.add_space(8.0);
-                            
-                            // Privacy explanation for local models
-                            ui.label(
-                                egui::RichText::new(
-                                    "💡 If you're using a private local model, it's safe to give full access. \
-                                    Your AI never connects to the outside world (except for web searches when you ask). \
-                                    The more access you give, the more I can help you find things and get things done!"
-                                )
-                                .size(11.0)
-                                .color(if dark {
-                                    egui::Color32::from_rgb(160, 180, 160)
-                                } else {
-                                    egui::Color32::from_rgb(60, 100, 60)
-                                }),
-                            );
-                            ui.add_space(12.0);
-
-                            if s.settings.allowed_dirs.is_empty() {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(230, 120, 120),
-                                    "No folders selected yet.",
-                                );
-                                ui.add_space(4.0);
-                            }
-
-                            let mut to_remove: Option<String> = None;
-                            for dir in &s.settings.allowed_dirs {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(dir)
-                                            .family(egui::FontFamily::Monospace)
-                                            .size(12.0),
-                                    );
-                                    if s.settings.allowed_dirs.len() > 1 {
-                                        if ui.small_button("Remove").clicked() {
-                                            to_remove = Some(dir.clone());
-                                        }
-                                    }
-                                });
-                            }
-
-                            if let Some(target) = to_remove {
-                                s.settings.allowed_dirs.retain(|d| d != &target);
-                                ensure_allowed_dirs(&mut s.settings);
-                            }
-
-                            ui.add_space(4.0);
-                            if ui
-                                .button("Add folder…")
-                                .on_hover_text("Choose a folder Little Helper can access")
-                                .clicked()
-                            {
-                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                    let path_str =
-                                        path.canonicalize().unwrap_or(path).to_string_lossy().to_string();
-                                    if !s.settings.allowed_dirs.contains(&path_str) {
-                                        s.settings.allowed_dirs.push(path_str);
-                                    }
-                                }
-                            }
-                        });
-
-                        ui.add_space(24.0);
-
-                        ui.group(|ui| {
-                            ui.label(
-                                egui::RichText::new("Can I help fix and protect your computer?")
-                                    .size(14.0)
-                                    .color(if dark {
-                                        egui::Color32::from_rgb(220, 210, 200)
-                                    } else {
-                                        warm_brown
-                                    }),
-                            );
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "With your permission, I can check for problems, clean up junk, and keep things secure."
-                                )
-                                .size(12.0)
-                                .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
-                            );
-                            ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "You'll always see what I want to do and approve it first."
-                                )
-                                .size(12.0)
-                                .strong()
-                                .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
-                            );
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new("• Safe actions like reading files and checking info happen automatically")
-                                    .size(11.0)
-                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
-                            );
-                            ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new("• Changes like moving files show you exactly what I'll do and wait for your OK")
-                                    .size(11.0)
-                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
-                            );
-                            ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new("• Destructive actions like deleting or formatting are blocked unless you specifically allow them")
-                                    .size(11.0)
-                                    .color(if dark { warm_tan } else { egui::Color32::from_rgb(140, 120, 100) }),
-                            );
-                            ui.add_space(6.0);
-                            let mut permission = s.settings.user_profile.terminal_permission_granted;
-                            if ui
-                                .checkbox(&mut permission, "Yes, I'd like help keeping my computer safe")
-                                .changed()
-                            {
-                                s.settings.user_profile.terminal_permission_granted = permission;
-                            }
-                            ui.label(
-                                egui::RichText::new("You can change this anytime in settings.")
-                                    .size(11.0)
-                                    .color(egui::Color32::from_gray(120)),
                             );
                         });
 
