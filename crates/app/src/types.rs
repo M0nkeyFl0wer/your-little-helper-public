@@ -3,7 +3,10 @@
 //! This module contains all the main type definitions used throughout the app,
 //! including result types, screen states, chat types, and the main AppState.
 
-use agent_host::{classify_command, execute_with_sudo, AgentHost, CommandResult, DangerLevel};
+use agent_host::{classify_command, AgentHost, CommandResult, DangerLevel};
+
+#[cfg(not(windows))]
+use agent_host::execute_with_sudo;
 use eframe::egui;
 use services::web_preview::WebPreviewService;
 use shared::agent_api::ChatMessage as ApiChatMessage;
@@ -985,6 +988,20 @@ What to do next:\n\
         // Check if command needs sudo
         let danger_level = classify_command(&command);
         if danger_level == DangerLevel::NeedsSudo {
+            #[cfg(windows)]
+            {
+                self.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: "This command needs admin privileges, but privileged execution isn’t supported on Windows yet.".to_string(),
+                    details: None,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+                self.command_result_rx = None;
+                self.is_thinking.insert(self.current_mode, false);
+                self.thinking_status.insert(self.current_mode, String::new());
+                return;
+            }
+
             // Show password dialog
             self.password_dialog.open_with_message(format!(
                 "Command '{}' requires administrator privileges.\n\nEnter your password:",
