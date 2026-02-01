@@ -125,7 +125,7 @@ pub fn run_ai_generation(
                 }
             }
 
-            // Queue commands for approval (no longer auto-execute)
+            // Run safe commands automatically; queue the rest for approval.
             for cmd in &commands {
                 if !allow_terminal {
                     all_executed_commands.push((
@@ -159,9 +159,35 @@ pub fn run_ai_generation(
                     continue;
                 }
 
-                results.push(format!("[Command '{}' queued for user approval]", cmd));
-                if !pending_commands.iter().any(|c| c == cmd) {
-                    pending_commands.push(cmd.clone());
+                if danger == DangerLevel::Safe {
+                    match agent_host::execute_command(cmd, 60).await {
+                        Ok(r) => {
+                            all_executed_commands.push((
+                                cmd.clone(),
+                                r.output.clone(),
+                                r.success,
+                            ));
+                            results.push(format!(
+                                "[Command output]\n$ {}\n{}",
+                                cmd,
+                                if r.output.trim().is_empty() {
+                                    "(no output)".to_string()
+                                } else {
+                                    r.output
+                                }
+                            ));
+                        }
+                        Err(e) => {
+                            all_executed_commands
+                                .push((cmd.clone(), e.to_string(), false));
+                            results.push(format!("[Command failed]\n$ {}\n{}", cmd, e));
+                        }
+                    }
+                } else {
+                    results.push(format!("[Command '{}' queued for user approval]", cmd));
+                    if !pending_commands.iter().any(|c| c == cmd) {
+                        pending_commands.push(cmd.clone());
+                    }
                 }
             }
 

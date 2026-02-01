@@ -38,7 +38,7 @@ pub mod settings {
     }
 
     /// User profile for personalization
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct UserProfile {
         pub name: String,
         pub mascot_image_path: Option<String>, // Path to pet/mascot image
@@ -47,6 +47,19 @@ pub mod settings {
         /// Whether user granted terminal command execution permission
         #[serde(default)]
         pub terminal_permission_granted: bool,
+    }
+
+    impl Default for UserProfile {
+        fn default() -> Self {
+            Self {
+                name: String::new(),
+                mascot_image_path: None,
+                dark_mode: false,
+                onboarding_complete: false,
+                // For early testers, default ON so they experience the “superpowers” flow.
+                terminal_permission_granted: true,
+            }
+        }
     }
 
     /// Slack integration settings
@@ -117,14 +130,17 @@ pub mod settings {
                     anthropic_auth: ProviderAuth::default(),
                     gemini_auth: ProviderAuth::default(),
                 },
-                enable_internet_research: false,
+                // For early testers: start enabled; user can turn off anytime.
+                enable_internet_research: true,
                 max_results: 200,
                 user_profile: UserProfile::default(),
                 slack: SlackSettings::default(),
                 build: BuildSettings::default(),
-                enable_campaign_context: true,
-                enable_persona_context: true,
-                share_system_summary: false,
+                // Public/test builds should not load private/work context by default.
+                enable_campaign_context: false,
+                enable_persona_context: false,
+                // For early testers: start enabled; user can turn off anytime.
+                share_system_summary: true,
             }
         }
     }

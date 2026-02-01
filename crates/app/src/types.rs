@@ -239,6 +239,7 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let (mut settings, _) = crate::utils::load_settings_or_default();
+        crate::utils::ensure_allowed_dirs(&mut settings);
 
         // Apply preloaded user info if available (bespoke builds)
         if crate::secrets::PRELOAD_SKIP_ONBOARDING {
@@ -530,7 +531,7 @@ impl AppState {
         }
 
         dirs::home_dir()
-            .map(|h| h.join("Projects/spec-kit-assistant/spec-assistant.js"))
+            .map(|h| h.join("Projects/spec-kit-assistant/archive/legacy-node/spec-assistant.js"))
             .unwrap_or_default()
     }
 

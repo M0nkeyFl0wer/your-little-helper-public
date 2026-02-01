@@ -93,8 +93,15 @@ impl GeminiClient {
                     parts: vec![part],
                 });
             } else {
+                // Gemini expects roles: "user" | "model".
+                // Our app uses "user" | "assistant".
+                let role = match m.role.as_str() {
+                    "assistant" => "model",
+                    "user" => "user",
+                    other => other,
+                };
                 contents.push(GeminiContent {
-                    role: m.role,
+                    role: role.to_string(),
                     parts: vec![GeminiPart { text: m.content }],
                 });
             }
