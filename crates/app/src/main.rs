@@ -2,6 +2,7 @@ use agent_host::CommandResult;
 use eframe::egui;
 use parking_lot::Mutex;
 use shared::settings::AppSettings;
+use shared::preview_types::PreviewContent;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -651,6 +652,133 @@ impl eframe::App for LittleHelperApp {
                     // Render active viewer
                     match &mut s.active_viewer {
                         ActiveViewer::Panel => {
+                            // Idle dashboard: make the preview panel useful even when nothing is open.
+                            let is_idle = matches!(
+                                s.preview_panel.content(),
+                                None
+                                    | Some(PreviewContent::ModeIntro { .. })
+                                    | Some(PreviewContent::Ascii { .. })
+                                    | Some(PreviewContent::SkillsList { .. })
+                                    | Some(PreviewContent::Tip { .. })
+                            );
+
+                            if is_idle {
+                                let accent = if dark {
+                                    egui::Color32::from_rgb(140, 180, 140)
+                                } else {
+                                    egui::Color32::from_rgb(60, 120, 80)
+                                };
+                                let subtle = if dark {
+                                    egui::Color32::from_rgb(170, 170, 190)
+                                } else {
+                                    egui::Color32::from_rgb(90, 90, 110)
+                                };
+
+                                // Mini context/capacity meter
+                                let comfort_total: f32 = 8000.0;
+                                let used = s.last_prompt_tokens_est as f32;
+                                let ratio = (used / comfort_total).clamp(0.0, 1.0);
+
+                                egui::Frame::none()
+                                    .fill(if dark {
+                                        egui::Color32::from_rgb(32, 32, 40)
+                                    } else {
+                                        egui::Color32::from_rgb(248, 248, 252)
+                                    })
+                                    .rounding(egui::Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::same(10.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new("Context")
+                                                    .strong()
+                                                    .color(accent)
+                                                    .size(12.0),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "~{} / 8000",
+                                                    s.last_prompt_tokens_est
+                                                ))
+                                                .size(11.0)
+                                                .color(subtle),
+                                            );
+                                        });
+
+                                        ui.add(
+                                            egui::ProgressBar::new(ratio)
+                                                .desired_width(ui.available_width()),
+                                        );
+
+                                        if ratio > 0.85 {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    "If things feel slow, I may trim older messages to make room.",
+                                                )
+                                                .size(11.0)
+                                                .color(subtle),
+                                            );
+                                        }
+
+                                        ui.add_space(8.0);
+
+                                        // Quick actions
+                                        ui.label(
+                                            egui::RichText::new("Quick actions")
+                                                .strong()
+                                                .color(accent)
+                                                .size(12.0),
+                                        );
+
+                                        let prompts: &[&str] = match s.current_mode {
+                                            ChatMode::Find => &[
+                                                "Find my latest downloads",
+                                                "Find my resume",
+                                                "Find photos of my dog",
+                                            ],
+                                            ChatMode::Fix => &[
+                                                "Run a quick health check",
+                                                "Why is my computer slow?",
+                                                "Help free up disk space",
+                                            ],
+                                            ChatMode::Research => &[
+                                                "Research a topic for me",
+                                                "Summarize this webpage",
+                                                "Compare two options",
+                                            ],
+                                            ChatMode::Build => &[
+                                                "Start a new project",
+                                                "Check my project",
+                                                "Run a spec",
+                                            ],
+                                            _ => &["What can you do?"],
+                                        };
+
+                                        for p in prompts {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        egui::RichText::new(*p)
+                                                            .size(12.0)
+                                                            .color(if dark {
+                                                                egui::Color32::from_rgb(220, 220, 230)
+                                                            } else {
+                                                                egui::Color32::from_rgb(40, 40, 50)
+                                                            }),
+                                                    )
+                                                    .frame(false),
+                                                )
+                                                .clicked()
+                                            {
+                                                s.input_text = (*p).to_string();
+                                            }
+                                        }
+                                    });
+
+                                ui.add_space(8.0);
+                            }
+
                             s.preview_panel.ui(ui);
 
                             if let Some(prompt) = s.preview_panel.take_clicked_prompt() {
