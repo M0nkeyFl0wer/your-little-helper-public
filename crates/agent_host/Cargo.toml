@@ -1,0 +1,28 @@
+[package]
+name = "agent_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
+providers = { path = "../providers" }
+services = { path = "../services" }
+shared = { path = "../shared" }
+urlencoding = "2.1"
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+dirs = "5"
+reqwest = { workspace = true }
+html2text = { workspace = true }
+walkdir = "2.4"
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,20 @@
+Welcome to Little Helper (Beta)
+
+Hey! Ben made this just for you.
+
+TO INSTALL:
+Drag "Little Helper" to your Applications folder.
+
+FIRST TIME OPENING:
+Since this is a beta and isn't signed by Apple yet, you might
+see "Little Helper can't be opened because it is from an
+unidentified developer."
+
+No worries! Just:
+1. Right-click (or Control-click) on Little Helper
+2. Choose "Open" from the menu
+3. Click "Open" in the dialog
+
+You only need to do this once. After that, it opens normally!
+
+Have fun, and let him know what you think!
