@@ -1,0 +1,48 @@
+[workspace]
+members = [
+  "crates/app",
+  "crates/agent_host",
+  "crates/providers",
+  "crates/services",
+  "crates/shared",
+  "crates/viewers",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+authors = ["Little Helper Team"]
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }
+regex = "1"
+walkdir = "2"
+ignore = "0.4"
+strsim = "0.11"
+parking_lot = "0.12"
+chrono = { version = "0.4", features = ["clock"] }
+directories = "5"
+oauth2 = "4"
+url = "2"
+tiny_http = "0.12"
+open = "5"
+image = "0.24"
+csv = "1.3"
+rusqlite = { version = "0.31", features = ["bundled"] }
+git2 = { version = "0.18", features = ["vendored-libgit2"] }
+zeroize = "1.7"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
+tempfile = "3"
+html2text = "0.6"
