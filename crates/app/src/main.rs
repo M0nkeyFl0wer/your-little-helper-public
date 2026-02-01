@@ -1,6 +1,7 @@
 use agent_host::CommandResult;
 use eframe::egui;
 use parking_lot::Mutex;
+use services::version_control::VersionControlService;
 use shared::settings::AppSettings;
 use shared::preview_types::PreviewContent;
 use std::fs;
@@ -660,6 +661,27 @@ impl eframe::App for LittleHelperApp {
                                 .clicked()
                             {
                                 ui.output_mut(|o| o.copied_text = path.display().to_string());
+                            }
+
+                            if ui
+                                .small_button("Versions")
+                                .on_hover_text("See earlier versions and restore")
+                                .clicked()
+                            {
+                                let root = path.parent().unwrap_or(path.as_path());
+                                if let Ok(vc) = VersionControlService::new(root) {
+                                    if let Ok(versions) = vc.list_versions(&path) {
+                                        let file_name = path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "file".to_string());
+                                        s.preview_panel.show_content(PreviewContent::VersionHistory {
+                                            file_path: path.clone(),
+                                            file_name,
+                                            versions,
+                                        });
+                                    }
+                                }
                             }
                             ui.label(
                                 egui::RichText::new(path.to_string_lossy().to_string())
