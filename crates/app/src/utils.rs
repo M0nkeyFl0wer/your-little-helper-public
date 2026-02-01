@@ -205,8 +205,15 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
                 if let Ok(contents) = std::fs::read_to_string(&seed_path) {
                     if let Ok(mut settings) = serde_json::from_str::<AppSettings>(&contents) {
                         // Optional: import a bundled mascot image too.
-                        let mascot_seed = dir.join("seed-mascot.png");
-                        if mascot_seed.exists() {
+                        let mascot_seed = [
+                            dir.join("seed-mascot.png"),
+                            dir.join("seed-mascot.jpg"),
+                            dir.join("seed-mascot.jpeg"),
+                        ]
+                        .into_iter()
+                        .find(|p| p.exists());
+
+                        if let Some(mascot_seed) = mascot_seed {
                             if let Some(cfg) =
                                 config_path().and_then(|p| p.parent().map(|p| p.to_path_buf()))
                             {
@@ -224,6 +231,8 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
                         // Best-effort cleanup (may fail if running from a read-only volume)
                         let _ = std::fs::remove_file(&seed_path);
                         let _ = std::fs::remove_file(&dir.join("seed-mascot.png"));
+                        let _ = std::fs::remove_file(&dir.join("seed-mascot.jpg"));
+                        let _ = std::fs::remove_file(&dir.join("seed-mascot.jpeg"));
 
                         return (settings, true);
                     }
