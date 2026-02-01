@@ -1002,13 +1002,16 @@ What to do next:\n\
                 return;
             }
 
-            // Show password dialog
-            self.password_dialog.open_with_message(format!(
-                "Command '{}' requires administrator privileges.\n\nEnter your password:",
-                command
-            ));
-            self.pending_sudo_command = Some(command);
-            return;
+            #[cfg(not(windows))]
+            {
+                // Show password dialog
+                self.password_dialog.open_with_message(format!(
+                    "Command '{}' requires administrator privileges.\n\nEnter your password:",
+                    command
+                ));
+                self.pending_sudo_command = Some(command);
+                return;
+            }
         }
 
         let (tx, rx) = channel::<CommandExecResult>();
@@ -1026,6 +1029,26 @@ What to do next:\n\
 
     /// Execute a sudo command with the provided password
     pub fn execute_sudo_command(&mut self, command: String, password: String) {
+        #[cfg(windows)]
+        {
+            let _ = password;
+            self.push_chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!(
+                    "I can’t run `{}` with admin privileges on Windows yet.",
+                    command
+                ),
+                details: None,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+            self.pending_sudo_command = None;
+            self.is_thinking.insert(self.current_mode, false);
+            self.thinking_status.insert(self.current_mode, String::new());
+            return;
+        }
+
+        #[cfg(not(windows))]
+        {
         let (tx, rx) = channel::<CommandExecResult>();
         self.command_result_rx = Some(rx);
         // Set thinking for current mode
@@ -1045,6 +1068,7 @@ What to do next:\n\
             };
             let _ = tx.send(CommandExecResult { command, output });
         });
+        }
     }
 
     /// Load the mascot image as a texture (custom or default)
