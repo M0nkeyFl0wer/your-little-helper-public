@@ -10,6 +10,65 @@ use std::sync::OnceLock;
 
 static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
+const BUNDLED_SPECKIT_TGZ: &[u8] = include_bytes!("../assets/spec-kit-assistant-legacy-node.tgz");
+const BUNDLED_SPECKIT_VERSION: &str = "legacy-node-2026-02-01";
+
+fn is_nonempty_opt(s: &Option<String>) -> bool {
+    s.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false)
+}
+
+fn try_install_bundled_speckit(settings: &mut AppSettings) -> bool {
+    // Only auto-wire if the user hasn't configured a path already.
+    if is_nonempty_opt(&settings.build.spec_kit_path) {
+        return false;
+    }
+
+    let cfg_dir = match config_path().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    let install_root = cfg_dir.join("bundled").join("spec-kit-assistant");
+    let version_file = install_root.join(".bundle_version");
+    let expected = install_root
+        .join("archive")
+        .join("legacy-node")
+        .join("spec-assistant.js");
+
+    if expected.exists() {
+        if let Ok(v) = std::fs::read_to_string(&version_file) {
+            if v.trim() == BUNDLED_SPECKIT_VERSION {
+                settings.build.spec_kit_path = Some(expected.to_string_lossy().to_string());
+                return true;
+            }
+        }
+    }
+
+    // (Re)install bundled tool.
+    let _ = std::fs::create_dir_all(install_root.parent().unwrap_or(&cfg_dir));
+    if install_root.exists() {
+        let _ = std::fs::remove_dir_all(&install_root);
+    }
+    if std::fs::create_dir_all(&install_root).is_err() {
+        return false;
+    }
+
+    let cursor = std::io::Cursor::new(BUNDLED_SPECKIT_TGZ);
+    let gz = flate2::read::GzDecoder::new(cursor);
+    let mut archive = tar::Archive::new(gz);
+    if archive.unpack(&install_root).is_err() {
+        return false;
+    }
+
+    if !expected.exists() {
+        return false;
+    }
+
+    let _ = std::fs::write(&version_file, BUNDLED_SPECKIT_VERSION);
+    settings.build.spec_kit_path = Some(expected.to_string_lossy().to_string());
+    true
+}
+
 fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
     // Allow pipes and simple redirects, but block multi-command chaining and substitution.
     // This prevents common shell-injection vectors when commands are executed via a shell.
@@ -184,6 +243,11 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
     if let Some(path) = config_path() {
         if let Ok(contents) = std::fs::read_to_string(&path) {
             if let Ok(settings) = serde_json::from_str::<AppSettings>(&contents) {
+                let mut settings = settings;
+                let changed = try_install_bundled_speckit(&mut settings);
+                if changed {
+                    save_settings(&settings);
+                }
                 return (settings, true);
             }
         }
@@ -241,38 +305,11 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
         }
     }
 
-    // First-run helper: if Spec Kit Assistant is bundled, wire Build automatically.
+    // First-run helper: install bundled Spec Kit Assistant into config.
     let mut settings = AppSettings::default();
-    if settings.build.spec_kit_path.is_none() {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let mut dirs_to_check = vec![exe_dir.to_path_buf()];
-
-                // On macOS app bundles, also check Contents/Resources
-                if let Some(contents_dir) = exe_dir.parent().and_then(|p| p.parent()) {
-                    dirs_to_check.push(contents_dir.join("Resources"));
-                }
-
-                for base in dirs_to_check {
-                    let candidates = [
-                        base.join("spec-kit-assistant/archive/legacy-node/spec-assistant.js"),
-                        base.join("spec-kit-assistant/spec-assistant.js"),
-                        base.join("archive/legacy-node/spec-assistant.js"),
-                        base.join("spec-assistant.js"),
-                    ];
-                    if let Some(found) = candidates.into_iter().find(|p| p.exists()) {
-                        settings.build.spec_kit_path = Some(
-                            found
-                                .canonicalize()
-                                .unwrap_or(found)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        break;
-                    }
-                }
-            }
-        }
+    if try_install_bundled_speckit(&mut settings) {
+        save_settings(&settings);
+        return (settings, true);
     }
 
     (settings, false)
