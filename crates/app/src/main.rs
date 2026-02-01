@@ -269,6 +269,8 @@ impl eframe::App for LittleHelperApp {
 
             // Restore input text for the new mode (or clear it)
             let new_mode = s.current_mode;
+            // Mark this mode as "read"
+            s.unread_modes.remove(&new_mode);
             s.input_text = s
                 .mode_input_drafts
                 .get(&new_mode)
@@ -399,10 +401,43 @@ impl eframe::App for LittleHelperApp {
                     let _content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
                     let build_processing = s.is_thinking.get(&ChatMode::Build).copied().unwrap_or(false);
                     
-                    mode_button(ui, "Find", ChatMode::Find, &mut s.current_mode, find_processing);
-                    mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode, fix_processing);
-                    mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode, research_processing);
-                    mode_button(ui, "Build", ChatMode::Build, &mut s.current_mode, build_processing);
+                    let find_unread = s.unread_modes.contains(&ChatMode::Find);
+                    let fix_unread = s.unread_modes.contains(&ChatMode::Fix);
+                    let research_unread = s.unread_modes.contains(&ChatMode::Research);
+                    let build_unread = s.unread_modes.contains(&ChatMode::Build);
+
+                    mode_button(
+                        ui,
+                        "Find",
+                        ChatMode::Find,
+                        &mut s.current_mode,
+                        find_processing,
+                        find_unread,
+                    );
+                    mode_button(
+                        ui,
+                        "Fix",
+                        ChatMode::Fix,
+                        &mut s.current_mode,
+                        fix_processing,
+                        fix_unread,
+                    );
+                    mode_button(
+                        ui,
+                        "Research",
+                        ChatMode::Research,
+                        &mut s.current_mode,
+                        research_processing,
+                        research_unread,
+                    );
+                    mode_button(
+                        ui,
+                        "Build",
+                        ChatMode::Build,
+                        &mut s.current_mode,
+                        build_processing,
+                        build_unread,
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
@@ -1117,6 +1152,24 @@ impl eframe::App for LittleHelperApp {
                         ChatMode::Content => "What content would you like to create?",
                         ChatMode::Build => "What would you like to build?",
                     };
+
+                    // Subtle attention nudge when approvals are waiting
+                    if !s.pending_commands.is_empty() {
+                        let blink = ((ui.input(|i| i.time) * 2.0) as i32) % 2 == 0;
+                        if blink {
+                            ui.label(
+                                egui::RichText::new("↑")
+                                    .size(18.0)
+                                    .color(if dark {
+                                        egui::Color32::from_rgb(220, 180, 100)
+                                    } else {
+                                        egui::Color32::from_rgb(160, 120, 60)
+                                    }),
+                            );
+                        } else {
+                            ui.add_space(18.0);
+                        }
+                    }
 
                     let response = ui.add_sized(
                         [ui.available_width() - 80.0, 40.0],
@@ -1860,7 +1913,14 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
         });
 }
 
-fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut ChatMode, is_processing: bool) {
+fn mode_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    mode: ChatMode,
+    current: &mut ChatMode,
+    is_processing: bool,
+    has_unread: bool,
+) {
     let is_selected = *current == mode;
     
     // Build label with processing indicator
@@ -1870,6 +1930,8 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
         let pulse = ((time * 4.0).sin() + 1.0) / 2.0; // 0.0 to 1.0
         let _alpha = (128.0 + pulse * 127.0) as u8; // 128-255 range
         format!("{} ●", label)
+    } else if has_unread && !is_selected {
+        format!("{} •", label)
     } else {
         label.to_string()
     };
@@ -1882,6 +1944,8 @@ fn mode_button(ui: &mut egui::Ui, label: &str, mode: ChatMode, current: &mut Cha
         let pulse = ((time * 4.0).sin() + 1.0) / 2.0;
         let alpha = (128.0 + pulse * 127.0) as u8;
         egui::Color32::from_rgba_unmultiplied(100, 200, 255, alpha)
+    } else if has_unread {
+        egui::Color32::from_rgb(120, 140, 230)
     } else {
         egui::Color32::from_rgb(70, 70, 90)
     };

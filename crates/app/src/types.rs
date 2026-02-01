@@ -10,6 +10,7 @@ use shared::agent_api::ChatMessage as ApiChatMessage;
 use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
@@ -128,6 +129,9 @@ pub struct AppState {
     pub mode_input_drafts: std::collections::HashMap<ChatMode, String>,
     /// Per-mode chat threads
     pub mode_chat_histories: std::collections::HashMap<ChatMode, Vec<ChatMessage>>,
+
+    /// Modes with unseen assistant replies
+    pub unread_modes: HashSet<ChatMode>,
     /// Unified thread history across all modes
     pub thread_history: crate::thread_history::ThreadHistory,
     /// Current thread ID (for continuing conversations)
@@ -287,6 +291,7 @@ impl Default for AppState {
                 h.insert(ChatMode::Build, Vec::new());
                 h
             },
+            unread_modes: HashSet::new(),
             thread_history: crate::thread_history::ThreadHistory::new(),
             current_thread_id: None,
             show_thread_history: false,
@@ -586,11 +591,22 @@ impl AppState {
             .push(msg);
     }
 
+    pub fn push_chat_to(&mut self, mode: ChatMode, msg: ChatMessage) {
+        if mode != self.current_mode && msg.role == "assistant" {
+            self.unread_modes.insert(mode);
+        }
+        if let Some(history) = self.mode_chat_histories.get_mut(&mode) {
+            history.push(msg);
+        }
+    }
+
     /// Check for completed AI responses (called each frame)
     pub fn poll_ai_response(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
             // Non-blocking check for result
             if let Ok(result) = rx.try_recv() {
+                let response_mode = self.thinking_mode;
+
                 // Clear thinking state for the mode that was processing
                 if let Some(mode) = self.thinking_mode {
                     self.is_thinking.insert(mode, false);
@@ -618,8 +634,14 @@ impl AppState {
                         content: error_content,
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
-                    self.push_chat(error_msg);
+                    if let Some(mode) = response_mode {
+                        self.push_chat_to(mode, error_msg);
+                    } else {
+                        self.push_chat(error_msg);
+                    }
                 } else {
+                    let mode = response_mode.unwrap_or(self.current_mode);
+
                     // Store file to preview
                     self.pending_preview = result.preview_file;
                     self.pending_commands = result.pending_commands.clone();
@@ -648,7 +670,7 @@ impl AppState {
                                     .push_str(&format!("```\n{}\n```\n", output_preview.trim()));
                             }
                         }
-                        self.push_chat(ChatMessage {
+                        self.push_chat_to(mode, ChatMessage {
                             role: "assistant".to_string(),
                             content: cmd_summary,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -706,7 +728,7 @@ impl AppState {
                         },
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
-                    self.push_chat(assistant_msg);
+                    self.push_chat_to(mode, assistant_msg);
 
                     if !self.pending_commands.is_empty() {
                         let mut summary =
@@ -714,7 +736,7 @@ impl AppState {
                         for cmd in &self.pending_commands {
                             summary.push_str(&format!("\n`{}`", cmd));
                         }
-                        self.push_chat(ChatMessage {
+                        self.push_chat_to(mode, ChatMessage {
                             role: "assistant".to_string(),
                             content: summary,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
