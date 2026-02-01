@@ -394,8 +394,8 @@ impl eframe::App for LittleHelperApp {
                     let find_processing = s.is_thinking.get(&ChatMode::Find).copied().unwrap_or(false);
                     let fix_processing = s.is_thinking.get(&ChatMode::Fix).copied().unwrap_or(false);
                     let research_processing = s.is_thinking.get(&ChatMode::Research).copied().unwrap_or(false);
-                    let data_processing = s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
-                    let content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
+                    let _data_processing = s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
+                    let _content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
                     let build_processing = s.is_thinking.get(&ChatMode::Build).copied().unwrap_or(false);
                     
                     mode_button(ui, "Find", ChatMode::Find, &mut s.current_mode, find_processing);

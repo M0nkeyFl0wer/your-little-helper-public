@@ -675,6 +675,18 @@ impl AppState {
                         }
                     }
 
+                    // If nothing explicit was previewed, try to proactively preview a referenced image/pdf.
+                    if self.pending_preview.is_none() {
+                        if let Some(path) = crate::utils::extract_previewable_file(
+                            &result.response,
+                            &self.settings.allowed_dirs,
+                        ) {
+                            if self.is_path_permitted(&path) {
+                                self.pending_preview = Some(path);
+                            }
+                        }
+                    }
+
                     self.last_response_tokens_est = Self::estimate_tokens(&result.response);
                     self.session_output_tokens_est = self
                         .session_output_tokens_est

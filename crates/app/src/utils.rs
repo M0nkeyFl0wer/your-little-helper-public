@@ -288,6 +288,22 @@ pub fn extract_paths(text: &str, allowed_dirs: &[String]) -> Vec<PathBuf> {
     paths
 }
 
+pub fn extract_previewable_file(text: &str, allowed_dirs: &[String]) -> Option<PathBuf> {
+    // Prefer a single, useful file preview (images/pdfs) if the model references one.
+    // This is a best-effort helper; strict permission checks still apply.
+    let re = regex::Regex::new(r#"(?P<p>(?:~\/|\/|\./|\.\./)[^\s"']+\.(?:png|jpg|jpeg|gif|pdf))"#)
+        .ok()?;
+    for cap in re.captures_iter(text) {
+        if let Some(m) = cap.name("p") {
+            let p = expand_user_path(m.as_str());
+            if p.exists() && is_path_in_allowed_dirs(&p, allowed_dirs) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// Save settings to disk
 pub fn save_settings(settings: &AppSettings) {
     if let Some(path) = config_path() {
