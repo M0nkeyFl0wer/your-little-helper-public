@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use services::version_control::VersionControlService;
 use shared::skill::FileAction;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,41 @@ pub struct SafeFileOps {
 }
 
 impl SafeFileOps {
+    fn should_track(path: &Path) -> bool {
+        // Avoid tracking files inside the internal version store.
+        let s = path.to_string_lossy();
+        !s.contains("/.little-helper/versions/") && !s.contains("\\.little-helper\\versions\\")
+    }
+
+    fn vc_for(path: &Path) -> Option<VersionControlService> {
+        let root = path.parent().unwrap_or(path);
+        VersionControlService::new(root).ok()
+    }
+
+    fn save_before_change(path: &Path) {
+        if !path.exists() {
+            return;
+        }
+        if !Self::should_track(path) {
+            return;
+        }
+        if let Some(vc) = Self::vc_for(path) {
+            let _ = vc.save_version(path);
+        }
+    }
+
+    fn save_after_change(path: &Path) {
+        if !path.exists() {
+            return;
+        }
+        if !Self::should_track(path) {
+            return;
+        }
+        if let Some(vc) = Self::vc_for(path) {
+            let _ = vc.save_version(path);
+        }
+    }
+
     /// Create a new SafeFileOps with the given archive directory
     pub fn new(archive_dir: PathBuf) -> Self {
         Self { archive_dir }
@@ -45,6 +81,9 @@ impl SafeFileOps {
 
         fs::write(path, content).with_context(|| format!("Failed to create file {:?}", path))?;
 
+        // Track the new file as a first version
+        Self::save_after_change(path);
+
         Ok(FileAction::Created)
     }
 
@@ -59,7 +98,11 @@ impl SafeFileOps {
             );
         }
 
+        Self::save_before_change(path);
+
         fs::write(path, content).with_context(|| format!("Failed to modify file {:?}", path))?;
+
+        Self::save_after_change(path);
 
         Ok(FileAction::Modified)
     }
@@ -68,6 +111,10 @@ impl SafeFileOps {
     pub fn write_file(&self, path: &Path, content: &[u8]) -> Result<FileAction> {
         let existed = path.exists();
 
+        if existed {
+            Self::save_before_change(path);
+        }
+
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -75,6 +122,8 @@ impl SafeFileOps {
         }
 
         fs::write(path, content).with_context(|| format!("Failed to write file {:?}", path))?;
+
+        Self::save_after_change(path);
 
         Ok(if existed {
             FileAction::Modified
@@ -91,6 +140,10 @@ impl SafeFileOps {
 
         let existed = path.exists();
 
+        if existed {
+            Self::save_before_change(path);
+        }
+
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -105,6 +158,8 @@ impl SafeFileOps {
 
         file.write_all(content)
             .with_context(|| format!("Failed to append to file {:?}", path))?;
+
+        Self::save_after_change(path);
 
         Ok(if existed {
             FileAction::Modified
@@ -137,6 +192,8 @@ impl SafeFileOps {
 
         fs::rename(from, to)
             .with_context(|| format!("Failed to move file from {:?} to {:?}", from, to))?;
+
+        Self::save_after_change(to);
 
         Ok(FileAction::Moved {
             from: from.to_path_buf(),
@@ -174,6 +231,8 @@ impl SafeFileOps {
         fs::rename(path, &archive_path)
             .with_context(|| format!("Failed to archive file {:?} to {:?}", path, archive_path))?;
 
+        Self::save_after_change(&archive_path);
+
         Ok(FileAction::Archived { to: archive_path })
     }
 
@@ -205,6 +264,8 @@ impl SafeFileOps {
         fs::rename(path, &archive_path)
             .with_context(|| format!("Failed to archive file {:?} to {:?}", path, archive_path))?;
 
+        Self::save_after_change(&archive_path);
+
         Ok(FileAction::Archived { to: archive_path })
     }
 
@@ -224,6 +285,8 @@ impl SafeFileOps {
 
         fs::copy(from, to)
             .with_context(|| format!("Failed to copy file from {:?} to {:?}", from, to))?;
+
+        Self::save_after_change(to);
 
         Ok(FileAction::Created)
     }
