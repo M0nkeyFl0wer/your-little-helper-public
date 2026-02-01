@@ -2444,8 +2444,11 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                 .inner_margin(egui::Margin::same(40.0)),
         )
         .show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.0);
 
                 // Friendly wave emoji as visual warmth
                 ui.label(
@@ -2457,14 +2460,25 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                 ui.add_space(8.0);
 
-                // Welcome header with dog icon
+                // Welcome header with dog ASCII (bigger + on-brand)
                 ui.horizontal(|ui| {
-                    ui.add_space(40.0);
-                    ui.label(
-                        egui::RichText::new("🐕")
-                            .size(32.0)
+                    ui.add_space(24.0);
+                    let time = ui.input(|i| i.time);
+                    let dog = crate::ascii_art::get_ascii_art_animated(
+                        shared::preview_types::AsciiState::Welcome,
+                        time,
                     );
-                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new(dog)
+                            .monospace()
+                            .size(16.0)
+                            .color(if dark {
+                                egui::Color32::from_rgb(210, 205, 200)
+                            } else {
+                                egui::Color32::from_rgb(90, 70, 60)
+                            }),
+                    );
+                    ui.add_space(16.0);
                     ui.label(
                         egui::RichText::new("I'm your Little Helper")
                             .size(24.0)
@@ -2597,10 +2611,10 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                         ui.add_space(12.0);
 
                         let features = [
-                            ("🔧", "Fix problems", "without touching the terminal"),
-                            ("🔍", "Find anything", "files, answers, solutions"),
-                            ("📊", "Work with data", "CSV, JSON, spreadsheets"),
-                            ("✍️", "Create content", "drafts, ideas, schedules"),
+                            ("🔎", "Find things", "files, photos, and docs"),
+                            ("🔧", "Fix problems", "with safe, guided steps"),
+                            ("🔬", "Research", "with sources and previews"),
+                            ("🐶", "Build", "projects with Spec Kit"),
                         ];
 
                         for (icon, title, desc) in features {
@@ -2903,7 +2917,8 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                     save_settings(&s.settings);
                     s.current_screen = AppScreen::Chat;
                 }
-            });
+                    });
+                });
         });
 }
 
