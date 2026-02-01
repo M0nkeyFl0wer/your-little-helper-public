@@ -29,6 +29,8 @@ open = "5"
 zeroize = { workspace = true }
 sysinfo = "0.30"
 arboard = "3"
+flate2 = "1"
+tar = "0.4"
 
 [package.metadata]
 description = "Little Helper - Personal AI Assistant GUI"
