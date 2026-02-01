@@ -682,14 +682,14 @@ impl eframe::App for LittleHelperApp {
                     .inner_margin(egui::Margin::same(16.0)),
             )
             .show(ctx, |ui| {
-                // Paint mascot as watermark FIRST (background layer)
+                // Paint mascot as wallpaper FIRST (background layer)
                 let panel_rect = ui.max_rect();
                 if let Some(texture) = &s.mascot_texture {
                     let tex_size = texture.size_vec2();
 
-                    // Scale larger - about 50% of panel width for more presence
-                    let max_width = panel_rect.width() * 0.50;
-                    let max_height = panel_rect.height() * 0.60;
+                    // Scale up like a chat wallpaper (large, soft)
+                    let max_width = panel_rect.width() * 0.68;
+                    let max_height = panel_rect.height() * 0.78;
                     let scale = (max_width / tex_size.x).min(max_height / tex_size.y);
                     let img_size = tex_size * scale;
 
@@ -700,12 +700,36 @@ impl eframe::App for LittleHelperApp {
                     );
                     let rect = egui::Rect::from_min_size(pos, img_size);
 
-                    // Subtle watermark - visible but won't obstruct text
+                    // Soft rounded frame to make the wallpaper feel intentional
+                    let rounding = egui::Rounding::same(28.0);
+                    let frame_rect = rect.expand2(egui::vec2(14.0, 14.0));
+                    let frame_fill = if dark {
+                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 26)
+                    } else {
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)
+                    };
+                    ui.painter().rect_filled(frame_rect, rounding, frame_fill);
+
+                    // Wallpaper image (low alpha so chat stays readable)
                     ui.painter().image(
                         texture.id(),
                         rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::from_white_alpha(25), // Slightly more visible
+                        egui::Color32::from_white_alpha(30),
+                    );
+
+                    // Subtle border
+                    ui.painter().rect_stroke(
+                        frame_rect,
+                        rounding,
+                        egui::Stroke::new(
+                            1.0,
+                            if dark {
+                                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)
+                            } else {
+                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 20)
+                            },
+                        ),
                     );
                 }
 
