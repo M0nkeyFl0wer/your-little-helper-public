@@ -24,7 +24,7 @@ pub fn load_campaign_context() -> String {
 }
 
 fn build_campaign_context() -> String {
-    let mut context = String::new();
+    let _context = String::new();
 
     // Public build: no campaign context shipped.
     // Users can paste relevant text into chat or connect their own files.
