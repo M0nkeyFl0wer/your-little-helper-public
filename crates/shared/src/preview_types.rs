@@ -105,6 +105,34 @@ pub enum PreviewContent {
     },
     /// Helpful tip
     Tip { title: String, message: String },
+
+    /// A proposed cleanup plan for a folder
+    CleanupPlan {
+        title: String,
+        folder: PathBuf,
+        snapshot: Vec<CleanupSnapshotItem>,
+        moves: Vec<CleanupMove>,
+        renames: Vec<CleanupRename>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupSnapshotItem {
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub modified_rfc3339: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupMove {
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupRename {
+    pub from: PathBuf,
+    pub to: PathBuf,
 }
 
 /// Source for an image to display

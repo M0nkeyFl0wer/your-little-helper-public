@@ -14,6 +14,7 @@ use viewers::{
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
 use services::version_control::VersionControlService;
+use shared::preview_types::{CleanupMove, CleanupRename, CleanupSnapshotItem};
 
 /// Actions that can be performed on preview content
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,6 +29,12 @@ pub enum PreviewAction {
     ZoomOut,
     ZoomReset,
     Fullscreen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupMoveApplyMode {
+    MovesOnly,
+    MovesAndRenames,
 }
 
 /// Current state of the preview panel (runtime only, not persisted)
@@ -71,6 +78,10 @@ pub struct PreviewPanel {
     version_restore_pick: Option<u32>,
     version_restore_confirm_open: bool,
     version_restore_status: Option<String>,
+
+    // Cleanup plan UI state
+    cleanup_apply_requested: bool,
+    cleanup_apply_moves_only: bool,
 }
 
 impl PreviewPanel {
@@ -84,6 +95,9 @@ impl PreviewPanel {
             version_restore_pick: None,
             version_restore_confirm_open: false,
             version_restore_status: None,
+
+            cleanup_apply_requested: false,
+            cleanup_apply_moves_only: true,
         }
     }
 
@@ -109,6 +123,23 @@ impl PreviewPanel {
         self.version_restore_pick = None;
         self.version_restore_confirm_open = false;
         self.version_restore_status = None;
+
+        self.cleanup_apply_requested = false;
+        self.cleanup_apply_moves_only = true;
+    }
+
+    pub fn take_cleanup_apply(&mut self) -> Option<(CleanupMoveApplyMode, PreviewContent)> {
+        if !self.cleanup_apply_requested {
+            return None;
+        }
+        self.cleanup_apply_requested = false;
+        let mode = if self.cleanup_apply_moves_only {
+            CleanupMoveApplyMode::MovesOnly
+        } else {
+            CleanupMoveApplyMode::MovesAndRenames
+        };
+
+        self.state.content.clone().map(|c| (mode, c))
     }
 
     /// Show mode introduction
@@ -410,6 +441,7 @@ impl PreviewPanel {
                     PreviewContent::Security(_) => "Security Dashboard".to_string(),
                     PreviewContent::SkillsList { mode, .. } => format!("{} Skills", mode),
                     PreviewContent::Tip { title, .. } => title.clone(),
+                    PreviewContent::CleanupPlan { title, .. } => title.clone(),
                 };
                 ui.label(label);
             }
@@ -561,6 +593,158 @@ impl PreviewPanel {
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
+                    }
+                });
+            }
+            Some(PreviewContent::CleanupPlan {
+                title,
+                folder,
+                snapshot,
+                moves,
+                renames,
+            }) => {
+                let subtle = if is_dark_mode {
+                    egui::Color32::from_rgb(170, 170, 190)
+                } else {
+                    egui::Color32::from_rgb(90, 90, 110)
+                };
+
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(title)
+                            .strong()
+                            .size(14.0)
+                            .color(accent_color),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Folder: {}", folder.display()))
+                            .small()
+                            .color(subtle),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} items · {} moves · {} rename suggestions",
+                            snapshot.len(),
+                            moves.len(),
+                            renames.len()
+                        ))
+                        .small()
+                        .weak(),
+                    );
+
+                    ui.add_space(10.0);
+
+                    ui.collapsing("Before snapshot", |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "This is what the folder looked like when I made the plan.",
+                            )
+                            .small()
+                            .color(subtle),
+                        );
+                        ui.add_space(6.0);
+                        for item in snapshot.iter().take(40) {
+                            ui.label(
+                                egui::RichText::new(
+                                    item.path
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| item.path.display().to_string()),
+                                )
+                                .small(),
+                            );
+                        }
+                        if snapshot.len() > 40 {
+                            ui.label(
+                                egui::RichText::new(format!("…and {} more", snapshot.len() - 40))
+                                    .small()
+                                    .weak(),
+                            );
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    ui.collapsing("Plan", |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Moves are safe. Renames are optional but make things easier to recognize later.",
+                            )
+                            .small()
+                            .color(subtle),
+                        );
+                        ui.add_space(8.0);
+
+                        ui.label(egui::RichText::new("Moves").strong().color(text_color));
+                        for m in moves.iter().take(40) {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} → {}",
+                                    m.from
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| m.from.display().to_string()),
+                                    m.to.display()
+                                ))
+                                .small(),
+                            );
+                        }
+                        if moves.len() > 40 {
+                            ui.label(
+                                egui::RichText::new(format!("…and {} more moves", moves.len() - 40))
+                                    .small()
+                                    .weak(),
+                            );
+                        }
+
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("Rename suggestions").strong().color(text_color));
+                        for r in renames.iter().take(20) {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} → {}",
+                                    r.from
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| r.from.display().to_string()),
+                                    r.to
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| r.to.display().to_string()),
+                                ))
+                                .small(),
+                            );
+                        }
+                        if renames.len() > 20 {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "…and {} more rename suggestions",
+                                    renames.len() - 20
+                                ))
+                                .small()
+                                .weak(),
+                            );
+                        }
+                    });
+
+                    ui.add_space(12.0);
+
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.cleanup_apply_moves_only, "Moves only");
+                        ui.label(egui::RichText::new("(recommended)").small().weak());
+                    });
+
+                    if ui
+                        .button(if self.cleanup_apply_moves_only {
+                            "Apply move plan"
+                        } else {
+                            "Apply move + rename plan"
+                        })
+                        .clicked()
+                    {
+                        self.cleanup_apply_requested = true;
                     }
                 });
             }
