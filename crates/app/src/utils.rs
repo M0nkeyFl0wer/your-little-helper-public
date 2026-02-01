@@ -11,18 +11,13 @@ use std::sync::OnceLock;
 static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
 const BUNDLED_SPECKIT_TGZ: &[u8] = include_bytes!("../assets/spec-kit-assistant-legacy-node.tgz");
-const BUNDLED_SPECKIT_VERSION: &str = "legacy-node-2026-02-01";
+const BUNDLED_SPECKIT_VERSION: &str = "legacy-node-2026-02-01.1";
 
 fn is_nonempty_opt(s: &Option<String>) -> bool {
     s.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false)
 }
 
 fn try_install_bundled_speckit(settings: &mut AppSettings) -> bool {
-    // Only auto-wire if the user hasn't configured a path already.
-    if is_nonempty_opt(&settings.build.spec_kit_path) {
-        return false;
-    }
-
     let cfg_dir = match config_path().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
         Some(p) => p,
         None => return false,
@@ -34,6 +29,17 @@ fn try_install_bundled_speckit(settings: &mut AppSettings) -> bool {
         .join("archive")
         .join("legacy-node")
         .join("spec-assistant.js");
+
+    // Only auto-wire if the user hasn't configured a path already,
+    // OR if they're already using the bundled tool (so we can upgrade it).
+    if is_nonempty_opt(&settings.build.spec_kit_path) {
+        let configured = expand_user_path(settings.build.spec_kit_path.as_ref().unwrap().trim());
+        let configured = configured.canonicalize().unwrap_or(configured);
+        let root_canon = install_root.canonicalize().unwrap_or(install_root.clone());
+        if !configured.starts_with(&root_canon) {
+            return false;
+        }
+    }
 
     if expected.exists() {
         if let Ok(v) = std::fs::read_to_string(&version_file) {
