@@ -188,6 +188,50 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
             }
         }
     }
+
+    // First-run helper: import a seed settings file if bundled with the app.
+    // This can power a "just works" tester build without requiring setup.
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut seed_dirs = vec![exe_dir.to_path_buf()];
+
+            // On macOS app bundles, also check Contents/Resources
+            if let Some(contents_dir) = exe_dir.parent().and_then(|p| p.parent()) {
+                seed_dirs.push(contents_dir.join("Resources"));
+            }
+
+            for dir in seed_dirs {
+                let seed_path = dir.join("seed-settings.json");
+                if let Ok(contents) = std::fs::read_to_string(&seed_path) {
+                    if let Ok(mut settings) = serde_json::from_str::<AppSettings>(&contents) {
+                        // Optional: import a bundled mascot image too.
+                        let mascot_seed = dir.join("seed-mascot.png");
+                        if mascot_seed.exists() {
+                            if let Some(cfg) =
+                                config_path().and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                            {
+                                let _ = std::fs::create_dir_all(&cfg);
+                                let dest = cfg.join("mascot.png");
+                                if std::fs::copy(&mascot_seed, &dest).is_ok() {
+                                    settings.user_profile.mascot_image_path =
+                                        Some(dest.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+
+                        save_settings(&settings);
+
+                        // Best-effort cleanup (may fail if running from a read-only volume)
+                        let _ = std::fs::remove_file(&seed_path);
+                        let _ = std::fs::remove_file(&dir.join("seed-mascot.png"));
+
+                        return (settings, true);
+                    }
+                }
+            }
+        }
+    }
+
     (AppSettings::default(), false)
 }
 
