@@ -13,6 +13,7 @@ use viewers::{
 };
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
+use services::version_control::VersionControlService;
 
 /// Actions that can be performed on preview content
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +66,11 @@ pub struct PreviewPanel {
     file_viewer: Option<FileViewer>,
     file_error: Option<String>,
     current_file_path: Option<PathBuf>,
+
+    // Version history UI state
+    version_restore_pick: Option<u32>,
+    version_restore_confirm_open: bool,
+    version_restore_status: Option<String>,
 }
 
 impl PreviewPanel {
@@ -75,6 +81,9 @@ impl PreviewPanel {
             file_viewer: None,
             file_error: None,
             current_file_path: None,
+            version_restore_pick: None,
+            version_restore_confirm_open: false,
+            version_restore_status: None,
         }
     }
 
@@ -95,6 +104,11 @@ impl PreviewPanel {
         if let Some(PreviewContent::File { path, .. }) = &self.state.content {
             self.current_file_path = Some(path.clone());
         }
+
+        // Reset version UI state when switching content
+        self.version_restore_pick = None;
+        self.version_restore_confirm_open = false;
+        self.version_restore_status = None;
     }
 
     /// Show mode introduction
@@ -707,6 +721,19 @@ impl PreviewPanel {
                         );
                     });
 
+                    if let Some(status) = &self.version_restore_status {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(status)
+                                .small()
+                                .color(if is_dark_mode {
+                                    egui::Color32::from_rgb(120, 200, 140)
+                                } else {
+                                    egui::Color32::from_rgb(60, 140, 90)
+                                }),
+                        );
+                    }
+
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(format!(
@@ -717,6 +744,42 @@ impl PreviewPanel {
                         .small()
                         .weak()
                     );
+
+                    ui.add_space(10.0);
+
+                    // Restore menu (no "git" wording)
+                    let mut pick = self.version_restore_pick;
+                    egui::ComboBox::from_id_source("restore_version_pick")
+                        .selected_text(match pick {
+                            Some(n) => format!("Restore to version {}", n),
+                            None => "Restore to...".to_string(),
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.label("Choose a previous version:");
+                            for v in versions.iter().rev() {
+                                if v.is_current {
+                                    continue;
+                                }
+                                let label = format!(
+                                    "v{} - {} - {}",
+                                    v.version_number,
+                                    v.relative_time(),
+                                    v.description
+                                );
+                                if ui
+                                    .selectable_value(&mut pick, Some(v.version_number), label)
+                                    .clicked()
+                                {
+                                    // open confirm
+                                }
+                            }
+                        });
+                    if pick != self.version_restore_pick {
+                        self.version_restore_pick = pick;
+                        if self.version_restore_pick.is_some() {
+                            self.version_restore_confirm_open = true;
+                        }
+                    }
 
                     ui.add_space(12.0);
 
@@ -809,6 +872,95 @@ impl PreviewPanel {
                         }
                     });
                 });
+
+                // Restore confirmation modal
+                if self.version_restore_confirm_open {
+                    let mut open = true;
+                    egui::Window::new("Restore this version?")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .open(&mut open)
+                        .show(ui.ctx(), |ui| {
+                            ui.set_max_width(420.0);
+                            let target_num = self.version_restore_pick.unwrap_or(0);
+                            let target = versions
+                                .iter()
+                                .find(|v| v.version_number == target_num);
+
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Restore '{}' to version {}?",
+                                    file_name, target_num
+                                ))
+                                .strong(),
+                            );
+                            if let Some(v) = target {
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new(v.description.clone()).weak());
+                                ui.label(
+                                    egui::RichText::new(format!("From {}", v.relative_time()))
+                                        .small()
+                                        .weak(),
+                                );
+                            }
+                            ui.add_space(10.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "This will replace the current file. Your current version will be saved automatically.",
+                                )
+                                .small(),
+                            );
+
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Restore").clicked() {
+                                    if let Some(v) = target {
+                                        let root = file_path.parent().unwrap_or(file_path.as_path());
+                                        match VersionControlService::new(root)
+                                            .and_then(|svc| svc.restore_version(&file_path, v))
+                                        {
+                                            Ok(_) => {
+                                                self.version_restore_status = Some(format!(
+                                                    "Restored to version {}",
+                                                    v.version_number
+                                                ));
+
+                                                // Refresh version list
+                                                if let Ok(vc) = VersionControlService::new(root) {
+                                                    if let Ok(new_versions) = vc.list_versions(&file_path) {
+                                                        self.state.content = Some(PreviewContent::VersionHistory {
+                                                            file_path: file_path.clone(),
+                                                            file_name: file_name.clone(),
+                                                            versions: new_versions,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                self.version_restore_status = Some(format!(
+                                                    "Restore failed: {}",
+                                                    err
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    self.version_restore_confirm_open = false;
+                                    self.version_restore_pick = None;
+                                }
+
+                                if ui.button("Cancel").clicked() {
+                                    self.version_restore_confirm_open = false;
+                                    self.version_restore_pick = None;
+                                }
+                            });
+                        });
+
+                    if !open {
+                        self.version_restore_confirm_open = false;
+                        self.version_restore_pick = None;
+                    }
+                }
             }
             Some(PreviewContent::SearchResults {
                 query,
