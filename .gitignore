@@ -34,11 +34,8 @@ secrets.json
 *.pem
 *.p12
 
-# App secrets (use secrets.rs.example as template)
-crates/app/src/secrets.rs
-
-# Support/contact info (personal)
-crates/app/src/support_info.rs
+# App secrets (public builds use empty defaults)
+# For internal builds, keep secrets out of git.
 
 # OAuth tokens and credentials
 .credentials.json

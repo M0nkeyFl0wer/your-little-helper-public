@@ -964,13 +964,7 @@ impl AppState {
             }
         }
 
-        // Easter egg: Rick Roll when asking about Ben West
-        let input_lower = self.input_text.to_lowercase();
-        if input_lower.contains("ben west") || input_lower.contains("benwest") {
-            self.active_viewer = ActiveViewer::RickRoll;
-            self.show_preview = true;
-            // Still process the message normally, but show the meme
-        }
+        // (No hidden triggers in public builds)
 
         // Add user message to chat
         let user_msg = ChatMessage {
@@ -1222,7 +1216,7 @@ ALWAYS:
                 let campaign_docs = if self.settings.enable_campaign_context {
                     load_campaign_context()
                 } else {
-                    "CAMPAIGN CONTEXT DISABLED. Enable it in Settings to preload MCP materials."
+                    "Project context is disabled. Enable it in Settings to connect your files."
                         .to_string()
                 };
                 let personas = if self.settings.enable_persona_context {
@@ -1244,15 +1238,14 @@ YOUR ROLE: Content strategist using Data Driven Designs methodology.
 
 {}
 
-CONTENT CALENDAR LOCATION: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json
-DRAFTS FOLDER: ~/Process/drafts/
+FOLDERS:
+- Drafts folder: Choose a folder in Settings and save drafts there
 
 WORKFLOW (Data Driven Designs):
 1. Identify the target PERSONA for this content
 2. Review campaign materials for relevant facts/data
 3. Draft content matching persona's language and concerns
-4. Save drafts to ~/Process/drafts/ with format: YYYY-MM-DD_platform_topic.md
-5. Content will sync to Google Drive for team review
+4. Save drafts with format: YYYY-MM-DD_platform_topic.md
 
 CONTENT TYPES:
 - Twitter/X: Short, punchy, hashtags (280 chars) - match persona voice
@@ -1272,7 +1265,7 @@ ALWAYS:
 - Match language to persona (use their words, avoid their turn-offs)
 - Include relevant stats from campaign materials
 - Reference specific facts from loaded documents
-- Save drafts to ~/Process/drafts/
+- Save drafts to the drafts folder you chose
 
 {}
 "#,

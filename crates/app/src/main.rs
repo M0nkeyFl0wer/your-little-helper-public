@@ -1442,7 +1442,7 @@ impl eframe::App for LittleHelperApp {
                                     "#general",
                                     "#content",
                                     "#drafts",
-                                    "#mcp-campaign",
+                                    "#general",
                                     "#team",
                                     "#review",
                                 ];
@@ -2046,11 +2046,7 @@ fn render_rick_roll(ui: &mut egui::Ui, _dark: bool) {
 
             ui.add_space(20.0);
 
-            ui.label(
-                egui::RichText::new("(Nice try searching for Ben West though)")
-                    .size(14.0)
-                    .weak(),
-            );
+            // (No personal callouts in public builds)
 
             ui.add_space(40.0);
 
@@ -2424,7 +2420,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                             ui.checkbox(
                                 &mut s.settings.enable_campaign_context,
-                                "Load MCP campaign materials automatically",
+                                "Load project materials automatically",
                             );
                             ui.checkbox(
                                 &mut s.settings.enable_persona_context,

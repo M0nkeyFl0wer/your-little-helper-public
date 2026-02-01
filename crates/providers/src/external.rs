@@ -1,6 +1,6 @@
 //! External provider registry for skill integrations.
 //!
-//! Manages external tools like Playwright, Canva MCP, Gemini CLI, and spec-kit.
+//! Manages external tools like Playwright, Canva, Gemini CLI, and spec-kit.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -207,19 +207,19 @@ pub fn init_registry() -> ProviderRegistry {
     registry.register(Arc::new(PlaceholderProvider::new(
         "speckit",
         "Spec Kit Assistant",
-        "Available at /home/flower/Projects/spec-kit-assistant",
+        "Install spec-kit-assistant and set its location in Settings",
     )));
 
     registry.register(Arc::new(PlaceholderProvider::new(
         "persona",
         "Persona Generation System",
-        "Available at /home/flower/Projects/persona-generation-system",
+        "Set up your personas folder in Settings",
     )));
 
     registry.register(Arc::new(PlaceholderProvider::new(
         "content_automation",
         "Content Automation Engine",
-        "Available at /home/flower/Projects/MCP-research-content-automation-engine",
+        "Optional: connect your content workspace folder in Settings",
     )));
 
     registry

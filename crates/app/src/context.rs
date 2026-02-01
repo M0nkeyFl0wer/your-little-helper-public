@@ -26,100 +26,9 @@ pub fn load_campaign_context() -> String {
 fn build_campaign_context() -> String {
     let mut context = String::new();
 
-    // MCP project paths
-    let mcp_base = dirs::home_dir()
-        .map(|h| h.join("Projects/MCP-research-content-automation-engine"))
-        .unwrap_or_default();
-
-    // Check if the project exists
-    if !mcp_base.exists() {
-        return "CAMPAIGN CONTEXT: MCP project not found on this system. Campaign-specific features will be limited.\n".to_string();
-    }
-
-    // Priority documents to load (in order of importance)
-    let docs = [
-        // Core campaign strategy
-        (
-            "Campaign Spec",
-            "specs/002-mcp-marine-conservation/spec.md",
-            15000,
-        ),
-        (
-            "Campaign Plan",
-            "specs/002-mcp-marine-conservation/plan.md",
-            15000,
-        ),
-        // Content
-        ("Content Summary", "MCP_Content_Summary_FINAL.md", 20000),
-        ("Content Calendar", "FINAL_MCP_Content_Calendar.json", 20000),
-        // Video content
-        ("Video Specs", "MCP_Video_Content_Specifications.md", 10000),
-        (
-            "Video Scripts (Northern BC Voice)",
-            "MCP_Video_Scripts_NorthernBC_Voice.md",
-            12000,
-        ),
-        // Visual assets
-        (
-            "Visual Requirements",
-            "MCP_Visual_Asset_Requirements.md",
-            8000,
-        ),
-    ];
-
-    context.push_str("=== MCP MARINE CONSERVATION CAMPAIGN - FULL CONTEXT ===\n\n");
-    context.push_str(
-        "You have FULL ACCESS to the Marine Conservation Plan (MCP) campaign materials.\n",
-    );
-    context
-        .push_str("Use this detailed knowledge for content creation, research, and strategy.\n\n");
-
-    let mut loaded_count = 0;
-    for (name, path, max_chars) in docs {
-        let full_path = mcp_base.join(path);
-        if let Ok(content) = fs::read_to_string(&full_path) {
-            loaded_count += 1;
-            // Truncate if over limit but keep more content
-            let truncated = if content.len() > max_chars {
-                format!(
-                    "{}...\n[Truncated at {} chars - full file has {} chars]",
-                    &content[..max_chars],
-                    max_chars,
-                    content.len()
-                )
-            } else {
-                content
-            };
-
-            context.push_str(&format!("=== {} ===\n", name));
-            context.push_str(&format!("Source: {}\n\n", path));
-            context.push_str(&truncated);
-            context.push_str("\n\n");
-        }
-    }
-
-    // Load research reports if they exist
-    let reports_dir = mcp_base.join("data/reports");
-    if reports_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&reports_dir) {
-            let reports: Vec<_> = entries.flatten().collect();
-            if !reports.is_empty() {
-                context.push_str("=== Available Research Reports ===\n");
-                for entry in reports {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    context.push_str(&format!("- {}\n", name));
-                }
-                context.push('\n');
-            }
-        }
-    }
-
-    context.push_str(&format!(
-        "=== END CAMPAIGN CONTEXT ({} documents loaded) ===\n\n",
-        loaded_count
-    ));
-
-    context
+    // Public build: no campaign context shipped.
+    // Users can paste relevant text into chat or connect their own files.
+    "CAMPAIGN CONTEXT: Not configured in this build.\n".to_string()
 }
 
 /// Load persona files from ~/Process/personas/
@@ -173,7 +82,7 @@ fn build_persona_context() -> String {
     }
 
     if all_personas.is_empty() {
-        return "PERSONAS: No persona files found. Create .md files in ~/Process/personas/ to define target audiences.\n\n".to_string();
+        return "PERSONAS: No persona files found. Add persona .md files in your personas folder (Settings).\n\n".to_string();
     }
 
     context.push_str("=== TARGET AUDIENCE PERSONAS ===\n\n");
@@ -200,32 +109,21 @@ fn build_persona_context() -> String {
 
 /// Load DDD workflow context
 pub fn load_ddd_workflow() -> String {
-    r#"=== DATA DRIVEN DESIGNS WORKFLOW ===
+    r#"=== CONTENT WORKFLOW ===
 
-FOLDER STRUCTURE:
-- ~/Process/drafts/     → Your generated content (syncs to Drive)
-- ~/Process/personas/   → Target audience personas
-- ~/Process/templates/  → Reusable content templates
+FOLDERS:
+- Choose a drafts folder in Settings
+- (Optional) add persona .md files in a personas folder
 
 WORKFLOW:
-1. Generate content with personas
-2. Save drafts to ~/Process/drafts/
-3. Sync to Google Drive with ddd-sync
-4. Team reviews in shared Drive folder
-5. Approved content moves to posted/
-
-SECURITY:
-- Only anonymized personas go to AI
-- Never include raw survey data
-- Use segments ("Renters 25-40"), not individuals
+1. Identify the audience
+2. Draft content
+3. Save drafts to your drafts folder
 
 OUTPUT FORMAT:
-When generating content, save to ~/Process/drafts/ with format:
-  YYYY-MM-DD_platform_topic.md
-  Example: 2024-12-31_twitter_housing-affordability.md
+YYYY-MM-DD_platform_topic.md
 
-=== END DDD WORKFLOW ===
-
+=== END WORKFLOW ===
 "#
     .to_string()
 }
@@ -356,24 +254,12 @@ pub fn get_campaign_summary(settings: &AppSettings) -> String {
 
     if settings.enable_campaign_context {
         summary.push_str(
-            "CAMPAIGN KNOWLEDGE:\n\
-You have deep knowledge of the Marine Conservation Plan (MCP) campaign:\n\
-- BC Marine Protected Areas policy and implementation\n\
-- Fishing industry impact data (150+ businesses, $50-100M revenue at risk)\n\
-- Aquaculture conflicts (Mowi Canada West facilities)\n\
-- Content calendar with 7+ days of social media content\n\
-- Stakeholder analysis (lodges, charter operations, indigenous communities)\n\
-- Key zones: Central Coast 100-213, Caamano Sound 310-316, Kitkatla Inlet 330-333\n\n\
-PROJECT LOCATIONS:\n\
-- MCP Content Engine: ~/Projects/MCP-research-content-automation-engine/\n\
-- Content Calendar: ~/Projects/MCP-research-content-automation-engine/FINAL_MCP_Content_Calendar.json\n\
-- Little Helper App: ~/Projects/little-helper/\n\n\
-When discussing marine conservation, fishing policy, or BC coastal issues, draw on this knowledge.\n\
-For content creation, reference the established content calendar and messaging strategies.\n",
+            "PROJECT KNOWLEDGE:\n\
+Project context is enabled. If you connect a project folder, I can use those files to help you.\n",
         );
     } else {
         summary.push_str(
-            "CAMPAIGN KNOWLEDGE:\nCampaign-specific priming is disabled. Enable it in settings if you are working on MCP materials.\n",
+            "PROJECT KNOWLEDGE:\nProject context is disabled. You can enable it in Settings.\n",
         );
     }
 
