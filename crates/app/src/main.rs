@@ -983,6 +983,7 @@ impl eframe::App for LittleHelperApp {
                                 "Starting a fresh conversation! How can I help you today, {}?",
                                 user_name
                             ),
+                            details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         };
                         s.mode_chat_histories.insert(mode, vec![welcome]);
@@ -1019,6 +1020,7 @@ impl eframe::App for LittleHelperApp {
                                     "Conversation cleared. What would you like to work on, {}?",
                                     user_name
                                 ),
+                                details: None,
                                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                             };
                             s.mode_chat_histories.insert(mode, vec![welcome]);
@@ -1204,6 +1206,13 @@ impl eframe::App for LittleHelperApp {
 
                 // Input area
                 ui.horizontal(|ui| {
+                    let is_busy = s.thinking_mode == Some(s.current_mode)
+                        && s
+                            .is_thinking
+                            .get(&s.current_mode)
+                            .copied()
+                            .unwrap_or(false);
+
                     let hint = match s.current_mode {
                         ChatMode::Find => "What are you trying to find?",
                         ChatMode::Fix => "What's broken? Need to find a file?",
@@ -1242,14 +1251,18 @@ impl eframe::App for LittleHelperApp {
                         s.send_message();
                     }
 
-                    if ui
-                        .add_sized(
-                            [70.0, 40.0],
-                            egui::Button::new("Send").fill(egui::Color32::from_rgb(70, 130, 180)),
-                        )
-                        .clicked()
-                    {
-                        s.send_message();
+                    let btn = if is_busy {
+                        egui::Button::new("Stop").fill(egui::Color32::from_rgb(180, 80, 80))
+                    } else {
+                        egui::Button::new("Send").fill(egui::Color32::from_rgb(70, 130, 180))
+                    };
+                    if ui.add_sized([70.0, 40.0], btn).clicked() {
+                        if is_busy {
+                            let mode = s.current_mode;
+                            s.cancel_ai(mode);
+                        } else {
+                            s.send_message();
+                        }
                     }
                 });
             });
@@ -1454,6 +1467,12 @@ impl eframe::App for LittleHelperApp {
                             if ui.button("Paste").clicked() {
                                 if let Some(text) = try_read_clipboard_text() {
                                     s.openai_api_key_input = text;
+                                    // Fast path: paste should "just work".
+                                    s.settings.model.openai_auth.api_key = Some(s.openai_api_key_input.clone());
+                                    save_settings(&s.settings);
+                                    s.openai_api_key_input.clear();
+                                    s.settings_status = Some("OpenAI API key saved".to_string());
+                                    s.settings_status_is_error = false;
                                 } else {
                                     s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
                                     s.settings_status_is_error = true;
@@ -1482,6 +1501,12 @@ impl eframe::App for LittleHelperApp {
                             if ui.button("Paste").clicked() {
                                 if let Some(text) = try_read_clipboard_text() {
                                     s.anthropic_api_key_input = text;
+                                    // Fast path: paste should "just work".
+                                    s.settings.model.anthropic_auth.api_key = Some(s.anthropic_api_key_input.clone());
+                                    save_settings(&s.settings);
+                                    s.anthropic_api_key_input.clear();
+                                    s.settings_status = Some("Anthropic API key saved".to_string());
+                                    s.settings_status_is_error = false;
                                 } else {
                                     s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
                                     s.settings_status_is_error = true;
@@ -1510,6 +1535,12 @@ impl eframe::App for LittleHelperApp {
                             if ui.button("Paste").clicked() {
                                 if let Some(text) = try_read_clipboard_text() {
                                     s.gemini_api_key_input = text;
+                                    // Fast path: paste should "just work".
+                                    s.settings.model.gemini_auth.api_key = Some(s.gemini_api_key_input.clone());
+                                    save_settings(&s.settings);
+                                    s.gemini_api_key_input.clear();
+                                    s.settings_status = Some("Gemini API key saved".to_string());
+                                    s.settings_status_is_error = false;
                                 } else {
                                     s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
                                     s.settings_status_is_error = true;
@@ -1810,7 +1841,7 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
             );
             ui.label(
                 egui::RichText::new(
-                    "Uses Spec Kit to scaffold a project and run a spec. If you don’t need this, ignore the Build tab."
+                    "Powered by Spec Kit Assistant (a wrapper around GitHub Spec Kit). Use this to scaffold a project and run build tasks."
                 )
                     .color(subtle_color)
                     .size(11.0),
@@ -1838,12 +1869,28 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
             if !spec_kit_ready {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("What’s this?").size(11.0).color(subtle_color));
-                    ui.hyperlink_to("Spec Kit", "https://github.com/getspeckit/spec-kit");
-                    ui.label(egui::RichText::new("·").size(11.0).color(subtle_color));
+                    if ui.button("Find Spec Kit Assistant…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("JavaScript", &["js"])
+                            .set_title("Select spec-assistant.js")
+                            .pick_file()
+                        {
+                            s.settings.build.spec_kit_path = Some(
+                                path.canonicalize()
+                                    .unwrap_or(path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            );
+                            save_settings(&s.settings);
+                            s.build_status = Some("Build Helper connected.".to_string());
+                            s.build_status_is_error = false;
+                        }
+                    }
+                    ui.label(egui::RichText::new("Tip: it’s usually named").size(11.0).color(subtle_color));
                     ui.label(
-                        egui::RichText::new("Set the path in Settings → Build Helper")
+                        egui::RichText::new("spec-assistant.js")
                             .size(11.0)
+                            .monospace()
                             .color(subtle_color),
                     );
                 });
@@ -2386,10 +2433,34 @@ fn render_message(
                         .on_hover_text("Copy to clipboard")
                         .clicked()
                     {
-                        ui.output_mut(|o| o.copied_text = msg.content.clone());
+                        let copied = if let Some(details) = &msg.details {
+                            format!("{}\n\nDetails:\n{}", msg.content, details)
+                        } else {
+                            msg.content.clone()
+                        };
+                        ui.output_mut(|o| o.copied_text = copied);
                     }
                     // Slack sharing is not included in the public edition
                 });
+
+                if let Some(details) = &msg.details {
+                    ui.add_space(6.0);
+                    let details_color = if dark {
+                        egui::Color32::from_rgb(150, 150, 165)
+                    } else {
+                        egui::Color32::from_rgb(110, 110, 125)
+                    };
+                    egui::CollapsingHeader::new("Details")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(details)
+                                    .monospace()
+                                    .size(12.0)
+                                    .color(details_color),
+                            );
+                        });
+                }
             });
     }
 

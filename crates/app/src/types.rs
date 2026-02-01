@@ -26,7 +26,7 @@ use crate::context::{
 };
 use crate::state::run_ai_generation;
 use crate::utils::{
-    clean_ai_response, format_error_message, is_path_in_allowed_dirs, run_user_command,
+    clean_ai_response, is_path_in_allowed_dirs, run_user_command,
     validate_command_against_allowed,
 };
 
@@ -101,6 +101,8 @@ impl ChatMode {
 pub struct ChatMessage {
     pub role: String, // "user" or "assistant"
     pub content: String,
+    /// Optional low-level details (e.g. provider errors). Kept out of the main message UI.
+    pub details: Option<String>,
     #[allow(dead_code)] // Will be used for chat history display
     pub timestamp: String,
 }
@@ -287,6 +289,7 @@ impl Default for AppState {
                 You can ask me to find files, fix problems, do deep research, work with data, or create content.",
                 user_name
             ),
+            details: None,
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
 
@@ -563,7 +566,7 @@ impl AppState {
         let spec_kit_path = self.spec_kit_path();
         if !spec_kit_path.exists() {
             self.build_status = Some(
-                "Spec Kit not found. Set it up in Settings → Build Tools.".to_string(),
+                "Build Helper isn’t set up yet. In the Build tab, click ‘Find Spec Kit Assistant…’.".to_string(),
             );
             self.build_status_is_error = true;
             return;
@@ -667,7 +670,7 @@ impl AppState {
                     // Friendlier, actionable error messaging (and pop Settings for key/config issues)
                     let lower = error.to_lowercase();
                     let mut open_settings = false;
-                    let error_content = if lower.contains("no gemini authentication")
+                    let (error_content, details) = if lower.contains("no gemini authentication")
                         || lower.contains("gemini_api_key")
                         || lower.contains("gemini error")
                         || lower.contains("no openai authentication")
@@ -689,18 +692,22 @@ impl AppState {
                         } else {
                             "your provider"
                         };
-                        format!(
-                            "I couldn’t connect to {}.\n\n\
+                        (
+                            format!(
+                                "I couldn’t connect to {}.\n\n\
 What to do next:\n\
-- I just opened Settings so you can paste/check your API key\n\
+- I opened Settings so you can paste/check your API key\n\
 - Make sure the key is valid and the right API is enabled\n\
-- If you’d rather not use cloud keys, switch to Local (Ollama)\n\n\
-Technical details:\n\
-```\n{}\n```",
-                            provider, error
+- If you’d rather not use cloud keys, switch to Local (Ollama)",
+                                provider
+                            ),
+                            Some(error.clone()),
                         )
                     } else {
-                        format_error_message(&error)
+                        (
+                            "I hit an error while processing that. Try again; if it keeps happening, switch models or open Settings.".to_string(),
+                            Some(error.clone()),
+                        )
                     };
 
                     if open_settings {
@@ -714,6 +721,7 @@ Technical details:\n\
                     let error_msg = ChatMessage {
                         role: "assistant".to_string(),
                         content: error_content,
+                        details,
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     if let Some(mode) = response_mode {
@@ -755,6 +763,7 @@ Technical details:\n\
                         self.push_chat_to(mode, ChatMessage {
                             role: "assistant".to_string(),
                             content: cmd_summary,
+                            details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                     }
@@ -808,6 +817,7 @@ Technical details:\n\
                         } else {
                             clean_response
                         },
+                        details: None,
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     self.push_chat_to(mode, assistant_msg);
@@ -821,6 +831,7 @@ Technical details:\n\
                         self.push_chat_to(mode, ChatMessage {
                             role: "assistant".to_string(),
                             content: summary,
+                            details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                     }
@@ -853,6 +864,7 @@ Technical details:\n\
                                 "Command `{}` completed.\n\n```\n{}\n```",
                                 result.command, cmd_result.output
                             ),
+                            details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                         if active_mode == Some(ChatMode::Build) {
@@ -868,6 +880,7 @@ Technical details:\n\
                         self.push_chat(ChatMessage {
                             role: "assistant".to_string(),
                             content: format!("Command `{}` failed to run: {}", result.command, err),
+                            details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                         if active_mode == Some(ChatMode::Build) {
@@ -959,6 +972,7 @@ Technical details:\n\
             self.push_chat(ChatMessage {
                 role: "assistant".to_string(),
                 content: format!("Command `{}` blocked: {}", command, reason),
+                details: None,
                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
             });
             self.command_result_rx = None;
@@ -1081,6 +1095,7 @@ Technical details:\n\
                             ChatMode::Build => "Build Helper",
                         }
                     ),
+                    details: None,
                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                 });
                 return;
@@ -1093,6 +1108,7 @@ Technical details:\n\
         let user_msg = ChatMessage {
             role: "user".to_string(),
             content: self.input_text.clone(),
+            details: None,
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
         self.push_chat(user_msg);
@@ -1118,12 +1134,14 @@ Technical details:\n\
                 self.push_chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: "No cloud API key is set yet, so I’m using the local model (Ollama). You can add keys in Settings if you want faster cloud replies.".to_string(),
+                    details: None,
                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                 });
             } else {
                 self.push_chat(ChatMessage {
                     role: "assistant".to_string(),
                     content: "No cloud API key is set, and Ollama doesn’t look reachable on this machine. Start Ollama (or install it), or add a cloud API key in Settings → AI Model.".to_string(),
+                    details: None,
                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                 });
                 // Nothing to run.
