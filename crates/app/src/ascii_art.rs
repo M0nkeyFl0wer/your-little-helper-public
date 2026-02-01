@@ -5,8 +5,33 @@ use shared::preview_types::AsciiState;
 /// Get ASCII art for a given state
 pub fn get_ascii_art(state: AsciiState) -> &'static str {
     match state {
-        AsciiState::Welcome => WELCOME_DOG,
-        AsciiState::Thinking => THINKING_DOG,
+        AsciiState::Welcome => WELCOME_DOG_1,
+        AsciiState::Thinking => THINKING_DOG_1,
+        AsciiState::Success => SUCCESS_DOG,
+        AsciiState::Error => ERROR_DOG,
+    }
+}
+
+/// Animated ASCII art frames for fun states.
+///
+/// This keeps the UI lively without distracting motion.
+pub fn get_ascii_art_animated(state: AsciiState, time: f64) -> &'static str {
+    let frame = ((time * 2.0) as i32) % 2; // 2 fps
+    match state {
+        AsciiState::Welcome => {
+            if frame == 0 {
+                WELCOME_DOG_1
+            } else {
+                WELCOME_DOG_2
+            }
+        }
+        AsciiState::Thinking => {
+            if frame == 0 {
+                THINKING_DOG_1
+            } else {
+                THINKING_DOG_2
+            }
+        }
         AsciiState::Success => SUCCESS_DOG,
         AsciiState::Error => ERROR_DOG,
     }
@@ -21,12 +46,12 @@ pub fn get_mode_art(mode: &str) -> &'static str {
         "data" => DATA_DOG,
         "content" => CONTENT_DOG,
         "build" => BUILD_DOG,
-        _ => WELCOME_DOG,
+        _ => WELCOME_DOG_1,
     }
 }
 
 // Welcome dog
-const WELCOME_DOG: &str = r#"
+const WELCOME_DOG_1: &str = r#"
  / \__
 (    @\___
  /         O
@@ -34,11 +59,27 @@ const WELCOME_DOG: &str = r#"
 /_____/   U
 "#;
 
+const WELCOME_DOG_2: &str = r#"
+ / \__
+(    o\___
+ /         O
+/   (_____/
+/_____/   U
+"#;
+
 // Thinking dog
-const THINKING_DOG: &str = r#"
+const THINKING_DOG_1: &str = r#"
  / \__
 (    @\___
  /  . .   O
+/   (___/
+/_____/ U
+"#;
+
+const THINKING_DOG_2: &str = r#"
+ / \__
+(    @\___
+ /  . o   O
 /   (___/
 /_____/ U
 "#;

@@ -551,12 +551,16 @@ impl PreviewPanel {
                 });
             }
             Some(PreviewContent::Ascii { state }) => {
-                let ascii_art = get_ascii_art(state);
+                let time = ui.input(|i| i.time);
+                let ascii_art = crate::ascii_art::get_ascii_art_animated(state, time);
                 ui.vertical_centered(|ui| {
                     ui.add(egui::Label::new(
                         egui::RichText::new(ascii_art).monospace().color(text_color),
                     ));
                 });
+
+                // Keep repainting for animated frames
+                ui.ctx().request_repaint();
             }
             Some(PreviewContent::Tip { title, message }) => {
                 let card_fill = if is_dark_mode {
