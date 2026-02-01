@@ -279,6 +279,7 @@ impl eframe::App for LittleHelperApp {
             
             // Load context documents and skills for the new mode
             let shared_mode = match s.current_mode {
+                ChatMode::Find => shared::skill::Mode::Find,
                 ChatMode::Fix => shared::skill::Mode::Fix,
                 ChatMode::Research => shared::skill::Mode::Research,
                 ChatMode::Data => shared::skill::Mode::Data,
@@ -390,16 +391,16 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(32.0);
 
                     // Mode buttons - check processing states first to avoid borrow issues
+                    let find_processing = s.is_thinking.get(&ChatMode::Find).copied().unwrap_or(false);
                     let fix_processing = s.is_thinking.get(&ChatMode::Fix).copied().unwrap_or(false);
                     let research_processing = s.is_thinking.get(&ChatMode::Research).copied().unwrap_or(false);
                     let data_processing = s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
                     let content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
                     let build_processing = s.is_thinking.get(&ChatMode::Build).copied().unwrap_or(false);
                     
+                    mode_button(ui, "Find", ChatMode::Find, &mut s.current_mode, find_processing);
                     mode_button(ui, "Fix", ChatMode::Fix, &mut s.current_mode, fix_processing);
                     mode_button(ui, "Research", ChatMode::Research, &mut s.current_mode, research_processing);
-                    mode_button(ui, "Data", ChatMode::Data, &mut s.current_mode, data_processing);
-                    mode_button(ui, "Content", ChatMode::Content, &mut s.current_mode, content_processing);
                     mode_button(ui, "Build", ChatMode::Build, &mut s.current_mode, build_processing);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -790,6 +791,7 @@ impl eframe::App for LittleHelperApp {
                 if let Some(thinking_mode) = s.thinking_mode {
                     if thinking_mode != s.current_mode && s.is_thinking.get(&thinking_mode).copied().unwrap_or(false) {
                         let mode_name = match thinking_mode {
+                            ChatMode::Find => "Find Helper",
                             ChatMode::Fix => "Fix Helper",
                             ChatMode::Research => "Research Helper",
                             ChatMode::Data => "Data Helper",
@@ -956,6 +958,7 @@ impl eframe::App for LittleHelperApp {
                 // Input area
                 ui.horizontal(|ui| {
                     let hint = match s.current_mode {
+                        ChatMode::Find => "What are you trying to find?",
                         ChatMode::Fix => "What's broken? Need to find a file?",
                         ChatMode::Research => "What should I research?",
                         ChatMode::Data => "What data would you like to work with?",
@@ -1763,6 +1766,14 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
 
         // Mode-specific tips
         let (mode_name, tips) = match current_mode {
+            ChatMode::Find => (
+                "Find Helper",
+                vec![
+                    "Tell me what you're looking for",
+                    "I can search folders and open results",
+                    "Try: \"find my resume\"",
+                ],
+            ),
             ChatMode::Fix => (
                 "Fix Helper",
                 vec![

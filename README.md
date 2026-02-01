@@ -8,11 +8,11 @@
 /_____/   U
 ```
 
-A beautiful, private AI assistant for your desktop. Chat with AI to find files, get tech support, research topics, and work with data - all running locally on your machine.
+Your Little Helper is a private desktop assistant. Find files, fix problems, do research, and build projects.
 
 ## Download
 
-**[Download Latest Release](https://github.com/M0nkeyFl0wer/your-little-helper/releases/latest)**
+**[Download Latest Release](https://github.com/M0nkeyFl0wer/your-little-helper-public/releases/latest)**
 
 | Platform | File | Requirements |
 |----------|------|--------------|
@@ -34,7 +34,7 @@ A beautiful, private AI assistant for your desktop. Chat with AI to find files, 
 
 **Or use Terminal:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/main/install-easy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper-public/main/install-easy.sh | bash
 ```
 
 ### Windows
@@ -55,8 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper/mai
 | **Find** | Search for files on your computer |
 | **Fix** | Tech support and troubleshooting |
 | **Research** | Deep research with web search |
-| **Data** | Work with CSV, JSON, databases |
-| **Content** | Create and manage content |
+| **Build** | Create projects with Spec Kit |
 
 **Built-in viewers:** Text, Images, PDF, CSV, JSON, HTML
 

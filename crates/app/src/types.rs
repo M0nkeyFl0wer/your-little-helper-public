@@ -65,6 +65,8 @@ pub enum AppScreen {
 /// Chat mode - determines agent behavior and available skills
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ChatMode {
+    /// Find files and content
+    Find,
     /// Tech support - diagnose and fix problems
     Fix,
     /// Deep research with citations
@@ -81,6 +83,7 @@ impl ChatMode {
     /// Get the mode name as a string for the agent system
     pub fn as_str(&self) -> &'static str {
         match self {
+            ChatMode::Find => "find",
             ChatMode::Fix => "fix",
             ChatMode::Research => "research",
             ChatMode::Data => "data",
@@ -261,7 +264,7 @@ impl Default for AppState {
 
         // Initialize preview panel with mode intro
         let mut preview_panel = crate::preview_panel::PreviewPanel::new();
-        preview_panel.show_mode_intro("fix");
+        preview_panel.show_mode_intro("find");
 
         Self {
             settings: settings.clone(),
@@ -270,12 +273,13 @@ impl Default for AppState {
             } else {
                 AppScreen::Chat
             },
-            current_mode: ChatMode::Fix,
+            current_mode: ChatMode::Find,
             previous_mode: None,
             input_text: String::new(),
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
                 let mut h = HashMap::new();
+                h.insert(ChatMode::Find, vec![welcome_msg.clone()]);
                 h.insert(ChatMode::Fix, vec![welcome_msg.clone()]);
                 h.insert(ChatMode::Research, Vec::new());
                 h.insert(ChatMode::Data, Vec::new());
@@ -289,6 +293,7 @@ impl Default for AppState {
             thread_search_query: String::new(),
             is_thinking: {
                 let mut m = std::collections::HashMap::new();
+                m.insert(ChatMode::Find, false);
                 m.insert(ChatMode::Fix, false);
                 m.insert(ChatMode::Research, false);
                 m.insert(ChatMode::Data, false);
@@ -298,6 +303,7 @@ impl Default for AppState {
             },
             thinking_status: {
                 let mut m = std::collections::HashMap::new();
+                m.insert(ChatMode::Find, String::new());
                 m.insert(ChatMode::Fix, String::new());
                 m.insert(ChatMode::Research, String::new());
                 m.insert(ChatMode::Data, String::new());
@@ -951,6 +957,7 @@ impl AppState {
                     content: format!(
                         "{} is still working. If you want to switch tasks, click 'Stop it' in the banner at the top.",
                         match active_mode {
+                            ChatMode::Find => "Find Helper",
                             ChatMode::Fix => "Fix Helper",
                             ChatMode::Research => "Research Helper",
                             ChatMode::Data => "Data Helper",
@@ -1115,6 +1122,23 @@ EXAMPLE - User says "my computer is slow":
         };
 
         let system_prompt = match self.current_mode {
+            ChatMode::Find => format!(
+                r#"You are Little Helper in FIND mode, helping {}.
+
+YOUR JOB: Help the user locate files and content inside the folders they allowed.
+
+FILE FINDING:
+{}
+
+RULES:
+- Prefer safe, read-only actions
+- Use <preview>path</preview> to show files in the preview panel
+- If you propose commands, keep them simple and single-step
+
+{}
+"#,
+                user_name, find_commands, capabilities
+            ),
             ChatMode::Fix => format!(
                 r#"You are Little Helper in FIX mode, a terminal agent helping {}.
 

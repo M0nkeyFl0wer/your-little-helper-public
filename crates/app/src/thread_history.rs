@@ -146,6 +146,7 @@ impl Thread {
     /// Format for display in thread list
     pub fn format_for_list(&self) -> String {
         let mode_icon = match self.mode {
+            crate::types::ChatMode::Find => "🔎",
             crate::types::ChatMode::Fix => "🔧",
             crate::types::ChatMode::Research => "🔬",
             crate::types::ChatMode::Data => "📊",
