@@ -241,7 +241,41 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
         }
     }
 
-    (AppSettings::default(), false)
+    // First-run helper: if Spec Kit Assistant is bundled, wire Build automatically.
+    let mut settings = AppSettings::default();
+    if settings.build.spec_kit_path.is_none() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let mut dirs_to_check = vec![exe_dir.to_path_buf()];
+
+                // On macOS app bundles, also check Contents/Resources
+                if let Some(contents_dir) = exe_dir.parent().and_then(|p| p.parent()) {
+                    dirs_to_check.push(contents_dir.join("Resources"));
+                }
+
+                for base in dirs_to_check {
+                    let candidates = [
+                        base.join("spec-kit-assistant/archive/legacy-node/spec-assistant.js"),
+                        base.join("spec-kit-assistant/spec-assistant.js"),
+                        base.join("archive/legacy-node/spec-assistant.js"),
+                        base.join("spec-assistant.js"),
+                    ];
+                    if let Some(found) = candidates.into_iter().find(|p| p.exists()) {
+                        settings.build.spec_kit_path = Some(
+                            found
+                                .canonicalize()
+                                .unwrap_or(found)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    (settings, false)
 }
 
 /// Clean up AI response by removing thinking tags and normalizing whitespace

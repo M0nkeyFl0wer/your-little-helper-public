@@ -633,8 +633,9 @@ impl eframe::App for LittleHelperApp {
         // Preview panel (right side)
         if s.show_preview {
             egui::SidePanel::right("preview")
-                .default_width(500.0)
+                .default_width(420.0)
                 .min_width(300.0)
+                .max_width(520.0)
                 .frame(
                     egui::Frame::none()
                         .fill(if dark {
@@ -2192,7 +2193,7 @@ fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str)
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
-            egui::ScrollArea::vertical()
+            egui::ScrollArea::both()
                 .max_height(ui.available_height() - 20.0)
                 .show(ui, |ui| {
                     ui.label(
@@ -2410,7 +2411,7 @@ fn render_message(
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Files found:").size(12.0).weak());
+                    ui.label(egui::RichText::new("Files mentioned:").size(12.0).weak());
 
                     for path in paths {
                         let file_name = path
