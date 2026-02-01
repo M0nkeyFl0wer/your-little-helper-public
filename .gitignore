@@ -53,6 +53,10 @@ config.json
 **/*.log
 logs/
 
+# Local-only starter packs (never commit)
+seed-settings.json
+seed-mascot.png
+
 # Backup files
 *.bak
 *.backup
