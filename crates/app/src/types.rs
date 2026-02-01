@@ -11,9 +11,11 @@ use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewConte
 use shared::settings::AppSettings;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 use futures::future::AbortHandle;
@@ -199,11 +201,6 @@ pub struct AppState {
     pub web_preview_service: Arc<WebPreviewService>,
     pub web_preview_rx: Option<Receiver<WebPreviewResult>>,
 
-    // Slack integration
-    pub show_slack_dialog: bool,
-    pub slack_message_to_send: Option<String>,
-    pub slack_selected_channel: String,
-    pub slack_status: Option<String>,
     pub show_settings_dialog: bool,
     pub new_allowed_dir: String,
     pub settings_status: Option<String>,
@@ -233,6 +230,10 @@ pub struct AppState {
     pub settings_perf_last_update: Option<Instant>,
     pub settings_cpu_percent: f32,
     pub settings_mem_mb: u64,
+
+    // CPU/memory nudge
+    pub cpu_high_since: Option<Instant>,
+    pub cpu_nudge_dismissed: bool,
 }
 
 impl Default for AppState {
@@ -246,6 +247,29 @@ impl Default for AppState {
             if !crate::secrets::PRELOAD_USER_NAME.is_empty() {
                 settings.user_profile.name = crate::secrets::PRELOAD_USER_NAME.to_string();
             }
+        }
+
+        // If a cloud provider is selected but no key is set, prefer local to avoid immediate failures.
+        let primary_provider = settings
+            .model
+            .provider_preference
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+        let missing_key = match primary_provider {
+            "openai" => settings.model.openai_auth.api_key.is_none(),
+            "anthropic" => settings.model.anthropic_auth.api_key.is_none(),
+            "gemini" => settings.model.gemini_auth.api_key.is_none(),
+            _ => false,
+        };
+        if primary_provider != "local" && missing_key && AppState::ollama_reachable() {
+            settings.model.provider_preference = vec![
+                "local".to_string(),
+                "anthropic".to_string(),
+                "openai".to_string(),
+                "gemini".to_string(),
+            ];
+            crate::utils::save_settings(&settings);
         }
 
         let needs_onboarding = !settings.user_profile.onboarding_complete;
@@ -345,10 +369,6 @@ impl Default for AppState {
             ai_abort_handles: HashMap::new(),
             web_preview_service: Arc::new(WebPreviewService::new()),
             web_preview_rx: None,
-            show_slack_dialog: false,
-            slack_message_to_send: None,
-            slack_selected_channel: "#general".to_string(),
-            slack_status: None,
             show_settings_dialog: false,
             new_allowed_dir: String::new(),
             settings_status: None,
@@ -380,11 +400,28 @@ impl Default for AppState {
             settings_perf_last_update: None,
             settings_cpu_percent: 0.0,
             settings_mem_mb: 0,
+
+            cpu_high_since: None,
+            cpu_nudge_dismissed: false,
         }
     }
 }
 
 impl AppState {
+    fn ollama_reachable() -> bool {
+        let addr: SocketAddr = "127.0.0.1:11434".parse().unwrap();
+        TcpStream::connect_timeout(&addr, Duration::from_millis(120)).is_ok()
+    }
+
+    fn provider_has_api_key(&self, provider: &str) -> bool {
+        match provider {
+            "openai" => self.settings.model.openai_auth.api_key.is_some(),
+            "anthropic" => self.settings.model.anthropic_auth.api_key.is_some(),
+            "gemini" => self.settings.model.gemini_auth.api_key.is_some(),
+            _ => true,
+        }
+    }
+
     fn estimate_tokens(text: &str) -> u32 {
         // Rough heuristic: ~4 chars per token for English.
         (text.chars().count() as u32).saturating_div(4).max(1)
@@ -627,8 +664,54 @@ impl AppState {
 
                 if let Some(error) = result.error {
                     self.pending_commands.clear();
-                    // Format error message with helpful info
-                    let error_content = format_error_message(&error);
+
+                    // Friendlier, actionable error messaging (and pop Settings for key/config issues)
+                    let lower = error.to_lowercase();
+                    let mut open_settings = false;
+                    let error_content = if lower.contains("no gemini authentication")
+                        || lower.contains("gemini_api_key")
+                        || lower.contains("gemini error")
+                        || lower.contains("no openai authentication")
+                        || lower.contains("openai") && lower.contains("api key")
+                        || lower.contains("no anthropic authentication")
+                        || lower.contains("anthropic") && lower.contains("api key")
+                        || lower.contains("401")
+                        || lower.contains("403")
+                        || lower.contains("unauthorized")
+                        || lower.contains("forbidden")
+                    {
+                        open_settings = true;
+                        let provider = if lower.contains("gemini") {
+                            "Gemini"
+                        } else if lower.contains("anthropic") {
+                            "Anthropic"
+                        } else if lower.contains("openai") {
+                            "OpenAI"
+                        } else {
+                            "your provider"
+                        };
+                        format!(
+                            "I couldn’t connect to {}.\n\n\
+What to do next:\n\
+- I just opened Settings so you can paste/check your API key\n\
+- Make sure the key is valid and the right API is enabled\n\
+- If you’d rather not use cloud keys, switch to Local (Ollama)\n\n\
+Technical details:\n\
+```\n{}\n```",
+                            provider, error
+                        )
+                    } else {
+                        format_error_message(&error)
+                    };
+
+                    if open_settings {
+                        self.show_settings_dialog = true;
+                        // Make sure the user sees the UI while fixing this.
+                        self.show_preview = true;
+                        if matches!(self.active_viewer, ActiveViewer::Matrix) {
+                            self.active_viewer = ActiveViewer::Panel;
+                        }
+                    }
                     let error_msg = ChatMessage {
                         role: "assistant".to_string(),
                         content: error_content,
@@ -1014,6 +1097,42 @@ impl AppState {
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
         self.push_chat(user_msg);
+
+        // Model/provider safety: avoid picking a cloud provider with no key.
+        let primary_provider = self
+            .settings
+            .model
+            .provider_preference
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+
+        if primary_provider != "local" && !self.provider_has_api_key(primary_provider) {
+            if Self::ollama_reachable() {
+                self.settings.model.provider_preference = vec![
+                    "local".to_string(),
+                    "anthropic".to_string(),
+                    "openai".to_string(),
+                    "gemini".to_string(),
+                ];
+                crate::utils::save_settings(&self.settings);
+                self.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: "No cloud API key is set yet, so I’m using the local model (Ollama). You can add keys in Settings if you want faster cloud replies.".to_string(),
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+            } else {
+                self.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: "No cloud API key is set, and Ollama doesn’t look reachable on this machine. Start Ollama (or install it), or add a cloud API key in Settings → AI Model.".to_string(),
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+                // Nothing to run.
+                self.thinking_mode = None;
+                self.is_thinking.insert(self.current_mode, false);
+                return;
+            }
+        }
 
         // Clear input and show thinking state for current mode
         let _query = self.input_text.clone();
@@ -1406,15 +1525,29 @@ WORKFLOW:
 
         // Spawn background thread for AI work
         std::thread::spawn(move || {
-            run_ai_generation(
-                messages,
-                settings,
-                allow_terminal,
-                allow_web,
-                allowed_dirs,
-                tx,
-                abort_reg,
-            );
+            let tx_panic = tx.clone();
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_ai_generation(
+                    messages,
+                    settings,
+                    allow_terminal,
+                    allow_web,
+                    allowed_dirs,
+                    tx,
+                    abort_reg,
+                );
+            }));
+            if res.is_err() {
+                let _ = tx_panic.send(AiResult {
+                    response: String::new(),
+                    preview_file: None,
+                    error: Some(
+                        "Something went wrong while processing that request. Please try again; if it keeps happening, open Settings and re-check your model + keys.".to_string(),
+                    ),
+                    executed_commands: Vec::new(),
+                    pending_commands: Vec::new(),
+                });
+            }
         });
     }
 

@@ -19,7 +19,7 @@ impl ProviderRouter {
         let mut last_error = None;
 
         // Try providers in order of preference
-        for provider in &self.config.provider_preference {
+        for (idx, provider) in self.config.provider_preference.iter().enumerate() {
             let result = match provider.as_str() {
                 "local" => {
                     let client = OllamaClient::new(self.config.local_model.clone());
@@ -55,6 +55,11 @@ impl ProviderRouter {
             match result {
                 Ok(response) => return Ok(response),
                 Err(e) => {
+                    // If the user-selected PRIMARY provider fails (cloud), surface the error
+                    // instead of silently falling back to a different provider.
+                    if idx == 0 && provider.as_str() != "local" {
+                        return Err(e);
+                    }
                     last_error = Some(e);
                     continue;
                 }

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GeminiContent {
@@ -53,7 +54,7 @@ impl GeminiClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("GEMINI_API_KEY").map_err(|_| anyhow!("GEMINI_API_KEY not set"))?;
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(45)).build()?,
             auth_token: key,
             model: model.to_string(),
         })
@@ -71,7 +72,7 @@ impl GeminiClient {
         };
 
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(45)).build()?,
             auth_token,
             model: model.to_string(),
         })
@@ -104,7 +105,18 @@ impl GeminiClient {
         };
         let resp = self.http.post(url).json(&req).send().await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("gemini error: {}", resp.status()));
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let body = body.trim();
+            if body.is_empty() {
+                return Err(anyhow!("gemini error: {}", status));
+            }
+            let body = if body.len() > 800 {
+                format!("{}...", &body[..800])
+            } else {
+                body.to_string()
+            };
+            return Err(anyhow!("gemini error: {}\n{}", status, body));
         }
         let body: GeminiResponse = resp.json().await?;
         let text = body
