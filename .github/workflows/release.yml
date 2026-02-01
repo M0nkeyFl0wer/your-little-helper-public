@@ -17,27 +17,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Create secrets.rs with pre-configured API key
-        shell: pwsh
-        run: |
-          $content = @"
-          // Auto-generated during build - API key pre-configured for beta testers
-          pub const OPENAI_API_KEY: &str = "${{ secrets.OPENAI_API_KEY }}";
-          pub const PRELOAD_USER_NAME: &str = "${{ secrets.PRELOAD_USER_NAME }}";
-          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
-          "@
-          Set-Content -Path "crates/app/src/secrets.rs" -Value $content
-
-      - name: Create support_info.rs
-        shell: pwsh
-        run: |
-          $content = @"
-          // Auto-generated during build
-          pub const CREATOR_NAME: &str = "Ben";
-          pub const SUPPORT_LINK: &str = "${{ secrets.SUPPORT_LINK }}";
-          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
-          "@
-          Set-Content -Path "crates/app/src/support_info.rs" -Value $content
+      # Public builds use default (empty) secrets/support stubs
 
       - name: Build Release
         run: cargo build --release
@@ -64,28 +44,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Create secrets.rs with pre-configured API key
-        env:
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
-          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
-        run: |
-          cat > crates/app/src/secrets.rs << EOF
-          // Auto-generated during build - API key pre-configured for beta testers
-          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
-          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
-          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
-          EOF
-
-      - name: Create support_info.rs
-        env:
-          SUPPORT_URL: ${{ secrets.SUPPORT_LINK }}
-        run: |
-          cat > crates/app/src/support_info.rs << EOF
-          // Auto-generated during build
-          pub const CREATOR_NAME: &str = "Ben";
-          pub const SUPPORT_LINK: &str = "${SUPPORT_URL}";
-          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
-          EOF
+      # Public builds use default (empty) secrets/support stubs
 
       - name: Build Release (Intel)
         run: cargo build --release
@@ -105,28 +64,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Create secrets.rs with pre-configured API key
-        env:
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
-          USER_NAME: ${{ secrets.PRELOAD_USER_NAME }}
-        run: |
-          cat > crates/app/src/secrets.rs << EOF
-          // Auto-generated during build - API key pre-configured for beta testers
-          pub const OPENAI_API_KEY: &str = "${OPENAI_KEY}";
-          pub const PRELOAD_USER_NAME: &str = "${USER_NAME}";
-          pub const PRELOAD_SKIP_ONBOARDING: bool = true;
-          EOF
-
-      - name: Create support_info.rs
-        env:
-          SUPPORT_URL: ${{ secrets.SUPPORT_LINK }}
-        run: |
-          cat > crates/app/src/support_info.rs << EOF
-          // Auto-generated during build
-          pub const CREATOR_NAME: &str = "Ben";
-          pub const SUPPORT_LINK: &str = "${SUPPORT_URL}";
-          pub const SUPPORT_BUTTON_TEXT: &str = "Message Ben";
-          EOF
+      # Public builds use default (empty) secrets/support stubs
 
       - name: Build Release (Apple Silicon)
         run: cargo build --release

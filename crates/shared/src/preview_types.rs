@@ -821,11 +821,14 @@ Key findings from research
 
     #[test]
     fn test_parse_preview_with_spaces() {
-        let response = r#"<preview type="file" path="C:\Users\Ben West\Notes.txt">
+        let response = r#"<preview type="file" path="C:\Users\Example User\Notes.txt">
 Context
 </preview>"#;
         let tag = parse_preview_tag(response).unwrap();
-        assert_eq!(tag.path, Some(r"C:\Users\Ben West\Notes.txt".to_string()));
+        assert_eq!(
+            tag.path,
+            Some(r"C:\Users\Example User\Notes.txt".to_string())
+        );
     }
 
     #[test]
