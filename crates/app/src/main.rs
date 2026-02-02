@@ -340,12 +340,70 @@ impl eframe::App for LittleHelperApp {
                 s.active_viewer = ActiveViewer::Panel;
                 s.preview_panel.show_mode_intro("build");
 
-                s.push_chat(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: "Hi! I’m Spec — the builder. Tell me what you want to build and I’ll run Spec Kit Assistant under the hood (terminal superpowers, with guardrails).".to_string(),
-                    details: None,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                });
+                // Auto-switch to a cloud provider for Build mode
+                let primary = s.settings.model.provider_preference
+                    .first().map(|p| p.as_str()).unwrap_or("local");
+
+                if primary == "local" {
+                    // Try to auto-switch: prefer gemini (free tier) > openai > anthropic
+                    let cloud_pick = if s.settings.model.gemini_auth.has_auth() {
+                        Some(("gemini", "Gemini"))
+                    } else if s.settings.model.openai_auth.has_auth() {
+                        Some(("openai", "OpenAI"))
+                    } else if s.settings.model.anthropic_auth.has_auth() {
+                        Some(("anthropic", "Anthropic"))
+                    } else {
+                        None
+                    };
+
+                    if let Some((id, name)) = cloud_pick {
+                        set_primary_provider_preference(
+                            &mut s.settings.model.provider_preference, id,
+                        );
+                        save_settings(&s.settings);
+                        s.push_chat(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: format!(
+                                "Hi! I'm Spec — the builder.\n\n\
+                                Build mode works best with a cloud model, so I've switched to **{}**. \
+                                Tell me what you want to build and I'll run Spec Kit under the hood!",
+                                name
+                            ),
+                            details: None,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    } else {
+                        // No cloud provider configured — nudge the user
+                        s.show_settings_dialog = true;
+                        s.push_chat(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: "Hi! I'm Spec — the builder.\n\n\
+                                Build mode needs a cloud model to drive the spec workflow \
+                                (local models aren't reliable enough for multi-step planning).\n\n\
+                                I've opened **Settings** so you can connect one:\n\n\
+                                **Easiest — Google Gemini** (free tier)\n\
+                                Sign in with Google, no API key needed.\n\
+                                Minimum: `gemini-2.5-flash` | Best: `gemini-2.5-pro`\n\n\
+                                **OpenAI**\n\
+                                Paste an API key from platform.openai.com.\n\
+                                Minimum: `gpt-4o-mini` | Best: `gpt-4o`\n\n\
+                                **Anthropic**\n\
+                                Paste an API key from console.anthropic.com.\n\
+                                Minimum: `claude-sonnet-4-20250514` | Best: `claude-opus-4-5-20251101`\n\n\
+                                Once you've added a key, come back here and we'll start building!"
+                                .to_string(),
+                            details: None,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        });
+                    }
+                } else {
+                    s.push_chat(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: "Hi! I'm Spec — the builder. Tell me what you want to build and I'll run Spec Kit Assistant under the hood (terminal superpowers, with guardrails).".to_string(),
+                        details: None,
+                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    });
+                }
             }
             
             // Load context documents and skills for the new mode
@@ -1025,6 +1083,207 @@ impl eframe::App for LittleHelperApp {
                 });
         }
 
+        // Thread history panel (left side, toggled)
+        if s.show_thread_history {
+            egui::SidePanel::left("thread_history_panel")
+                .default_width(280.0)
+                .min_width(220.0)
+                .max_width(360.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(if dark {
+                            egui::Color32::from_rgb(30, 30, 38)
+                        } else {
+                            egui::Color32::from_rgb(248, 248, 252)
+                        })
+                        .inner_margin(egui::Margin::same(10.0)),
+                )
+                .show(ctx, |ui| {
+                    // Header
+                    ui.horizontal(|ui| {
+                        ui.heading(
+                            egui::RichText::new("History")
+                                .size(16.0)
+                                .strong(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("X").clicked() {
+                                s.show_thread_history = false;
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+
+                    // Search input
+                    ui.add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::TextEdit::singleline(&mut s.thread_search_query)
+                            .hint_text("Search conversations...")
+                            .font(egui::FontId::new(13.0, egui::FontFamily::Proportional)),
+                    );
+                    ui.add_space(6.0);
+
+                    // Mode filter chips
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let filters: &[(Option<ChatMode>, &str)] = &[
+                            (None, "All"),
+                            (Some(ChatMode::Find), "Find"),
+                            (Some(ChatMode::Fix), "Fix"),
+                            (Some(ChatMode::Research), "Research"),
+                            (Some(ChatMode::Data), "Data"),
+                            (Some(ChatMode::Content), "Content"),
+                            (Some(ChatMode::Build), "Build"),
+                        ];
+                        for (filter_mode, label) in filters {
+                            let selected = s.thread_history_mode_filter == *filter_mode;
+                            let text = egui::RichText::new(*label).size(11.0);
+                            let text = if selected { text.strong() } else { text };
+                            if ui.selectable_label(selected, text).clicked() {
+                                s.thread_history_mode_filter = *filter_mode;
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+
+                    // Get filtered threads
+                    let threads: Vec<_> = if !s.thread_search_query.trim().is_empty() {
+                        s.thread_history
+                            .search(&s.thread_search_query)
+                            .into_iter()
+                            .filter(|t| {
+                                s.thread_history_mode_filter
+                                    .map_or(true, |m| t.mode == m)
+                            })
+                            .map(|t| (t.id.clone(), t.title.clone(), t.mode, t.message_count, t.is_pinned, t.last_activity, t.last_message_preview.clone()))
+                            .collect()
+                    } else {
+                        let all = match s.thread_history_mode_filter {
+                            Some(mode) => s.thread_history.get_threads_by_mode(mode),
+                            None => s.thread_history.get_all_threads(),
+                        };
+                        all.into_iter()
+                            .map(|t| (t.id.clone(), t.title.clone(), t.mode, t.message_count, t.is_pinned, t.last_activity, t.last_message_preview.clone()))
+                            .collect()
+                    };
+
+                    // Thread list
+                    if threads.is_empty() {
+                        ui.add_space(20.0);
+                        ui.label(
+                            egui::RichText::new("No conversations yet")
+                                .size(13.0)
+                                .weak(),
+                        );
+                        ui.label(
+                            egui::RichText::new("Start chatting and your threads will appear here.")
+                                .size(11.0)
+                                .weak(),
+                        );
+                    } else {
+                        let subtle = if dark {
+                            egui::Color32::from_rgb(130, 130, 150)
+                        } else {
+                            egui::Color32::from_rgb(100, 100, 120)
+                        };
+                        let accent = if dark {
+                            egui::Color32::from_rgb(120, 160, 255)
+                        } else {
+                            egui::Color32::from_rgb(50, 100, 200)
+                        };
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let mut thread_to_load: Option<String> = None;
+                            let mut thread_to_pin: Option<String> = None;
+
+                            for (id, title, mode, msg_count, pinned, last_activity, preview) in &threads {
+                                let mode_icon = match mode {
+                                    ChatMode::Find => "🔎",
+                                    ChatMode::Fix => "🔧",
+                                    ChatMode::Research => "🔬",
+                                    ChatMode::Data => "📊",
+                                    ChatMode::Content => "✍️",
+                                    ChatMode::Build => "🐶",
+                                };
+
+                                let is_current = s.current_thread_id.as_deref() == Some(id.as_str());
+                                let bg = if is_current {
+                                    if dark {
+                                        egui::Color32::from_rgb(45, 45, 60)
+                                    } else {
+                                        egui::Color32::from_rgb(230, 235, 250)
+                                    }
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+
+                                egui::Frame::none()
+                                    .fill(bg)
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                                    .show(ui, |ui| {
+                                        let response = ui.vertical(|ui| {
+                                            ui.horizontal(|ui| {
+                                                if *pinned {
+                                                    ui.label(egui::RichText::new("📌").size(10.0));
+                                                }
+                                                ui.label(egui::RichText::new(mode_icon).size(12.0));
+                                                let title_text = egui::RichText::new(title)
+                                                    .size(13.0)
+                                                    .color(if is_current { accent } else if dark {
+                                                        egui::Color32::from_rgb(220, 220, 230)
+                                                    } else {
+                                                        egui::Color32::from_rgb(30, 30, 40)
+                                                    });
+                                                ui.label(title_text);
+                                            });
+                                            ui.horizontal(|ui| {
+                                                let time_str = crate::thread_history::format_time_ago_pub(*last_activity);
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} msgs · {}", msg_count, time_str))
+                                                        .size(11.0)
+                                                        .color(subtle),
+                                                );
+                                            });
+                                            // Preview snippet
+                                            if !preview.is_empty() {
+                                                let snip: String = preview.chars().take(60).collect();
+                                                ui.label(
+                                                    egui::RichText::new(snip)
+                                                        .size(10.0)
+                                                        .weak()
+                                                        .italics(),
+                                                );
+                                            }
+                                        });
+
+                                        // Click to load
+                                        if response.response.interact(egui::Sense::click()).clicked() {
+                                            thread_to_load = Some(id.clone());
+                                        }
+
+                                        // Right-click to pin
+                                        if response.response.interact(egui::Sense::click()).secondary_clicked() {
+                                            thread_to_pin = Some(id.clone());
+                                        }
+                                    });
+                                ui.add_space(2.0);
+                            }
+
+                            if let Some(id) = thread_to_load {
+                                s.load_thread(&id);
+                            }
+                            if let Some(id) = thread_to_pin {
+                                s.thread_history.toggle_pin(&id);
+                                s.thread_history.save_to_disk();
+                            }
+                        });
+                    }
+                });
+        }
+
         // Chat area (center)
         egui::CentralPanel::default()
             .frame(
@@ -1104,13 +1363,16 @@ impl eframe::App for LittleHelperApp {
                         .on_hover_text("Start a fresh conversation")
                         .clicked()
                     {
-                        // Clear current chat and start fresh
+                        // Save current thread before clearing
+                        let mode = s.current_mode;
+                        s.sync_thread_history(mode);
+                        s.current_thread_id = None;
+
                         let user_name = if s.settings.user_profile.name.is_empty() {
                             "friend"
                         } else {
                             &s.settings.user_profile.name
                         };
-                        let mode = s.current_mode;
                         let welcome = ChatMessage {
                             role: "assistant".to_string(),
                             content: format!(
@@ -1121,8 +1383,17 @@ impl eframe::App for LittleHelperApp {
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         };
                         s.mode_chat_histories.insert(mode, vec![welcome]);
-                        // Show mode intro in preview
                         s.preview_panel.show_mode_intro(mode.as_str());
+                    }
+
+                    // History toggle
+                    let history_label = if s.show_thread_history { "Hide History" } else { "History" };
+                    if ui
+                        .small_button(history_label)
+                        .on_hover_text("Browse past conversations")
+                        .clicked()
+                    {
+                        s.show_thread_history = !s.show_thread_history;
                     }
 
                     ui.separator();
