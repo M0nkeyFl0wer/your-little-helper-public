@@ -38,15 +38,77 @@ fn ram_tier() -> RamTier {
     }
 }
 
-/// Pick the best default model for this machine's RAM.
+/// Detect whether this machine has GPU acceleration for LLM inference.
+///
+/// Apple Silicon uses Metal (always available on M-series).
+/// NVIDIA GPUs use CUDA. Intel/AMD integrated graphics don't help Ollama.
+pub fn has_gpu_acceleration() -> bool {
+    // Apple Silicon: always has Metal GPU acceleration for Ollama
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+
+    // Linux/Windows: check for NVIDIA GPU (CUDA) via nvidia-smi
+    if cfg!(target_os = "linux") || cfg!(target_os = "windows") {
+        let nvidia_cmd = if cfg!(windows) { "nvidia-smi.exe" } else { "nvidia-smi" };
+        if Command::new(nvidia_cmd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
+        // Also check for AMD ROCm
+        if !cfg!(windows) {
+            if Command::new("rocminfo")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Pick the best default model for this machine's RAM and GPU.
+///
+/// On CPU-only machines, caps at 3B even with plenty of RAM because
+/// larger models are painfully slow without GPU acceleration.
 ///
 /// Returns `(model_tag, human_description)`.
 pub fn recommended_model() -> (&'static str, &'static str) {
-    match ram_tier() {
-        RamTier::Tiny => ("tinyllama", "TinyLlama (1.1B) — lightweight, fits on low-RAM devices"),
-        RamTier::Low => ("llama3.2:1b", "Llama 3.2 1B — compact but capable"),
-        RamTier::Medium => ("llama3.2:3b", "Llama 3.2 3B — good balance of speed and quality"),
-        RamTier::High => ("llama3.1:8b", "Llama 3.1 8B — best quality for local"),
+    let gpu = has_gpu_acceleration();
+    match (ram_tier(), gpu) {
+        (RamTier::Tiny, _) => (
+            "tinyllama",
+            "TinyLlama (1.1B) — lightweight, fits on low-RAM devices",
+        ),
+        (RamTier::Low, _) => (
+            "llama3.2:1b",
+            "Llama 3.2 1B — compact but capable",
+        ),
+        (RamTier::Medium, _) => (
+            "llama3.2:3b",
+            "Llama 3.2 3B — good balance of speed and quality",
+        ),
+        // GPU acceleration: go big
+        (RamTier::High, true) => (
+            "llama3.1:8b",
+            "Llama 3.1 8B — best quality for local (GPU accelerated)",
+        ),
+        // CPU-only with lots of RAM: cap at 3B for usable speed
+        (RamTier::High, false) => (
+            "llama3.2:3b",
+            "Llama 3.2 3B — capped for speed (no GPU detected, try a cloud provider for smarter answers)",
+        ),
     }
 }
 

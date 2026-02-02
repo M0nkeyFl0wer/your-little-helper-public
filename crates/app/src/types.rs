@@ -140,6 +140,10 @@ pub struct AppState {
 
     /// First-time intro for Spec (Build) tab
     pub spec_intro_shown: bool,
+    /// First-time intro for Fix (Doc) tab — auto-offer health scan
+    pub fix_intro_shown: bool,
+    /// Pulsing hint on mode picker — dismissed after first mode switch
+    pub show_mode_picker_hint: bool,
     /// Current input text
     pub input_text: String,
     /// Preserve input per mode
@@ -399,6 +403,9 @@ impl Default for AppState {
             current_mode: ChatMode::Find,
             previous_mode: None,
             spec_intro_shown: false,
+            fix_intro_shown: false,
+            // Show mode picker hint for first-time users (not for returning users)
+            show_mode_picker_hint: !settings.user_profile.onboarding_complete,
             input_text: String::new(),
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
@@ -548,7 +555,16 @@ impl AppState {
             || self.settings.model.anthropic_auth.api_key.is_some()
             || self.settings.model.gemini_auth.api_key.is_some();
 
+        let gpu = crate::ollama_manager::has_gpu_acceleration();
+
         let msg = match &result.status {
+            OllamaStatus::Started if !gpu => Some(format!(
+                "Local AI started — using {}.\n\n\
+                Heads up: no GPU detected, so responses may be a bit slow. \
+                Everything still works and stays private on your machine! \
+                For faster answers, you can add a cloud provider in Settings.",
+                result.recommended_desc
+            )),
             OllamaStatus::Started => Some(format!(
                 "Local AI started automatically. Using {} for this session.",
                 result.recommended_desc

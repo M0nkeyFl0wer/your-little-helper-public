@@ -275,6 +275,9 @@ impl eframe::App for LittleHelperApp {
         // Detect mode change and show mode introduction
         let mode_changed = s.previous_mode.map_or(false, |prev| prev != s.current_mode);
         if mode_changed {
+            // Dismiss the "try one!" hint on first mode switch
+            s.show_mode_picker_hint = false;
+
             // Save current input text for the old mode
             if let Some(prev_mode) = s.previous_mode {
                 if !s.input_text.is_empty() {
@@ -295,6 +298,32 @@ impl eframe::App for LittleHelperApp {
 
             let mode_str = s.current_mode.as_str();
             s.preview_panel.show_mode_intro(mode_str);
+
+            // First-time Fix intro: Doc introduces itself and offers a health scan
+            if s.current_mode == ChatMode::Fix && !s.fix_intro_shown {
+                s.fix_intro_shown = true;
+                let user_name = if s.settings.user_profile.name.is_empty() {
+                    "friend".to_string()
+                } else {
+                    s.settings.user_profile.name.clone()
+                };
+                s.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: format!(
+                        "Hey {}! I'm Doc — your tech support buddy.\n\n\
+                        I can check your computer's health, find what's using up resources, \
+                        and help fix things — all in plain English, no jargon.\n\n\
+                        Want me to run a quick health check? I'll look at:\n\
+                        - How your CPU and memory are doing\n\
+                        - Disk space\n\
+                        - Anything that looks off\n\n\
+                        Just say **\"run a health check\"** or ask me about anything that's bugging you!",
+                        user_name
+                    ),
+                    details: None,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+            }
 
             // First-time Spec intro happens when the user opens the tab.
             if s.current_mode == ChatMode::Build && !s.spec_intro_shown {
@@ -386,15 +415,31 @@ impl eframe::App for LittleHelperApp {
         if let Some(mode) = s.thinking_mode {
             if let Some(started_at) = s.thinking_started_at.get(&mode) {
                 let shown = s.slow_response_hint_shown.get(&mode).copied().unwrap_or(false);
-                if !shown && started_at.elapsed() >= Duration::from_secs(20) {
+                let is_local = s
+                    .settings
+                    .model
+                    .provider_preference
+                    .first()
+                    .map(|p| p == "local")
+                    .unwrap_or(true);
+                // Local models on CPU get a nudge sooner (15s) since they're expected to be slow
+                let threshold = if is_local { 15 } else { 25 };
+                if !shown && started_at.elapsed() >= Duration::from_secs(threshold) {
                     s.slow_response_hint_shown.insert(mode, true);
                     s.show_model_hint = true;
                     s.model_hint_started_at = Some(std::time::Instant::now());
 
-                    let tip_message =
-                        "This is taking longer than usual. Cloud models often respond faster.";
+                    let tip_message = if is_local {
+                        "Local AI is thinking hard! It runs privately on your \
+                        computer, which can be slow without a powerful GPU. \
+                        For faster and smarter answers, switch to a cloud \
+                        provider in Settings (click the model name above)."
+                    } else {
+                        "This is taking longer than usual. The server might be \
+                        busy — your request is still processing."
+                    };
                     s.preview_panel
-                        .show_tip_if_idle("Want faster replies?", tip_message);
+                        .show_tip_if_idle("Feeling slow?", tip_message);
                 }
             }
         }
@@ -501,6 +546,23 @@ impl eframe::App for LittleHelperApp {
                                 build_unread,
                             );
                         });
+
+                    // Pulsing hint for first-time users: "Try one!" arrow
+                    if s.show_mode_picker_hint {
+                        let time = ui.input(|i| i.time);
+                        let pulse = ((time * 2.5).sin() + 1.0) / 2.0; // 0..1
+                        let alpha = (140.0 + pulse * 115.0) as u8;
+                        let hint_color = egui::Color32::from_rgba_unmultiplied(
+                            235, 140, 75, alpha, // warm orange, pulsing
+                        );
+                        ui.label(
+                            egui::RichText::new(" ← try one!")
+                                .size(13.0)
+                                .strong()
+                                .color(hint_color),
+                        );
+                        ctx.request_repaint(); // keep animating
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
@@ -1363,252 +1425,426 @@ impl eframe::App for LittleHelperApp {
 
                     // Scrollable content
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.heading(
-                            egui::RichText::new("Privacy").color(if dark {
-                                egui::Color32::from_rgb(220, 220, 230)
+                        // ── Status messages (shared across sections) ──
+                        if let Some(msg) = &s.settings_status {
+                            let color = if s.settings_status_is_error {
+                                egui::Color32::from_rgb(200, 120, 120)
                             } else {
-                                egui::Color32::from_rgb(40, 40, 50)
-                            }),
-                        );
-                        ui.add_space(8.0);
-
-                    let mut needs_save = false;
-
-                    if ui
-                        .checkbox(
-                            &mut s.settings.share_system_summary,
-                            "Share basic system info with the AI",
-                        )
-                        .changed()
-                    {
-                        needs_save = true;
-                    }
-                    if ui
-                        .checkbox(
-                            &mut s.settings.enable_internet_research,
-                            "Allow web research (searches and articles)",
-                        )
-                        .changed()
-                    {
-                        needs_save = true;
-                    }
-
-                    // Terminal permission lives in the always-visible "Superpowers" section.
-
-                    if needs_save {
-                        save_settings(&s.settings);
-                        s.settings_status = Some("Saved privacy settings".to_string());
-                        s.settings_status_is_error = false;
-                    }
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    ui.heading(
-                        egui::RichText::new("AI Provider")
-                            .color(if dark {
-                                egui::Color32::from_rgb(220, 220, 230)
-                            } else {
-                                egui::Color32::from_rgb(40, 40, 50)
-                            }),
-                    );
-
-                    // Provider selector
-                    let providers = [
-                        ("local", "Local (Ollama)"),
-                        ("openai", "OpenAI (GPT-4)"),
-                        ("anthropic", "Anthropic (Claude)"),
-                        ("gemini", "Google (Gemini)"),
-                    ];
-
-                    let current_provider = s
-                        .settings
-                        .model
-                        .provider_preference
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "local".to_string());
-
-                    let provider_label = providers
-                        .iter()
-                        .find(|(id, _)| *id == current_provider.as_str())
-                        .map(|(_, name)| *name)
-                        .unwrap_or("Local (Ollama)");
-
-                    egui::ComboBox::from_label("Select Provider")
-                        .selected_text(provider_label)
-                        .show_ui(ui, |ui| {
-                            for (id, name) in providers {
-                                if ui.selectable_label(current_provider == id, name).clicked() {
-                                    set_primary_provider_preference(
-                                        &mut s.settings.model.provider_preference,
-                                        id,
-                                    );
-                                    save_settings(&s.settings);
-                                    s.settings_status = Some(format!("Switched to {}", name));
-                                    s.settings_status_is_error = false;
-                                }
-                            }
-                        });
-
-                    ui.add_space(8.0);
-
-                    // API Key inputs for cloud providers
-                    let is_cloud = current_provider == "openai" || current_provider == "anthropic" || current_provider == "gemini";
-                    if is_cloud {
-                        // Read the status before entering the mutable closure
-                        let api_key_status = match current_provider.as_str() {
-                            "openai" => s.settings.model.openai_auth.api_key.is_some(),
-                            "anthropic" => s.settings.model.anthropic_auth.api_key.is_some(),
-                            "gemini" => s.settings.model.gemini_auth.api_key.is_some(),
-                            _ => false,
-                        };
-                        let key_name = match current_provider.as_str() {
-                            "openai" => "OpenAI",
-                            "anthropic" => "Anthropic",
-                            "gemini" => "Gemini",
-                            _ => "",
-                        };
-
-                        ui.label("API Key:");
-                        ui.horizontal(|ui| {
-                            let input_field = match current_provider.as_str() {
-                                "openai" => &mut s.openai_api_key_input,
-                                "anthropic" => &mut s.anthropic_api_key_input,
-                                "gemini" => &mut s.gemini_api_key_input,
-                                _ => &mut s.openai_api_key_input,
+                                egui::Color32::from_rgb(120, 200, 150)
                             };
+                            ui.colored_label(color, msg);
+                            ui.add_space(6.0);
+                        }
 
-                            // Status indicator
+                        // ── Privacy & Permissions (always visible, friendly) ──
+                        ui.label(
+                            egui::RichText::new("What I'm allowed to do")
+                                .size(15.0)
+                                .strong()
+                                .color(if dark {
+                                    egui::Color32::from_rgb(220, 220, 230)
+                                } else {
+                                    egui::Color32::from_rgb(40, 40, 50)
+                                }),
+                        );
+                        ui.add_space(6.0);
+
+                        let mut needs_save = false;
+
+                        if ui
+                            .checkbox(
+                                &mut s.settings.share_system_summary,
+                                "Share basic system info with the AI",
+                            )
+                            .on_hover_text("Helps me give better answers about your computer")
+                            .changed()
+                        {
+                            needs_save = true;
+                        }
+                        if ui
+                            .checkbox(
+                                &mut s.settings.enable_internet_research,
+                                "Allow web research",
+                            )
+                            .on_hover_text("I can search the web and read articles for you")
+                            .changed()
+                        {
+                            needs_save = true;
+                        }
+
+                        if needs_save {
+                            save_settings(&s.settings);
+                            s.settings_status = Some("Saved".to_string());
+                            s.settings_status_is_error = false;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // ── AI Provider (just the dropdown — friendly) ──
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("AI brain")
+                                .size(15.0)
+                                .strong()
+                                .color(if dark {
+                                    egui::Color32::from_rgb(220, 220, 230)
+                                } else {
+                                    egui::Color32::from_rgb(40, 40, 50)
+                                }),
+                        );
+                        ui.add_space(4.0);
+
+                        let providers = [
+                            ("local", "Local (Ollama) — free, private"),
+                            ("openai", "OpenAI (GPT-4)"),
+                            ("anthropic", "Anthropic (Claude)"),
+                            ("gemini", "Google (Gemini)"),
+                        ];
+
+                        let current_provider = s
+                            .settings
+                            .model
+                            .provider_preference
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "local".to_string());
+
+                        let provider_label = providers
+                            .iter()
+                            .find(|(id, _)| *id == current_provider.as_str())
+                            .map(|(_, name)| *name)
+                            .unwrap_or("Local (Ollama) — free, private");
+
+                        egui::ComboBox::from_label("")
+                            .selected_text(provider_label)
+                            .width(280.0)
+                            .show_ui(ui, |ui| {
+                                for (id, name) in providers {
+                                    if ui.selectable_label(current_provider == id, name).clicked() {
+                                        set_primary_provider_preference(
+                                            &mut s.settings.model.provider_preference,
+                                            id,
+                                        );
+                                        save_settings(&s.settings);
+                                        s.settings_status = Some(format!("Switched to {}", name));
+                                        s.settings_status_is_error = false;
+                                    }
+                                }
+                            });
+
+                        // Contextual explanation based on selected provider
+                        let is_cloud = current_provider != "local";
+                        let subtle = if dark {
+                            egui::Color32::from_rgb(160, 160, 170)
+                        } else {
+                            egui::Color32::from_rgb(100, 100, 110)
+                        };
+
+                        ui.add_space(6.0);
+                        if !is_cloud {
+                            // Local provider — explain what "local" means
+                            ui.label(
+                                egui::RichText::new(
+                                    "Runs entirely on your computer. Nothing you type \
+                                    leaves your machine — your conversations stay private \
+                                    and it works without internet."
+                                )
+                                .size(12.0)
+                                .color(subtle),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("  ● Running locally — no API key needed")
+                                    .color(egui::Color32::from_rgb(0, 180, 0))
+                                    .size(12.0),
+                            );
+                        } else {
+                            // Cloud provider — explain what that means
+                            ui.label(
+                                egui::RichText::new(
+                                    "Cloud providers are smarter but your messages are \
+                                    sent to their servers. They require an API key \
+                                    (a password for their service) and may cost money \
+                                    per use."
+                                )
+                                .size(12.0)
+                                .color(subtle),
+                            );
+                            let api_key_status = match current_provider.as_str() {
+                                "openai" => s.settings.model.openai_auth.api_key.is_some(),
+                                "anthropic" => s.settings.model.anthropic_auth.api_key.is_some(),
+                                "gemini" => s.settings.model.gemini_auth.api_key.is_some(),
+                                _ => false,
+                            };
+                            ui.add_space(4.0);
                             if api_key_status {
                                 ui.label(
-                                    egui::RichText::new("● Key saved")
+                                    egui::RichText::new("  ● API key saved")
                                         .color(egui::Color32::from_rgb(0, 180, 0))
                                         .size(12.0),
                                 );
                             } else {
                                 ui.label(
-                                    egui::RichText::new("○ No key")
-                                        .color(egui::Color32::from_rgb(180, 180, 180))
+                                    egui::RichText::new("  ○ No API key — add one below in Advanced")
+                                        .color(egui::Color32::from_rgb(220, 160, 80))
                                         .size(12.0),
                                 );
                             }
+                        }
 
-                            ui.add_space(8.0);
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                            // API key input (password style)
-                            ui.add(
-                                egui::TextEdit::singleline(input_field)
-                                    .password(true)
-                                    .hint_text(format!("Paste {} API key...", key_name))
-                                    .desired_width(200.0),
+                        // ── Advanced (collapsible — API keys, folders, status, build) ──
+                        let adv_header = egui::RichText::new("Advanced")
+                            .size(14.0)
+                            .color(if dark {
+                                egui::Color32::from_rgb(160, 160, 170)
+                            } else {
+                                egui::Color32::from_rgb(100, 100, 110)
+                            });
+                        egui::CollapsingHeader::new(adv_header)
+                            .default_open(false)
+                            .show(ui, |ui| {
+
+                        // ── API Key management ──
+                        if is_cloud {
+                            let key_name = match current_provider.as_str() {
+                                "openai" => "OpenAI",
+                                "anthropic" => "Anthropic",
+                                "gemini" => "Gemini",
+                                _ => "",
+                            };
+
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(format!("{} API Key", key_name))
+                                    .size(13.0)
+                                    .strong(),
                             );
+                            ui.horizontal(|ui| {
+                                let input_field = match current_provider.as_str() {
+                                    "openai" => &mut s.openai_api_key_input,
+                                    "anthropic" => &mut s.anthropic_api_key_input,
+                                    "gemini" => &mut s.gemini_api_key_input,
+                                    _ => &mut s.openai_api_key_input,
+                                };
 
-                            // Paste button
-                            if ui.button("📋 Paste").clicked() {
-                                if let Some(text) = try_read_clipboard_text() {
-                                    *input_field = text;
+                                ui.add(
+                                    egui::TextEdit::singleline(input_field)
+                                        .password(true)
+                                        .hint_text(format!("Paste {} API key...", key_name))
+                                        .desired_width(200.0),
+                                );
+
+                                if ui.button("📋 Paste").clicked() {
+                                    if let Some(text) = try_read_clipboard_text() {
+                                        *input_field = text;
+                                    }
+                                }
+
+                                let save_clicked = ui.button("💾 Save").clicked();
+                                if save_clicked && !input_field.is_empty() {
+                                    let key_value = input_field.clone();
+                                    input_field.clear();
+                                    match current_provider.as_str() {
+                                        "openai" => {
+                                            s.settings.model.openai_auth.api_key = Some(key_value);
+                                        }
+                                        "anthropic" => {
+                                            s.settings.model.anthropic_auth.api_key = Some(key_value);
+                                        }
+                                        "gemini" => {
+                                            s.settings.model.gemini_auth.api_key = Some(key_value);
+                                        }
+                                        _ => {}
+                                    }
+                                    save_settings(&s.settings);
+                                    s.settings_status = Some(format!("{} API key saved", key_name));
+                                    s.settings_status_is_error = false;
+                                }
+                            });
+                            ui.label(
+                                egui::RichText::new("Stored locally, never shared.")
+                                    .size(11.0)
+                                    .weak(),
+                            );
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                        }
+
+                        // ── Allowed Folders ──
+                        ui.label(
+                            egui::RichText::new("Allowed folders")
+                                .size(13.0)
+                                .strong()
+                                .color(if dark {
+                                    egui::Color32::from_rgb(220, 220, 230)
+                                } else {
+                                    egui::Color32::from_rgb(40, 40, 50)
+                                }),
+                        );
+                        ui.label(
+                            egui::RichText::new("I can only see files inside these folders.")
+                                .size(12.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(160, 160, 170)
+                                } else {
+                                    egui::Color32::from_rgb(100, 100, 110)
+                                }),
+                        );
+                        ui.add_space(4.0);
+
+                        if s.settings.allowed_dirs.is_empty() {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 120, 120),
+                                "No folders allowed. Add at least one.",
+                            );
+                        }
+
+                        let current_dirs = s.settings.allowed_dirs.clone();
+                        let mut dir_to_remove: Option<String> = None;
+                        for dir in &current_dirs {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(dir)
+                                        .family(egui::FontFamily::Monospace)
+                                        .size(12.0),
+                                );
+                                if s.settings.allowed_dirs.len() > 1 {
+                                    if ui.small_button("Remove").clicked() {
+                                        dir_to_remove = Some(dir.clone());
+                                    }
+                                }
+                            });
+                        }
+
+                        if let Some(target) = dir_to_remove {
+                            s.settings
+                                .allowed_dirs
+                                .retain(|existing| existing != &target);
+                            ensure_allowed_dirs(&mut s.settings);
+                            save_settings(&s.settings);
+                            s.settings_status = Some(format!("Removed {}", target));
+                            s.settings_status_is_error = false;
+                        }
+
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let text_edit = egui::TextEdit::singleline(&mut s.new_allowed_dir)
+                                .hint_text("~/Documents or /data/projects");
+                            ui.add(text_edit);
+                            if ui.button("Add").clicked() {
+                                let input = s.new_allowed_dir.trim();
+                                if input.is_empty() {
+                                    s.settings_status =
+                                        Some("Enter a folder path first.".to_string());
+                                    s.settings_status_is_error = true;
+                                } else if let Some(normalized) =
+                                    normalize_allowed_dir_input(input)
+                                {
+                                    let path_str = normalized.to_string_lossy().to_string();
+                                    if s.settings
+                                        .allowed_dirs
+                                        .iter()
+                                        .any(|dir| dir == &path_str)
+                                    {
+                                        s.settings_status =
+                                            Some("Already in the list.".to_string());
+                                        s.settings_status_is_error = true;
+                                    } else {
+                                        s.settings.allowed_dirs.push(path_str.clone());
+                                        save_settings(&s.settings);
+                                        s.settings_status =
+                                            Some(format!("Added {}", path_str));
+                                        s.settings_status_is_error = false;
+                                    }
+                                    s.new_allowed_dir.clear();
+                                } else {
+                                    s.settings_status =
+                                        Some("Folder must exist on disk.".to_string());
+                                    s.settings_status_is_error = true;
                                 }
                             }
+                        });
 
-                            // Save button - clone input before accessing s.settings
-                            let save_clicked = ui.button("💾 Save").clicked();
-                            if save_clicked && !input_field.is_empty() {
-                                let key_value = input_field.clone();
-                                input_field.clear();
-                                match current_provider.as_str() {
-                                    "openai" => {
-                                        s.settings.model.openai_auth.api_key = Some(key_value);
-                                    }
-                                    "anthropic" => {
-                                        s.settings.model.anthropic_auth.api_key = Some(key_value);
-                                    }
-                                    "gemini" => {
-                                        s.settings.model.gemini_auth.api_key = Some(key_value);
-                                    }
-                                    _ => {}
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // ── Build tools ──
+                        ui.label(
+                            egui::RichText::new("Build tools")
+                                .size(13.0)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new("Spec Kit is bundled. Override path only if needed.")
+                                .size(11.0)
+                                .weak(),
+                        );
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut s.spec_kit_path_input)
+                                    .desired_width(260.0),
+                            );
+                            if ui.button("Use default").clicked() {
+                                if let Some(home) = dirs::home_dir() {
+                                    s.spec_kit_path_input = home
+                                        .join("Projects/spec-kit-assistant/archive/legacy-node/spec-assistant.js")
+                                        .to_string_lossy()
+                                        .to_string();
+                                }
+                            }
+                            if ui.button("Save").clicked() {
+                                let trimmed = s.spec_kit_path_input.trim();
+                                if trimmed.is_empty() {
+                                    s.settings.build.spec_kit_path = None;
+                                } else {
+                                    s.settings.build.spec_kit_path = Some(trimmed.to_string());
                                 }
                                 save_settings(&s.settings);
-                                s.settings_status = Some(format!("{} API key saved", key_name));
+                                s.settings_status = Some("Saved build path".to_string());
                                 s.settings_status_is_error = false;
                             }
                         });
 
-                        ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new("Your API key is stored locally and never shared.")
-                                .size(11.0)
-                                .weak(),
-                        );
-                    } else {
-                        // Local provider info
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("● Running locally via Ollama")
-                                    .color(egui::Color32::from_rgb(0, 180, 0))
-                                    .size(12.0),
-                            );
-                        });
-                        ui.label(
-                            egui::RichText::new("No API key needed. Make sure Ollama is running on your machine.")
-                                .size(11.0)
-                                .weak(),
-                        );
-                    }
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    ui.collapsing("Status (advanced)", |ui| {
+                        // ── Status / Performance ──
+                        ui.label(
+                            egui::RichText::new("Performance")
+                                .size(13.0)
+                                .strong(),
+                        );
                         s.update_settings_perf();
                         let ctx_hint = s.model_context_hint_tokens();
                         let comfort_total: f32 = 8000.0;
                         let used = s.last_prompt_tokens_est as f32;
                         let ratio = (used / comfort_total).clamp(0.0, 1.0);
 
-                        ui.label(
-                            egui::RichText::new("A quick snapshot of performance and conversation size.")
-                                .size(11.0)
-                                .weak(),
-                        );
-                        ui.add_space(6.0);
-
                         egui::Grid::new("settings_status_grid")
                             .num_columns(2)
-                            .spacing([12.0, 6.0])
+                            .spacing([12.0, 4.0])
                             .show(ui, |ui| {
-                                ui.label("CPU (app)");
+                                ui.label("CPU");
                                 ui.label(format!("{:.0}%", s.settings_cpu_percent));
                                 ui.end_row();
-
-                                ui.label("Memory (app)");
+                                ui.label("Memory");
                                 ui.label(format!("{} MB", s.settings_mem_mb));
                                 ui.end_row();
-
-                                ui.label("Last prompt");
-                                ui.label(format!("~{} tokens", s.last_prompt_tokens_est));
-                                ui.end_row();
-
-                                ui.label("Last reply");
-                                ui.label(format!("~{} tokens", s.last_response_tokens_est));
-                                ui.end_row();
-
-                                ui.label("Session total");
-                                ui.label(format!(
-                                    "~{} in / ~{} out",
-                                    s.session_input_tokens_est, s.session_output_tokens_est
-                                ));
-                                ui.end_row();
-
-                                ui.label("Model context (approx)");
+                                ui.label("Context");
                                 ui.label(format!("~{} tokens", ctx_hint));
                                 ui.end_row();
                             });
 
-                        ui.add_space(8.0);
-                        ui.label("Conversation capacity (comfort window)");
+                        ui.add_space(4.0);
                         ui.add(
                             egui::ProgressBar::new(ratio)
                                 .show_percentage()
@@ -1619,10 +1855,9 @@ impl eframe::App for LittleHelperApp {
                         );
 
                         if ratio > 0.85 {
-                            ui.add_space(6.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "If things feel slow, I may trim older messages to make room."
+                                    "Older messages may be trimmed to make room."
                                 )
                                 .size(11.0)
                                 .color(if dark {
@@ -1632,156 +1867,7 @@ impl eframe::App for LittleHelperApp {
                                 }),
                             );
                         }
-                    });
-
-                    ui.heading(
-                        egui::RichText::new("Build")
-                            .color(if dark {
-                                egui::Color32::from_rgb(220, 220, 230)
-                            } else {
-                                egui::Color32::from_rgb(40, 40, 50)
-                            }),
-                    );
-                    ui.label(
-                        egui::RichText::new(
-                            "Spec Kit is bundled, but you can override the assistant path here (advanced)."
-                        )
-                            .color(if dark {
-                                egui::Color32::from_rgb(180, 180, 190)
-                            } else {
-                                egui::Color32::from_rgb(80, 80, 90)
-                            }),
-                    );
-                    ui.add_space(6.0);
-
-                    ui.label(egui::RichText::new("Spec assistant path").size(11.0));
-                    ui.horizontal(|ui| {
-                        ui.text_edit_singleline(&mut s.spec_kit_path_input);
-                        if ui.button("Use default").clicked() {
-                            if let Some(home) = dirs::home_dir() {
-                                s.spec_kit_path_input = home
-                                    .join("Projects/spec-kit-assistant/archive/legacy-node/spec-assistant.js")
-                                    .to_string_lossy()
-                                    .to_string();
-                            }
-                        }
-                        if ui.button("Save").clicked() {
-                            let trimmed = s.spec_kit_path_input.trim();
-                            if trimmed.is_empty() {
-                                s.settings.build.spec_kit_path = None;
-                            } else {
-                                s.settings.build.spec_kit_path = Some(trimmed.to_string());
-                            }
-                            save_settings(&s.settings);
-                            s.settings_status = Some("Saved build tools settings".to_string());
-                            s.settings_status_is_error = false;
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    ui.heading(
-                        egui::RichText::new("Allowed folders")
-                            .color(if dark {
-                                egui::Color32::from_rgb(220, 220, 230)
-                            } else {
-                                egui::Color32::from_rgb(40, 40, 50)
-                            }),
-                    );
-                    ui.label(
-                        egui::RichText::new("Little Helper only works inside these folders.")
-                            .color(if dark {
-                                egui::Color32::from_rgb(180, 180, 190)
-                            } else {
-                                egui::Color32::from_rgb(80, 80, 90)
-                            }),
-                    );
-                    ui.add_space(6.0);
-
-                    if let Some(msg) = &s.settings_status {
-                        let color = if s.settings_status_is_error {
-                            egui::Color32::from_rgb(200, 120, 120)
-                        } else {
-                            egui::Color32::from_rgb(120, 200, 150)
-                        };
-                        ui.colored_label(color, msg);
-                        ui.add_space(6.0);
-                    }
-
-                    if s.settings.allowed_dirs.is_empty() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 120, 120),
-                            "No folders allowed. Add at least one folder.",
-                        );
-                    }
-
-                    let current_dirs = s.settings.allowed_dirs.clone();
-                    let mut dir_to_remove: Option<String> = None;
-                    for dir in &current_dirs {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(dir)
-                                    .family(egui::FontFamily::Monospace)
-                                    .size(12.0),
-                            );
-                            if s.settings.allowed_dirs.len() > 1 {
-                                if ui.small_button("Remove").clicked() {
-                                    dir_to_remove = Some(dir.clone());
-                                }
-                            }
-                        });
-                    }
-
-                    if let Some(target) = dir_to_remove {
-                        s.settings
-                            .allowed_dirs
-                            .retain(|existing| existing != &target);
-                        ensure_allowed_dirs(&mut s.settings);
-                        save_settings(&s.settings);
-                        s.settings_status = Some(format!("Removed {}", target));
-                        s.settings_status_is_error = false;
-                    }
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let text_edit = egui::TextEdit::singleline(&mut s.new_allowed_dir)
-                            .hint_text("~/Documents or /data/projects");
-                        ui.add(text_edit);
-                        if ui.button("Add").clicked() {
-                            let input = s.new_allowed_dir.trim();
-                            if input.is_empty() {
-                                s.settings_status =
-                                    Some("Enter a folder path before adding.".to_string());
-                                s.settings_status_is_error = true;
-                            } else if let Some(normalized) =
-                                normalize_allowed_dir_input(input)
-                            {
-                                let path_str = normalized.to_string_lossy().to_string();
-                                if s.settings
-                                    .allowed_dirs
-                                    .iter()
-                                    .any(|dir| dir == &path_str)
-                                {
-                                    s.settings_status =
-                                        Some("Folder already in allowlist.".to_string());
-                                    s.settings_status_is_error = true;
-                                } else {
-                                    s.settings.allowed_dirs.push(path_str.clone());
-                                    save_settings(&s.settings);
-                                    s.settings_status =
-                                        Some(format!("Added {}", path_str));
-                                    s.settings_status_is_error = false;
-                                }
-                                s.new_allowed_dir.clear();
-                            } else {
-                                s.settings_status =
-                                    Some("Folder must exist on disk.".to_string());
-                                s.settings_status_is_error = true;
-                            }
-                        }
-                    });
+                            }); // end Advanced collapsing header
 
                         ui.add_space(10.0);
                     });
@@ -2704,7 +2790,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
 
                         ui.group(|ui| {
                             ui.label(
-                                egui::RichText::new("Privacy")
+                                egui::RichText::new("Privacy & permissions")
                                     .size(14.0)
                                     .color(if dark {
                                         egui::Color32::from_rgb(220, 210, 200)
@@ -2712,7 +2798,22 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                         warm_brown
                                     }),
                             );
-                            ui.add_space(6.0);
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Right now I run on your computer using a local AI — \
+                                    nothing you type leaves your machine. You can switch \
+                                    to a cloud AI later in Settings (smarter, but sends \
+                                    data to their servers).",
+                                )
+                                .size(12.0)
+                                .color(if dark {
+                                    egui::Color32::from_rgb(180, 170, 160)
+                                } else {
+                                    egui::Color32::from_rgb(120, 105, 90)
+                                }),
+                            );
+                            ui.add_space(8.0);
 
                             // Keep onboarding minimal. Folder access and "help fix" permissions
                             // are handled inside Find/Fix when needed.
@@ -2730,7 +2831,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             );
                             ui.label(
                                 egui::RichText::new(
-                                    "Tip: I’ll run safe commands automatically. I’ll still ask before anything risky.",
+                                    "Tip: Safe commands run automatically. I'll still ask before anything risky.",
                                 )
                                 .size(11.0)
                                 .weak(),
@@ -2757,6 +2858,8 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                                     s.settings.user_profile.name = s.onboarding_name.trim().to_string();
                                 }
                                 s.settings.user_profile.onboarding_complete = true;
+                                // Show "try one!" hint on the mode picker
+                                s.show_mode_picker_hint = true;
 
                                 // Update welcome message with user's name - warm and friendly
                                 let user_name = if s.settings.user_profile.name.is_empty() {
