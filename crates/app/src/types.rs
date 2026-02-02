@@ -27,6 +27,7 @@ use sysinfo::System;
 use crate::context::{
     get_campaign_summary, load_campaign_context, load_ddd_workflow, load_personas,
 };
+use crate::set_primary_provider_preference;
 use crate::state::run_ai_generation;
 use crate::utils::{
     clean_ai_response, is_path_in_allowed_dirs, run_user_command,
@@ -130,6 +131,9 @@ pub struct AppState {
     pub current_mode: ChatMode,
     /// For detecting mode changes
     pub previous_mode: Option<ChatMode>,
+
+    /// First-time intro for Spec (Build) tab
+    pub spec_intro_shown: bool,
     /// Current input text
     pub input_text: String,
     /// Preserve input per mode
@@ -254,7 +258,9 @@ impl Default for AppState {
             }
         }
 
-        // If a cloud provider is selected but no key is set, prefer local to avoid immediate failures.
+        // Smart provider fallback on startup:
+        // - Cloud selected but no key? Fall back to local if Ollama is running.
+        // - Local selected but Ollama is down? Fall back to a cloud provider if a key exists.
         let primary_provider = settings
             .model
             .provider_preference
@@ -267,7 +273,7 @@ impl Default for AppState {
             "gemini" => settings.model.gemini_auth.api_key.is_none(),
             _ => false,
         };
-        if primary_provider != "local" && missing_key && AppState::ollama_reachable() {
+        if primary_provider != "local" && missing_key && Self::ollama_reachable() {
             settings.model.provider_preference = vec![
                 "local".to_string(),
                 "anthropic".to_string(),
@@ -275,9 +281,25 @@ impl Default for AppState {
                 "gemini".to_string(),
             ];
             crate::utils::save_settings(&settings);
+        } else if primary_provider == "local" && !Self::ollama_reachable() {
+            // Ollama isn't running -- try to fall back to a cloud provider that has a key
+            let fallback = if settings.model.anthropic_auth.api_key.is_some() {
+                Some("anthropic")
+            } else if settings.model.openai_auth.api_key.is_some() {
+                Some("openai")
+            } else if settings.model.gemini_auth.api_key.is_some() {
+                Some("gemini")
+            } else {
+                None
+            };
+            if let Some(provider) = fallback {
+                set_primary_provider_preference(
+                    &mut settings.model.provider_preference,
+                    provider,
+                );
+                crate::utils::save_settings(&settings);
+            }
         }
-
-        let needs_onboarding = !settings.user_profile.onboarding_complete;
 
         let user_name = if settings.user_profile.name.is_empty() {
             "friend".to_string()
@@ -296,25 +318,63 @@ impl Default for AppState {
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
 
+        // Check if the user has any working AI provider at all
+        let startup_provider = settings
+            .model
+            .provider_preference
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+        let has_any_cloud_key = settings.model.openai_auth.api_key.is_some()
+            || settings.model.anthropic_auth.api_key.is_some()
+            || settings.model.gemini_auth.api_key.is_some();
+        let ollama_up = Self::ollama_reachable();
+
+        let setup_warning = if startup_provider == "local" && !ollama_up && !has_any_cloud_key {
+            Some(ChatMessage {
+                role: "assistant".to_string(),
+                content: "Heads up: I can't reach Ollama and no cloud API key is set, so I won't be able to answer questions yet.\n\n\
+To get started, pick one:\n\
+- **Install Ollama** from https://ollama.com, then run `ollama pull llama3.2:3b`\n\
+- **Or** open Settings (gear icon) and paste a Gemini, OpenAI, or Anthropic API key".to_string(),
+                details: None,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            })
+        } else if startup_provider == "local" && !ollama_up && has_any_cloud_key {
+            Some(ChatMessage {
+                role: "assistant".to_string(),
+                content: "Ollama isn't running, but you have a cloud API key saved. I'll switch to your cloud provider.\n\
+You can change this anytime in Settings.".to_string(),
+                details: None,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            })
+        } else {
+            None
+        };
+
         // Initialize preview panel with mode intro
         let mut preview_panel = crate::preview_panel::PreviewPanel::new();
         preview_panel.show_mode_intro("find");
 
+        let mut find_history = vec![welcome_msg.clone()];
+        let mut fix_history = vec![welcome_msg.clone()];
+        if let Some(warning) = setup_warning {
+            find_history.push(warning.clone());
+            fix_history.push(warning);
+        }
+
         Self {
             settings: settings.clone(),
-            current_screen: if needs_onboarding {
-                AppScreen::Onboarding
-            } else {
-                AppScreen::Chat
-            },
+            current_screen: AppScreen::Chat,
             current_mode: ChatMode::Find,
             previous_mode: None,
+            spec_intro_shown: false,
             input_text: String::new(),
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
                 let mut h = HashMap::new();
-                h.insert(ChatMode::Find, vec![welcome_msg.clone()]);
-                h.insert(ChatMode::Fix, vec![welcome_msg.clone()]);
+                h.insert(ChatMode::Find, find_history);
+                h.insert(ChatMode::Fix, fix_history);
                 h.insert(ChatMode::Research, Vec::new());
                 h.insert(ChatMode::Data, Vec::new());
                 h.insert(ChatMode::Content, Vec::new());
@@ -569,7 +629,7 @@ impl AppState {
         let spec_kit_path = self.spec_kit_path();
         if !spec_kit_path.exists() {
             self.build_status = Some(
-                "Build Helper isn’t set up yet. In the Build tab, click ‘Find Spec Kit Assistant…’.".to_string(),
+                "Spec isn’t set up yet. In the Spec tab, click ‘Find Spec Kit Assistant…’.".to_string(),
             );
             self.build_status_is_error = true;
             return;
@@ -603,9 +663,16 @@ impl AppState {
         self.thinking_mode = Some(self.current_mode);
         self.is_thinking.insert(self.current_mode, true);
         self.thinking_status
-            .insert(self.current_mode, "Running Spec Kit".to_string());
+            .insert(self.current_mode, "Spec is building...".to_string());
         self.build_status = Some("Running Spec Kit...".to_string());
         self.build_status_is_error = false;
+
+        // Keep the Spec logo visible while running.
+        if self.current_mode == ChatMode::Build {
+            self.show_preview = true;
+            self.active_viewer = ActiveViewer::Panel;
+            self.preview_panel.show_mode_intro("build");
+        }
 
         std::thread::spawn(move || {
             let output = run_user_command(&command);
@@ -704,6 +771,23 @@ What to do next:\n\
 - If you’d rather not use cloud keys, switch to Local (Ollama)",
                                 provider
                             ),
+                            Some(error.clone()),
+                        )
+                    } else if lower.contains("connection refused")
+                        || lower.contains("error sending request")
+                            && lower.contains("11434")
+                        || lower.contains("ollama error")
+                        || lower.contains("tcp connect error")
+                            && lower.contains("11434")
+                    {
+                        open_settings = true;
+                        (
+                            "I can't reach Ollama (the local AI engine).\n\n\
+What to do next:\n\
+- If Ollama is installed, make sure it's running\n\
+- If it's not installed, grab it from https://ollama.com\n\
+- Or switch to a cloud provider in Settings and paste an API key"
+                                .to_string(),
                             Some(error.clone()),
                         )
                     } else {
@@ -857,19 +941,36 @@ What to do next:\n\
 
                 match result.output {
                     Ok(cmd_result) => {
-                        self.active_viewer = ActiveViewer::CommandOutput(
-                            result.command.clone(),
-                            cmd_result.output.clone(),
-                        );
-                        self.push_chat(ChatMessage {
-                            role: "assistant".to_string(),
-                            content: format!(
-                                "Command `{}` completed.\n\n```\n{}\n```",
-                                result.command, cmd_result.output
-                            ),
-                            details: None,
-                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                        });
+                        if active_mode == Some(ChatMode::Build) {
+                            // Keep the Spec logo in the preview panel.
+                            self.active_viewer = ActiveViewer::Panel;
+                            self.preview_panel.show_mode_intro("build");
+
+                            self.push_chat(ChatMessage {
+                                role: "assistant".to_string(),
+                                content: if cmd_result.success {
+                                    "Spec finished. (Open Details to see the full output.)".to_string()
+                                } else {
+                                    "Spec hit an error. (Open Details to see the full output.)".to_string()
+                                },
+                                details: Some(cmd_result.output.clone()),
+                                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                            });
+                        } else {
+                            self.active_viewer = ActiveViewer::CommandOutput(
+                                result.command.clone(),
+                                cmd_result.output.clone(),
+                            );
+                            self.push_chat(ChatMessage {
+                                role: "assistant".to_string(),
+                                content: format!(
+                                    "Command `{}` completed.\n\n```\n{}\n```",
+                                    result.command, cmd_result.output
+                                ),
+                                details: None,
+                                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                            });
+                        }
                         if active_mode == Some(ChatMode::Build) {
                             self.build_status = Some(if cmd_result.success {
                                 "Spec Kit finished successfully".to_string()
@@ -889,6 +990,8 @@ What to do next:\n\
                         if active_mode == Some(ChatMode::Build) {
                             self.build_status = Some("Spec Kit command failed".to_string());
                             self.build_status_is_error = true;
+                            self.active_viewer = ActiveViewer::Panel;
+                            self.preview_panel.show_mode_intro("build");
                         }
                     }
                 }
@@ -1133,7 +1236,7 @@ What to do next:\n\
                             ChatMode::Research => "Research Helper",
                             ChatMode::Data => "Data Helper",
                             ChatMode::Content => "Content Helper",
-                            ChatMode::Build => "Build Helper",
+                            ChatMode::Build => "Spec",
                         }
                     ),
                     details: None,

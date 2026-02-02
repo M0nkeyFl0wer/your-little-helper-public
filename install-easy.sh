@@ -57,15 +57,35 @@ cd "$TEMP_DIR"
 echo ""
 echo -e "${BLUE}Downloading Little Helper...${NC}"
 
-# Get latest release URL
-RELEASE_URL="https://github.com/M0nkeyFl0wer/your-little-helper-public/releases/latest/download/LittleHelper-macOS-arm64.zip"
+# Get latest release DMG (universal binary -- works on Intel and Apple Silicon)
+RELEASE_URL="https://github.com/M0nkeyFl0wer/your-little-helper-public/releases/latest/download/LittleHelper.dmg"
 
-if curl -fsSL -o "LittleHelper.zip" "$RELEASE_URL" 2>/dev/null; then
+if curl -fsSL -o "LittleHelper.dmg" "$RELEASE_URL" 2>/dev/null; then
     echo -e "${GREEN}Downloaded!${NC}"
-else
-    echo -e "${YELLOW}No release found. Building from source (this takes a few minutes)...${NC}"
 
-    # Fallback: build from source
+    # Mount the DMG and copy the app out
+    echo -e "${BLUE}Extracting app...${NC}"
+    MOUNT_DIR=$(hdiutil attach -nobrowse -quiet "LittleHelper.dmg" | tail -1 | awk '{print $NF}')
+    if [[ -d "$MOUNT_DIR/Little Helper.app" ]]; then
+        cp -R "$MOUNT_DIR/Little Helper.app" ./
+        hdiutil detach "$MOUNT_DIR" -quiet
+    else
+        # Try finding it on the mounted volume
+        MOUNT_VOL=$(hdiutil attach -nobrowse -quiet "LittleHelper.dmg" 2>/dev/null | grep "/Volumes" | awk -F'\t' '{print $NF}')
+        if [[ -d "$MOUNT_VOL/Little Helper.app" ]]; then
+            cp -R "$MOUNT_VOL/Little Helper.app" ./
+            hdiutil detach "$MOUNT_VOL" -quiet
+        else
+            echo -e "${YELLOW}Could not extract app from DMG. Falling back to source build...${NC}"
+            hdiutil detach "$MOUNT_VOL" -quiet 2>/dev/null
+        fi
+    fi
+fi
+
+# Fallback: build from source if no app bundle exists yet
+if [[ ! -d "Little Helper.app" ]]; then
+    echo -e "${YELLOW}No pre-built release found. Building from source...${NC}"
+
     if ! command -v cargo &> /dev/null; then
         echo -e "${BLUE}Installing Rust (needed to build)...${NC}"
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -107,11 +127,6 @@ EOF
 
     cd ..
     mv your-little-helper-public/"Little Helper.app" ./
-fi
-
-# Unzip if we downloaded
-if [[ -f "LittleHelper.zip" ]]; then
-    unzip -q "LittleHelper.zip"
 fi
 
 # Install to Applications

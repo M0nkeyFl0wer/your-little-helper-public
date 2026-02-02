@@ -14,6 +14,8 @@ use viewers::{
 
 use crate::ascii_art::{get_ascii_art, get_mode_art};
 use services::version_control::VersionControlService;
+// These types are used when the cleanup/organize preview is active
+#[allow(unused_imports)]
 use shared::preview_types::{CleanupMove, CleanupRename, CleanupSnapshotItem};
 
 /// Actions that can be performed on preview content
@@ -420,7 +422,7 @@ impl PreviewPanel {
                         "research" => "Research Helper".to_string(),
                         "data" => "Data Helper".to_string(),
                         "content" => "Content Helper".to_string(),
-                        "build" => "Build Helper".to_string(),
+                        "build" => "Spec".to_string(),
                         _ => format!("{} Helper", mode),
                     },
                     PreviewContent::Ascii { state } => format!("{}", state),

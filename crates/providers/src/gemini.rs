@@ -21,7 +21,12 @@ struct GeminiPart {
 struct GeminiRequest {
     contents: Vec<GeminiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system_instruction: Option<GeminiContent>,
+    system_instruction: Option<GeminiSystemInstruction>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -88,10 +93,7 @@ impl GeminiClient {
         for m in messages {
             if m.role == "system" {
                 let part = GeminiPart { text: m.content };
-                system_instruction = Some(GeminiContent {
-                    role: "system".to_string(),
-                    parts: vec![part],
-                });
+                system_instruction = Some(GeminiSystemInstruction { parts: vec![part] });
             } else {
                 // Gemini expects roles: "user" | "model".
                 // Our app uses "user" | "assistant".

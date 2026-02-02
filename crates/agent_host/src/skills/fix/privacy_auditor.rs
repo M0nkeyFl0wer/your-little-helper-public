@@ -363,7 +363,7 @@ impl PrivacyAuditor {
         // - Portals: xdg-desktop-portal
         
         // Check Flatpak permissions
-        if let Ok(output) = Command::new("flatpak")
+        if let Ok(_output) = Command::new("flatpak")
             .args(&["permission-show"])
             .output() {
             // Parse flatpak permission output

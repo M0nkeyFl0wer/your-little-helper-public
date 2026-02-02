@@ -45,7 +45,7 @@ pub fn get_mode_art(mode: &str) -> &'static str {
         "research" => RESEARCH_DOG,
         "data" => DATA_DOG,
         "content" => CONTENT_DOG,
-        "build" => BUILD_DOG,
+        "build" => SPEC_DOG,
         _ => WELCOME_DOG_1,
     }
 }
@@ -147,13 +147,25 @@ const CONTENT_DOG: &str = r#"
 /_____/ U
 "#;
 
-// Build Helper dog
-const BUILD_DOG: &str = r#"
- / \__
-(    @\___
- /  /|  O
-/  / | /
-/_____/ U
+// Spec (Spec Kit Assistant) - full gradient banner from spec-kit-assistant
+const SPEC_DOG: &str = r#"
+                                         ██████          ██████
+                                        ██▓▓▓▓▓▓██████████▓▓▓▓▓▓██
+                                        ██▓▓▓▓██          ██▓▓▓▓██
+                                        ██▓▓████    ▓▓▓▓▓▓████▓▓██
+    ███████╗██████╗ ███████╗ ██████╗     ██  ██  ██▓▓██▓▓██  ██
+    ██╔════╝██╔══██╗██╔════╝██╔════╝         ██    ▓▓▓▓▓▓██
+    ███████╗██████╔╝█████╗  ██║       ██              ██
+    ╚════██║██╔═══╝ ██╔══╝  ██║       ██    ██████    ██
+    ███████║██║     ███████╗╚██████╗  ██    ██████    ██
+    ╚══════╝╚═╝     ╚══════╝ ╚═════╝  ██              ██
+                                             ██    ██    ██
+                                               ████░░████
+                                                 ██░░██
+                                                 ██░░██
+                                                   ████
+
+      🐕 Your Loyal Spec Kit Assistant
 "#;
 
 /// Render ASCII art with theme-aware colors
