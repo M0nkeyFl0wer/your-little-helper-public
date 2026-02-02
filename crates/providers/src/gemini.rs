@@ -46,6 +46,7 @@ struct GeminiCandidate {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GeminiResponse {
+    #[serde(default)]
     candidates: Vec<GeminiCandidate>,
 }
 
@@ -88,28 +89,70 @@ impl GeminiClient {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.auth_token
         );
-        let mut system_instruction = None;
-        let mut contents: Vec<GeminiContent> = Vec::new();
-        for m in messages {
+
+        // Gemini has strict requirements:
+        //   1. contents must start with role "user"
+        //   2. contents must end with role "user"
+        //   3. roles must alternate (user, model, user, model, ...)
+        //   4. system messages go in the separate system_instruction field
+        //
+        // We merge consecutive same-role messages and ensure alternation.
+
+        let mut system_parts: Vec<GeminiPart> = Vec::new();
+        let mut raw_contents: Vec<GeminiContent> = Vec::new();
+
+        for m in &messages {
             if m.role == "system" {
-                let part = GeminiPart { text: m.content };
-                system_instruction = Some(GeminiSystemInstruction { parts: vec![part] });
+                system_parts.push(GeminiPart {
+                    text: m.content.clone(),
+                });
             } else {
-                // Gemini expects roles: "user" | "model".
-                // Our app uses "user" | "assistant".
                 let role = match m.role.as_str() {
                     "assistant" => "model",
                     "user" => "user",
-                    other => other,
+                    _ => "user",
                 };
-                contents.push(GeminiContent {
+                // Merge consecutive messages with the same role
+                if let Some(last) = raw_contents.last_mut() {
+                    if last.role == role {
+                        last.parts.push(GeminiPart {
+                            text: m.content.clone(),
+                        });
+                        continue;
+                    }
+                }
+                raw_contents.push(GeminiContent {
                     role: role.to_string(),
-                    parts: vec![GeminiPart { text: m.content }],
+                    parts: vec![GeminiPart {
+                        text: m.content.clone(),
+                    }],
                 });
             }
         }
+
+        // Ensure contents starts with "user"
+        if raw_contents.first().map(|c| c.role.as_str()) == Some("model") {
+            raw_contents.remove(0);
+        }
+        // Ensure contents ends with "user" (Gemini requires this)
+        if raw_contents.last().map(|c| c.role.as_str()) == Some("model") {
+            raw_contents.pop();
+        }
+        // If empty after trimming, nothing to send
+        if raw_contents.is_empty() {
+            return Err(anyhow!("No user messages to send to Gemini"));
+        }
+
+        let system_instruction = if system_parts.is_empty() {
+            None
+        } else {
+            Some(GeminiSystemInstruction {
+                parts: system_parts,
+            })
+        };
+
         let req = GeminiRequest {
-            contents,
+            contents: raw_contents,
             system_instruction,
         };
         let resp = self.http.post(url).json(&req).send().await?;

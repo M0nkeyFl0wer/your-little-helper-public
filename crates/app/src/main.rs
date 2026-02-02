@@ -51,6 +51,9 @@ use secrets::OPENAI_API_KEY;
 mod support_info;
 use support_info::{SUPPORT_BUTTON_TEXT, SUPPORT_LINK};
 
+// Bundled Ollama lifecycle management
+pub(crate) mod ollama_manager;
+
 // Interactive Preview Companion modules
 mod ascii_art;
 mod modals;
@@ -506,7 +509,7 @@ impl eframe::App for LittleHelperApp {
                             );
                             mode_button(
                                 ui,
-                                "Spec",
+                                "Build",
                                 ChatMode::Build,
                                 &mut s.current_mode,
                                 build_processing,
@@ -1088,7 +1091,7 @@ impl eframe::App for LittleHelperApp {
                             ChatMode::Research => "Research Helper",
                             ChatMode::Data => "Data Helper",
                             ChatMode::Content => "Content Helper",
-                            ChatMode::Build => "Spec",
+                            ChatMode::Build => "Build",
                         };
                         let elapsed = s
                             .thinking_started_at
@@ -1647,7 +1650,7 @@ impl eframe::App for LittleHelperApp {
                     });
 
                     ui.heading(
-                        egui::RichText::new("Spec")
+                        egui::RichText::new("Build")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1656,7 +1659,7 @@ impl eframe::App for LittleHelperApp {
                     );
                     ui.label(
                         egui::RichText::new(
-                            "Spec is bundled, but you can override the assistant path here (advanced)."
+                            "Spec Kit is bundled, but you can override the assistant path here (advanced)."
                         )
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
@@ -1835,13 +1838,13 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
             ui.heading(
-                egui::RichText::new("Spec")
+                egui::RichText::new("Build")
                     .color(heading_color)
                     .size(16.0),
             );
             ui.label(
                 egui::RichText::new(
-                    "Powered by Spec Kit Assistant (a wrapper around GitHub Spec Kit). Use this to scaffold a project and run build tasks."
+                    "Powered by Spec Kit Assistant. Use this to scaffold a project and run build tasks."
                 )
                     .color(subtle_color)
                     .size(11.0),
@@ -2080,7 +2083,7 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                 ],
             ),
             ChatMode::Build => (
-                "Spec",
+                "Build",
                 vec![
                     "Start a new project from an idea",
                     "Run Spec Kit Assistant without touching the terminal",
@@ -2659,7 +2662,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ("🔎", "Find things", "files, photos, and docs"),
                             ("🔧", "Fix problems", "with safe, guided steps"),
                             ("🔬", "Research", "with sources and previews"),
-                            ("🐶", "Spec", "projects with Spec Kit"),
+                            ("🐶", "Build", "projects with Spec Kit"),
                         ];
 
                         for (icon, title, desc) in features {

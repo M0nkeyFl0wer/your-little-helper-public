@@ -22,6 +22,13 @@ jobs:
       - name: Build Release
         run: cargo build --release
 
+      - name: Bundle Ollama
+        run: |
+          # Download Ollama CLI for Windows
+          Invoke-WebRequest -Uri "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.exe" -OutFile "ollama.exe"
+          # Place next to app binary so Inno Setup can pick it up
+          Copy-Item ollama.exe target\release\ollama.exe
+
       - name: Download Inno Setup
         run: choco install innosetup -y
 
@@ -101,12 +108,24 @@ jobs:
           # Verify it's universal
           file universal/app
 
+      - name: Bundle Ollama
+        run: |
+          # Download Ollama CLI binary for macOS (universal)
+          curl -fsSL -o ollama "https://github.com/ollama/ollama/releases/latest/download/ollama-darwin"
+          chmod +x ollama
+          # Verify it works
+          file ollama
+
       - name: Create App Bundle
         run: |
           mkdir -p "Little Helper.app/Contents/MacOS"
           mkdir -p "Little Helper.app/Contents/Resources"
           cp universal/app "Little Helper.app/Contents/MacOS/Little Helper"
           chmod +x "Little Helper.app/Contents/MacOS/Little Helper"
+
+          # Bundle Ollama in Resources
+          cp ollama "Little Helper.app/Contents/Resources/ollama"
+          chmod +x "Little Helper.app/Contents/Resources/ollama"
 
           # Create Info.plist
           cat > "Little Helper.app/Contents/Info.plist" << 'EOF'
@@ -172,6 +191,13 @@ jobs:
       - name: Build Release
         run: cargo build --release
 
+      - name: Bundle Ollama
+        run: |
+          # Download Ollama CLI binary for Linux amd64
+          curl -fsSL -o ollama "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64"
+          chmod +x ollama
+          file ollama
+
       - name: Create AppDir structure
         run: |
           mkdir -p AppDir/usr/bin
@@ -179,6 +205,10 @@ jobs:
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           cp target/release/app AppDir/usr/bin/little-helper
           chmod +x AppDir/usr/bin/little-helper
+
+          # Bundle Ollama alongside the app binary
+          cp ollama AppDir/usr/bin/ollama
+          chmod +x AppDir/usr/bin/ollama
 
           # Create desktop entry
           cat > AppDir/usr/share/applications/little-helper.desktop << EOF
@@ -209,7 +239,10 @@ jobs:
           
       - name: Create tarball
         run: |
-          tar -czf LittleHelper-Linux.tar.gz -C target/release app
+          mkdir -p tarball-staging
+          cp target/release/app tarball-staging/little-helper
+          cp ollama tarball-staging/ollama
+          tar -czf LittleHelper-Linux.tar.gz -C tarball-staging .
           
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4

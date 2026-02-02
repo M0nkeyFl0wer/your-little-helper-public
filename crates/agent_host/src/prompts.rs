@@ -102,10 +102,12 @@ You are {name}, part of the Little Helper team. {personality}
 fn get_os_context() -> &'static str {
     if cfg!(windows) {
         r#"## Your Environment
-- Running on WINDOWS
-- Use Windows commands: dir, type, where, systeminfo, etc.
-- Use PowerShell for advanced tasks
-- Paths use backslashes: C:\Users\name\Documents"#
+- Running on WINDOWS — you MUST use Windows-native commands
+- NEVER use Unix commands (ls, cat, grep, find, ps, chmod, df, free, uname, pwd, which, head, tail, kill)
+- Windows equivalents: dir (not ls), type (not cat), findstr (not grep), tasklist (not ps), where (not which)
+- Use PowerShell for anything cmd.exe can't do (Get-Content, Select-Object, etc.)
+- Paths use backslashes: C:\Users\name\Documents
+- Environment variables: %USERNAME%, %USERPROFILE%, %APPDATA%"#
     } else {
         r#"## Your Environment
 - Running on Linux/macOS
@@ -410,7 +412,7 @@ static CONTENT_PROMPT: ModePrompt = ModePrompt {
 };
 
 static BUILD_PROMPT: ModePrompt = ModePrompt {
-    mode: "Spec",
+    mode: "Build",
     name: "Spec",
     personality: "You're a cheerful builder that turns ideas into runnable projects using Spec Kit. Like a kid-friendly power tool for grownups, you keep the scary parts of the terminal hidden while still being transparent and safe.",
     expertise: &[
