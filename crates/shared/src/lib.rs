@@ -29,7 +29,7 @@ pub mod settings {
         pub provider_preference: Vec<String>, // e.g., ["local", "openai", "anthropic", "gemini"]
         pub openai_model: String,             // e.g., "gpt-4o-mini"
         pub anthropic_model: String,          // e.g., "claude-3-5-sonnet-20241022"
-        pub gemini_model: String,             // e.g., "gemini-1.5-flash"
+        pub gemini_model: String,             // e.g., "gemini-2.5-flash-lite"
 
         // Authentication (either API key or OAuth)
         pub openai_auth: ProviderAuth,
@@ -125,7 +125,7 @@ pub mod settings {
                     ],
                     openai_model: "gpt-4o-mini".into(),
                     anthropic_model: "claude-3-5-sonnet-20241022".into(),
-                    gemini_model: "gemini-1.5-flash".into(),
+                    gemini_model: "gemini-2.5-flash-lite".into(),
                     openai_auth: ProviderAuth::default(),
                     anthropic_auth: ProviderAuth::default(),
                     gemini_auth: ProviderAuth::default(),

@@ -250,7 +250,9 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
         if let Ok(contents) = std::fs::read_to_string(&path) {
             if let Ok(settings) = serde_json::from_str::<AppSettings>(&contents) {
                 let mut settings = settings;
-                let changed = try_install_bundled_speckit(&mut settings);
+                let mut changed = try_install_bundled_speckit(&mut settings);
+                // Migrate retired Gemini model names
+                changed |= migrate_gemini_model(&mut settings);
                 if changed {
                     save_settings(&settings);
                 }
@@ -391,6 +393,22 @@ pub fn save_settings(settings: &AppSettings) {
             let _ = std::fs::write(&path, json);
         }
     }
+}
+
+/// Migrate retired Gemini model names to current equivalents.
+/// Returns true if a migration was applied.
+fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
+    let retired = [
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-1.0-pro",
+        "gemini-pro",
+    ];
+    if retired.iter().any(|r| settings.model.gemini_model == *r) {
+        settings.model.gemini_model = "gemini-2.5-flash-lite".to_string();
+        return true;
+    }
+    false
 }
 
 /// Ensure allowed directories are set up correctly
