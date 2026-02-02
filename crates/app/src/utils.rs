@@ -395,20 +395,39 @@ pub fn save_settings(settings: &AppSettings) {
     }
 }
 
-/// Migrate retired Gemini model names to current equivalents.
-/// Returns true if a migration was applied.
+/// Migrate retired/outdated model names to current best equivalents.
+/// Returns true if any migration was applied.
 fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
-    let retired = [
+    let mut changed = false;
+
+    // Gemini: all 1.x models are retired (404), 2.0 retires March 2026
+    let retired_gemini = [
         "gemini-1.5-flash",
         "gemini-1.5-pro",
         "gemini-1.0-pro",
         "gemini-pro",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-flash-lite", // upgrade to full flash for better quality
     ];
-    if retired.iter().any(|r| settings.model.gemini_model == *r) {
-        settings.model.gemini_model = "gemini-2.5-flash-lite".to_string();
-        return true;
+    if retired_gemini.iter().any(|r| settings.model.gemini_model == *r) {
+        settings.model.gemini_model = "gemini-2.5-flash".to_string();
+        changed = true;
     }
-    false
+
+    // Anthropic: upgrade old 3.x models to Claude Sonnet 4
+    let old_anthropic = [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet-20240620",
+        "claude-3-opus-20240229",
+        "claude-3-haiku-20240307",
+        "claude-3-5-haiku-20241022",
+    ];
+    if old_anthropic.iter().any(|r| settings.model.anthropic_model == *r) {
+        settings.model.anthropic_model = "claude-sonnet-4-20250514".to_string();
+        changed = true;
+    }
+
+    changed
 }
 
 /// Ensure allowed directories are set up correctly
