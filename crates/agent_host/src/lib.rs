@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Agent Host - AI agent with command execution capabilities
 //!
 //! This crate provides the AI agent that can:

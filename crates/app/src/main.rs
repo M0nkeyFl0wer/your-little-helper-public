@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use agent_host::CommandResult;
 use eframe::egui;
 use parking_lot::Mutex;
@@ -17,7 +19,7 @@ fn try_read_clipboard_text() -> Option<String> {
     if trimmed.is_empty() { None } else { Some(trimmed) }
 }
 
-fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
+pub(crate) fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
     let mut out: Vec<String> = Vec::new();
 
     let add = |out: &mut Vec<String>, p: &str| {
@@ -40,16 +42,19 @@ fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
 // Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
+#[allow(dead_code)]
 mod secrets;
 use secrets::OPENAI_API_KEY;
 
 // Support contact info (gitignored - your personal contact stays private)
+#[allow(dead_code)]
 mod support_info;
 use support_info::{SUPPORT_BUTTON_TEXT, SUPPORT_LINK};
 
 // Interactive Preview Companion modules
 mod ascii_art;
 mod modals;
+#[allow(dead_code)]
 mod onboarding;
 mod preview_panel;
 mod thread_history;
@@ -306,6 +311,27 @@ impl eframe::App for LittleHelperApp {
 
             let mode_str = s.current_mode.as_str();
             s.preview_panel.show_mode_intro(mode_str);
+
+            // First-time Spec intro happens when the user opens the tab.
+            if s.current_mode == ChatMode::Build && !s.spec_intro_shown {
+                s.spec_intro_shown = true;
+
+                if !s.settings.user_profile.onboarding_complete {
+                    s.settings.user_profile.onboarding_complete = true;
+                    save_settings(&s.settings);
+                }
+
+                s.show_preview = true;
+                s.active_viewer = ActiveViewer::Panel;
+                s.preview_panel.show_mode_intro("build");
+
+                s.push_chat(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: "Hi! I’m Spec — the builder. Tell me what you want to build and I’ll run Spec Kit Assistant under the hood (terminal superpowers, with guardrails).".to_string(),
+                    details: None,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                });
+            }
             
             // Load context documents and skills for the new mode
             let shared_mode = match s.current_mode {
@@ -359,17 +385,13 @@ impl eframe::App for LittleHelperApp {
         }
         ctx.set_style(style);
 
-        // Route to appropriate screen
-        match s.current_screen {
-            AppScreen::Onboarding => {
-                render_onboarding_screen(&mut s, ctx);
-                return;
-            }
-            AppScreen::Chat => {
-                // Load mascot texture if not already loaded
-                s.load_mascot_texture(ctx);
-            }
+        // Onboarding should be “in flow” (chat + per-tab). Don’t trap users on a separate screen.
+        if s.current_screen == AppScreen::Onboarding {
+            s.current_screen = AppScreen::Chat;
         }
+
+        // Load mascot texture if not already loaded
+        s.load_mascot_texture(ctx);
 
         let dark = s.settings.user_profile.dark_mode;
 
@@ -408,8 +430,14 @@ impl eframe::App for LittleHelperApp {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
+                    let header_name = if s.settings.user_profile.name.trim().is_empty() {
+                        "Little Helper".to_string()
+                    } else {
+                        format!("{}'s Little Helper", s.settings.user_profile.name.trim())
+                    };
+
                     ui.heading(
-                        egui::RichText::new("Little Helper")
+                        egui::RichText::new(header_name)
                             .size(24.0)
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
@@ -478,7 +506,7 @@ impl eframe::App for LittleHelperApp {
                             );
                             mode_button(
                                 ui,
-                                "Build",
+                                "Spec",
                                 ChatMode::Build,
                                 &mut s.current_mode,
                                 build_processing,
@@ -933,19 +961,27 @@ impl eframe::App for LittleHelperApp {
                     // Soft rounded frame to make the wallpaper feel intentional
                     let rounding = egui::Rounding::same(28.0);
                     let frame_rect = rect.expand2(egui::vec2(14.0, 14.0));
+                    // In light mode, a white frame + low-alpha image reads as a "white out".
+                    // Use a soft shadow frame and a slightly stronger image tint.
                     let frame_fill = if dark {
                         egui::Color32::from_rgba_unmultiplied(0, 0, 0, 26)
                     } else {
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)
+                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 12)
                     };
                     ui.painter().rect_filled(frame_rect, rounding, frame_fill);
 
                     // Wallpaper image (low alpha so chat stays readable)
+                    let wallpaper_tint = if dark {
+                        egui::Color32::from_white_alpha(30)
+                    } else {
+                        egui::Color32::from_white_alpha(72)
+                    };
+
                     ui.painter().image(
                         texture.id(),
                         rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::from_white_alpha(30),
+                        wallpaper_tint,
                     );
 
                     // Subtle border
@@ -957,7 +993,7 @@ impl eframe::App for LittleHelperApp {
                             if dark {
                                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)
                             } else {
-                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 20)
+                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 28)
                             },
                         ),
                     );
@@ -1052,7 +1088,7 @@ impl eframe::App for LittleHelperApp {
                             ChatMode::Research => "Research Helper",
                             ChatMode::Data => "Data Helper",
                             ChatMode::Content => "Content Helper",
-                            ChatMode::Build => "Build Helper",
+                            ChatMode::Build => "Spec",
                         };
                         let elapsed = s
                             .thinking_started_at
@@ -1382,193 +1418,156 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
 
                     ui.heading(
-                        egui::RichText::new("AI Model")
+                        egui::RichText::new("AI Provider")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
                                 egui::Color32::from_rgb(40, 40, 50)
                             }),
                     );
-                    ui.label(
-                        egui::RichText::new("Pick where replies come from. Cloud options need a key.")
-                            .color(if dark {
-                                egui::Color32::from_rgb(180, 180, 190)
-                            } else {
-                                egui::Color32::from_rgb(80, 80, 90)
-                            }),
-                    );
-                    ui.add_space(6.0);
 
-                    // Provider selection combo box
-                    let providers = [("local", "🖥️ Local (Ollama - free, runs on your computer)"),
-                                    ("openai", "🤖 OpenAI (GPT-4o-mini, requires API key)"),
-                                    ("anthropic", "🧠 Anthropic (Claude, requires API key)"),
-                                    ("gemini", "✨ Google (Gemini, requires API key)")];
+                    // Provider selector
+                    let providers = [
+                        ("local", "Local (Ollama)"),
+                        ("openai", "OpenAI (GPT-4)"),
+                        ("anthropic", "Anthropic (Claude)"),
+                        ("gemini", "Google (Gemini)"),
+                    ];
 
-                    // Get current primary provider as owned string
-                    let current_provider: String = s.settings.model.provider_preference.first()
+                    let current_provider = s
+                        .settings
+                        .model
+                        .provider_preference
+                        .first()
                         .cloned()
                         .unwrap_or_else(|| "local".to_string());
 
-                    let mut selected_provider = current_provider.clone();
-                    egui::ComboBox::from_id_source("provider_select")
-                        .selected_text(providers.iter().find(|(k, _)| *k == current_provider.as_str())
-                            .map(|(_, v)| *v)
-                            .unwrap_or("Select provider..."))
+                    let provider_label = providers
+                        .iter()
+                        .find(|(id, _)| *id == current_provider.as_str())
+                        .map(|(_, name)| *name)
+                        .unwrap_or("Local (Ollama)");
+
+                    egui::ComboBox::from_label("Select Provider")
+                        .selected_text(provider_label)
                         .show_ui(ui, |ui| {
-                            for (key, label) in &providers {
-                                if ui.selectable_value(&mut selected_provider, key.to_string(), *label).clicked() {
-                                    // Update provider preference
+                            for (id, name) in providers {
+                                if ui.selectable_label(current_provider == id, name).clicked() {
                                     set_primary_provider_preference(
                                         &mut s.settings.model.provider_preference,
-                                        key,
+                                        id,
                                     );
                                     save_settings(&s.settings);
-                                    s.settings_status = Some(format!("Switched to {}", label.split(' ').next().unwrap_or(key)));
+                                    s.settings_status = Some(format!("Switched to {}", name));
                                     s.settings_status_is_error = false;
                                 }
                             }
                         });
 
-                    ui.add_space(4.0);
-
-                    // Show API key status
-                    let has_api_key = match current_provider.as_str() {
-                        "openai" => s.settings.model.openai_auth.api_key.is_some(),
-                        "anthropic" => s.settings.model.anthropic_auth.api_key.is_some(),
-                        "gemini" => s.settings.model.gemini_auth.api_key.is_some(),
-                        _ => true, // Local doesn't need API key
-                    };
-
-                    if current_provider != "local" {
-                        if has_api_key {
-                            ui.label(egui::RichText::new("✓ API key configured").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
-                        } else {
-                            ui.label(egui::RichText::new("⚠ No API key configured").color(egui::Color32::from_rgb(220, 140, 60)).size(11.0));
-                        }
-                    }
-
-                    // API Key input section
                     ui.add_space(8.0);
-                    ui.collapsing("Add API keys", |ui| {
-                        ui.label(egui::RichText::new("Add a key if you want to use cloud models.").size(11.0).weak());
-                        ui.add_space(4.0);
 
-                        // OpenAI API Key
+                    // API Key inputs for cloud providers
+                    let is_cloud = current_provider == "openai" || current_provider == "anthropic" || current_provider == "gemini";
+                    if is_cloud {
+                        // Read the status before entering the mutable closure
+                        let api_key_status = match current_provider.as_str() {
+                            "openai" => s.settings.model.openai_auth.api_key.is_some(),
+                            "anthropic" => s.settings.model.anthropic_auth.api_key.is_some(),
+                            "gemini" => s.settings.model.gemini_auth.api_key.is_some(),
+                            _ => false,
+                        };
+                        let key_name = match current_provider.as_str() {
+                            "openai" => "OpenAI",
+                            "anthropic" => "Anthropic",
+                            "gemini" => "Gemini",
+                            _ => "",
+                        };
+
+                        ui.label("API Key:");
                         ui.horizontal(|ui| {
-                            ui.label("OpenAI:");
-                            let mut openai_key = s.openai_api_key_input.clone();
-                            if s.settings.model.openai_auth.api_key.is_some() {
-                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
+                            let input_field = match current_provider.as_str() {
+                                "openai" => &mut s.openai_api_key_input,
+                                "anthropic" => &mut s.anthropic_api_key_input,
+                                "gemini" => &mut s.gemini_api_key_input,
+                                _ => &mut s.openai_api_key_input,
+                            };
+
+                            // Status indicator
+                            if api_key_status {
+                                ui.label(
+                                    egui::RichText::new("● Key saved")
+                                        .color(egui::Color32::from_rgb(0, 180, 0))
+                                        .size(12.0),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("○ No key")
+                                        .color(egui::Color32::from_rgb(180, 180, 180))
+                                        .size(12.0),
+                                );
                             }
-                            let edit = egui::TextEdit::singleline(&mut openai_key).password(true);
-                            if ui.add(edit).changed() {
-                                s.openai_api_key_input = openai_key;
-                            }
-                            if ui.button("Paste").clicked() {
+
+                            ui.add_space(8.0);
+
+                            // API key input (password style)
+                            ui.add(
+                                egui::TextEdit::singleline(input_field)
+                                    .password(true)
+                                    .hint_text(format!("Paste {} API key...", key_name))
+                                    .desired_width(200.0),
+                            );
+
+                            // Paste button
+                            if ui.button("📋 Paste").clicked() {
                                 if let Some(text) = try_read_clipboard_text() {
-                                    s.openai_api_key_input = text;
-                                    // Fast path: paste should "just work".
-                                    s.settings.model.openai_auth.api_key = Some(s.openai_api_key_input.clone());
-                                    save_settings(&s.settings);
-                                    s.openai_api_key_input.clear();
-                                    s.settings_status = Some("OpenAI API key saved".to_string());
-                                    s.settings_status_is_error = false;
-                                } else {
-                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
-                                    s.settings_status_is_error = true;
+                                    *input_field = text;
                                 }
                             }
-                            if !s.openai_api_key_input.is_empty() && ui.button("Save").clicked() {
-                                s.settings.model.openai_auth.api_key = Some(s.openai_api_key_input.clone());
-                                save_settings(&s.settings);
-                                s.openai_api_key_input.clear();
-                                s.settings_status = Some("OpenAI API key saved".to_string());
-                                s.settings_status_is_error = false;
-                            }
-                        });
 
-                        // Anthropic API Key
-                        ui.horizontal(|ui| {
-                            ui.label("Anthropic:");
-                            if s.settings.model.anthropic_auth.api_key.is_some() {
-                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
-                            }
-                            let mut anthropic_key = s.anthropic_api_key_input.clone();
-                            let edit = egui::TextEdit::singleline(&mut anthropic_key).password(true);
-                            if ui.add(edit).changed() {
-                                s.anthropic_api_key_input = anthropic_key;
-                            }
-                            if ui.button("Paste").clicked() {
-                                if let Some(text) = try_read_clipboard_text() {
-                                    s.anthropic_api_key_input = text;
-                                    // Fast path: paste should "just work".
-                                    s.settings.model.anthropic_auth.api_key = Some(s.anthropic_api_key_input.clone());
-                                    save_settings(&s.settings);
-                                    s.anthropic_api_key_input.clear();
-                                    s.settings_status = Some("Anthropic API key saved".to_string());
-                                    s.settings_status_is_error = false;
-                                } else {
-                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
-                                    s.settings_status_is_error = true;
+                            // Save button - clone input before accessing s.settings
+                            let save_clicked = ui.button("💾 Save").clicked();
+                            if save_clicked && !input_field.is_empty() {
+                                let key_value = input_field.clone();
+                                input_field.clear();
+                                match current_provider.as_str() {
+                                    "openai" => {
+                                        s.settings.model.openai_auth.api_key = Some(key_value);
+                                    }
+                                    "anthropic" => {
+                                        s.settings.model.anthropic_auth.api_key = Some(key_value);
+                                    }
+                                    "gemini" => {
+                                        s.settings.model.gemini_auth.api_key = Some(key_value);
+                                    }
+                                    _ => {}
                                 }
-                            }
-                            if !s.anthropic_api_key_input.is_empty() && ui.button("Save").clicked() {
-                                s.settings.model.anthropic_auth.api_key = Some(s.anthropic_api_key_input.clone());
                                 save_settings(&s.settings);
-                                s.anthropic_api_key_input.clear();
-                                s.settings_status = Some("Anthropic API key saved".to_string());
-                                s.settings_status_is_error = false;
-                            }
-                        });
-
-                        // Gemini API Key
-                        ui.horizontal(|ui| {
-                            ui.label("Gemini:");
-                            if s.settings.model.gemini_auth.api_key.is_some() {
-                                ui.label(egui::RichText::new("✓ Set").color(egui::Color32::from_rgb(100, 180, 100)).size(11.0));
-                            }
-                            let mut gemini_key = s.gemini_api_key_input.clone();
-                            let edit = egui::TextEdit::singleline(&mut gemini_key).password(true);
-                            if ui.add(edit).changed() {
-                                s.gemini_api_key_input = gemini_key;
-                            }
-                            if ui.button("Paste").clicked() {
-                                if let Some(text) = try_read_clipboard_text() {
-                                    s.gemini_api_key_input = text;
-                                    // Fast path: paste should "just work".
-                                    s.settings.model.gemini_auth.api_key = Some(s.gemini_api_key_input.clone());
-                                    save_settings(&s.settings);
-                                    s.gemini_api_key_input.clear();
-                                    s.settings_status = Some("Gemini API key saved".to_string());
-                                    s.settings_status_is_error = false;
-                                } else {
-                                    s.settings_status = Some("Clipboard is empty (or unavailable)".to_string());
-                                    s.settings_status_is_error = true;
-                                }
-                            }
-                            if !s.gemini_api_key_input.is_empty() && ui.button("Save").clicked() {
-                                s.settings.model.gemini_auth.api_key = Some(s.gemini_api_key_input.clone());
-                                save_settings(&s.settings);
-                                s.gemini_api_key_input.clear();
-                                s.settings_status = Some("Gemini API key saved".to_string());
+                                s.settings_status = Some(format!("{} API key saved", key_name));
                                 s.settings_status_is_error = false;
                             }
                         });
 
                         ui.add_space(4.0);
-                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Your API key is stored locally and never shared.")
+                                .size(11.0)
+                                .weak(),
+                        );
+                    } else {
+                        // Local provider info
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Keys stay on this device.").size(10.0).weak());
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("Get keys:").size(10.0).weak());
-                            ui.hyperlink_to("OpenAI", "https://platform.openai.com/api-keys");
-                            ui.label("·");
-                            ui.hyperlink_to("Anthropic", "https://console.anthropic.com/settings/keys");
-                            ui.label("·");
-                            ui.hyperlink_to("Gemini", "https://aistudio.google.com/app/apikey");
+                            ui.label(
+                                egui::RichText::new("● Running locally via Ollama")
+                                    .color(egui::Color32::from_rgb(0, 180, 0))
+                                    .size(12.0),
+                            );
                         });
-                    });
+                        ui.label(
+                            egui::RichText::new("No API key needed. Make sure Ollama is running on your machine.")
+                                .size(11.0)
+                                .weak(),
+                        );
+                    }
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -1648,7 +1647,7 @@ impl eframe::App for LittleHelperApp {
                     });
 
                     ui.heading(
-                        egui::RichText::new("Build Helper")
+                        egui::RichText::new("Spec")
                             .color(if dark {
                                 egui::Color32::from_rgb(220, 220, 230)
                             } else {
@@ -1657,7 +1656,7 @@ impl eframe::App for LittleHelperApp {
                     );
                     ui.label(
                         egui::RichText::new(
-                            "If you want the Build tab to scaffold projects, point this at Spec Kit’s `spec-assistant.js`."
+                            "Spec is bundled, but you can override the assistant path here (advanced)."
                         )
                             .color(if dark {
                                 egui::Color32::from_rgb(180, 180, 190)
@@ -1667,7 +1666,7 @@ impl eframe::App for LittleHelperApp {
                     );
                     ui.add_space(6.0);
 
-                    ui.label(egui::RichText::new("Spec Kit location").size(11.0));
+                    ui.label(egui::RichText::new("Spec assistant path").size(11.0));
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut s.spec_kit_path_input);
                         if ui.button("Use default").clicked() {
@@ -1836,7 +1835,7 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
             ui.heading(
-                egui::RichText::new("Build Helper")
+                egui::RichText::new("Spec")
                     .color(heading_color)
                     .size(16.0),
             );
@@ -1883,7 +1882,7 @@ fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
                                     .to_string(),
                             );
                             save_settings(&s.settings);
-                            s.build_status = Some("Build Helper connected.".to_string());
+                            s.build_status = Some("Spec connected.".to_string());
                             s.build_status_is_error = false;
                         }
                     }
@@ -2081,12 +2080,12 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
                 ],
             ),
             ChatMode::Build => (
-                "Build Helper",
+                "Spec",
                 vec![
-                    "Start a new project with Spec Kit",
-                    "Plan and run specs without using a terminal",
-                    "We'll use folders and buttons only",
-                    "Try: \"start a new project\"",
+                    "Start a new project from an idea",
+                    "Run Spec Kit Assistant without touching the terminal",
+                    "Watch progress in chat; open Details if you need logs",
+                    "Try: \"start a new project called photo-sorter\"",
                 ],
             ),
         };
@@ -2660,7 +2659,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                             ("🔎", "Find things", "files, photos, and docs"),
                             ("🔧", "Fix problems", "with safe, guided steps"),
                             ("🔬", "Research", "with sources and previews"),
-                            ("🐶", "Build", "projects with Spec Kit"),
+                            ("🐶", "Spec", "projects with Spec Kit"),
                         ];
 
                         for (icon, title, desc) in features {
