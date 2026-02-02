@@ -54,6 +54,7 @@ pub struct GeminiClient {
     http: Client,
     auth_token: String,
     model: String,
+    use_oauth: bool,
 }
 
 impl GeminiClient {
@@ -63,32 +64,43 @@ impl GeminiClient {
             http: Client::builder().timeout(Duration::from_secs(45)).build()?,
             auth_token: key,
             model: model.to_string(),
+            use_oauth: false,
         })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
-        let auth_token = if let Some(api_key) = &auth.api_key {
-            api_key.clone()
+        let (auth_token, use_oauth) = if let Some(api_key) = &auth.api_key {
+            (api_key.clone(), false)
         } else if let Some(oauth) = &auth.oauth {
-            oauth.access_token.clone()
+            (oauth.access_token.clone(), true)
         } else {
             // Try environment variable as fallback
-            env::var("GEMINI_API_KEY")
-                .map_err(|_| anyhow!("No Gemini authentication configured"))?
+            let key = env::var("GEMINI_API_KEY")
+                .map_err(|_| anyhow!("No Gemini authentication configured"))?;
+            (key, false)
         };
 
         Ok(Self {
             http: Client::builder().timeout(Duration::from_secs(45)).build()?,
             auth_token,
             model: model.to_string(),
+            use_oauth,
         })
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.auth_token
-        );
+        // OAuth tokens go in Authorization header; API keys go in URL query
+        let url = if self.use_oauth {
+            format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                self.model
+            )
+        } else {
+            format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                self.model, self.auth_token
+            )
+        };
 
         // Gemini has strict requirements:
         //   1. contents must start with role "user"
@@ -136,7 +148,12 @@ impl GeminiClient {
         }
         // Ensure contents ends with "user" (Gemini requires this)
         if raw_contents.last().map(|c| c.role.as_str()) == Some("model") {
-            raw_contents.pop();
+            raw_contents.push(GeminiContent {
+                role: "user".to_string(),
+                parts: vec![GeminiPart {
+                    text: "Continue.".to_string(),
+                }],
+            });
         }
         // If empty after trimming, nothing to send
         if raw_contents.is_empty() {
@@ -155,7 +172,11 @@ impl GeminiClient {
             contents: raw_contents,
             system_instruction,
         };
-        let resp = self.http.post(url).json(&req).send().await?;
+        let mut request = self.http.post(url).json(&req);
+        if self.use_oauth {
+            request = request.header("Authorization", format!("Bearer {}", self.auth_token));
+        }
+        let resp = request.send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -164,7 +185,8 @@ impl GeminiClient {
                 return Err(anyhow!("gemini error: {}", status));
             }
             let body = if body.len() > 800 {
-                format!("{}...", &body[..800])
+                let truncated: String = body.chars().take(800).collect();
+                format!("{}...", truncated)
             } else {
                 body.to_string()
             };

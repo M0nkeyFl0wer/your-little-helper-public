@@ -583,8 +583,9 @@ impl AppState {
         for msg in history.iter().rev() {
             let t = Self::estimate_tokens(&msg.content);
             if used.saturating_add(t) > budget {
-                dropped += 1;
-                continue;
+                // Stop here — don't skip and include older messages
+                dropped = history.len() - kept_rev.len();
+                break;
             }
             used = used.saturating_add(t);
             kept_rev.push(ApiChatMessage {
@@ -617,8 +618,8 @@ impl AppState {
             if let Some(proc_) = sys.process(pid) {
                 // cpu_usage is a % of a single core (sysinfo semantics)
                 self.settings_cpu_percent = proc_.cpu_usage();
-                // memory is in KB
-                self.settings_mem_mb = (proc_.memory() / 1024) as u64;
+                // sysinfo returns bytes
+                self.settings_mem_mb = (proc_.memory() / (1024 * 1024)) as u64;
             }
         }
     }
@@ -878,7 +879,8 @@ What to do next:\n\
                             cmd_summary.push_str(&format!("\n`{}` {}\n", cmd, status));
                             // Show truncated output
                             let output_preview = if output.len() > 300 {
-                                format!("{}...", &output[..300])
+                                let truncated: String = output.chars().take(300).collect();
+                                format!("{}...", truncated)
                             } else {
                                 output.clone()
                             };

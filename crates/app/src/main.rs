@@ -4,12 +4,12 @@ use agent_host::CommandResult;
 use eframe::egui;
 use parking_lot::Mutex;
 use services::version_control::VersionControlService;
-use shared::settings::AppSettings;
 use shared::preview_types::PreviewContent;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+use crate::utils::{save_settings, ensure_allowed_dirs};
 
 
 fn try_read_clipboard_text() -> Option<String> {
@@ -44,8 +44,6 @@ pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_masco
 // Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
 #[allow(dead_code)]
 mod secrets;
-use secrets::OPENAI_API_KEY;
-
 // Support contact info (gitignored - your personal contact stays private)
 #[allow(dead_code)]
 mod support_info;
@@ -137,37 +135,8 @@ fn preload_openai_enabled() -> bool {
     }
 }
 
-fn config_path() -> Option<std::path::PathBuf> {
-    if let Some(proj) = directories::ProjectDirs::from("com.local", "Little Helper", "LittleHelper")
-    {
-        let p = proj.config_dir().join("settings.json");
-        let _ = fs::create_dir_all(proj.config_dir());
-        Some(p)
-    } else {
-        None
-    }
-}
-
-fn load_settings_or_default() -> (AppSettings, bool) {
-    if let Some(path) = config_path() {
-        if path.exists() {
-            if let Ok(bytes) = fs::read(&path) {
-                if let Ok(s) = serde_json::from_slice::<AppSettings>(&bytes) {
-                    let mut settings = s;
-                    ensure_allowed_dirs(&mut settings);
-                    return (settings, false);
-                }
-            }
-        }
-    }
-    // Fresh install - honor app defaults, optionally seed OpenAI key for bespoke builds
-    let mut default_settings = AppSettings::default();
-    ensure_allowed_dirs(&mut default_settings);
-    if preload_openai_enabled() && !OPENAI_API_KEY.is_empty() {
-        default_settings.model.openai_auth.api_key = Some(OPENAI_API_KEY.to_string());
-    }
-    (default_settings, true)
-}
+// config_path, load_settings_or_default, save_settings, ensure_allowed_dirs
+// are all defined in crate::utils and imported above.
 
 /// Clean up AI response by removing action tags
 fn clean_ai_response(response: &str) -> String {
@@ -2826,22 +2795,6 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
         });
 }
 
-/// Save settings to disk
-fn save_settings(settings: &AppSettings) {
-    if let Some(path) = config_path() {
-        if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
-            let _ = fs::write(path, bytes);
-        }
-    }
-}
-
-fn ensure_allowed_dirs(settings: &mut AppSettings) {
-    if settings.allowed_dirs.is_empty() {
-        if let Some(home) = dirs::home_dir() {
-            settings.allowed_dirs = vec![home.to_string_lossy().to_string()];
-        }
-    }
-}
 
 fn normalize_allowed_dir_input(input: &str) -> Option<PathBuf> {
     let expanded = expand_user_path(input);

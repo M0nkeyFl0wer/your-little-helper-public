@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAIRequest {
@@ -37,7 +38,7 @@ impl OpenAIClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("OPENAI_API_KEY").map_err(|_| anyhow!("OPENAI_API_KEY not set"))?;
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
             auth_token: key,
             model: model.to_string(),
         })
@@ -55,7 +56,7 @@ impl OpenAIClient {
         };
 
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
             auth_token,
             model: model.to_string(),
         })
@@ -83,7 +84,13 @@ impl OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("openai error: {}", resp.status()));
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let detail: String = body.chars().take(800).collect();
+            if detail.trim().is_empty() {
+                return Err(anyhow!("openai error: {}", status));
+            }
+            return Err(anyhow!("openai error: {}\n{}", status, detail));
         }
         let body: OpenAIResponse = resp.json().await?;
         let text = body
