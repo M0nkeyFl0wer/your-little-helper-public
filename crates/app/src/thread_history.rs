@@ -39,7 +39,6 @@ pub struct Thread {
     /// Preview of last message
     pub last_message_preview: String,
     /// Full chat history (for resurrection) - stored as simple strings
-    #[serde(skip)] // Don't serialize full messages to avoid type issues
     pub messages: Vec<SimpleMessage>,
     /// Whether thread is pinned/important
     pub is_pinned: bool,
@@ -176,6 +175,11 @@ fn is_stop_word(word: &str) -> bool {
         "very", "really",
     ];
     stop_words.contains(&word.to_lowercase().as_str())
+}
+
+/// Format time as "2m ago", "3h ago", "2d ago" (public for UI)
+pub fn format_time_ago_pub(time: SystemTime) -> String {
+    format_time_ago(time)
 }
 
 /// Format time as "2m ago", "3h ago", "2d ago"
@@ -346,6 +350,34 @@ impl ThreadHistory {
     /// Import from JSON
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+}
+
+impl ThreadHistory {
+    /// Get the storage path for thread history
+    fn storage_path() -> Option<std::path::PathBuf> {
+        directories::ProjectDirs::from("", "", "LittleHelper")
+            .map(|dirs| dirs.config_dir().join("thread_history.json"))
+    }
+
+    /// Save thread history to disk
+    pub fn save_to_disk(&self) {
+        if let Some(path) = Self::storage_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(json) = self.to_json() {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+    }
+
+    /// Load thread history from disk (falls back to empty)
+    pub fn load_from_disk() -> Self {
+        Self::storage_path()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .and_then(|json| Self::from_json(&json).ok())
+            .unwrap_or_default()
     }
 }
 

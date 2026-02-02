@@ -169,6 +169,8 @@ pub struct AppState {
     pub show_thread_history: bool,
     /// Thread history search query
     pub thread_search_query: String,
+    /// Mode filter for thread history panel (None = all modes)
+    pub thread_history_mode_filter: Option<ChatMode>,
     /// Whether the AI is currently thinking/processing (per mode)
     pub is_thinking: std::collections::HashMap<ChatMode, bool>,
     /// What the agent is currently doing (per mode)
@@ -437,10 +439,11 @@ impl Default for AppState {
                 h
             },
             unread_modes: HashSet::new(),
-            thread_history: crate::thread_history::ThreadHistory::new(),
+            thread_history: crate::thread_history::ThreadHistory::load_from_disk(),
             current_thread_id: None,
             show_thread_history: false,
             thread_search_query: String::new(),
+            thread_history_mode_filter: None,
             is_thinking: {
                 let mut m = std::collections::HashMap::new();
                 m.insert(ChatMode::Find, false);
@@ -898,6 +901,111 @@ impl AppState {
         }
     }
 
+    /// Sync the current chat into thread_history and save to disk.
+    /// Call after adding a user or assistant message.
+    pub fn sync_thread_history(&mut self, mode: ChatMode) {
+        let history = match self.mode_chat_histories.get(&mode) {
+            Some(h) => h,
+            None => return,
+        };
+
+        // Skip if only welcome messages (no user messages yet)
+        let has_user_msg = history.iter().any(|m| m.role == "user");
+        if !has_user_msg {
+            return;
+        }
+
+        // Get or create thread ID
+        let thread_id = self.current_thread_id.clone().unwrap_or_else(|| {
+            let id = format!(
+                "{}-{}",
+                chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+                std::process::id() % 10000
+            );
+            self.current_thread_id = Some(id.clone());
+            id
+        });
+
+        // Find first user message for title generation
+        let first_user_msg = history
+            .iter()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .unwrap_or("New conversation");
+
+        // Build or update thread
+        if let Some(thread) = self.thread_history.get_thread_mut(&thread_id) {
+            // Update existing thread with latest message
+            if let Some(last) = history.last() {
+                thread.add_message(&last.content);
+            }
+            // Sync full message list
+            thread.messages = history
+                .iter()
+                .map(|m| crate::thread_history::SimpleMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect();
+        } else {
+            // Create new thread
+            let mut thread = crate::thread_history::Thread::new(
+                thread_id.clone(),
+                mode,
+                first_user_msg,
+            );
+            thread.message_count = history.len();
+            thread.messages = history
+                .iter()
+                .map(|m| crate::thread_history::SimpleMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect();
+            if let Some(last) = history.last() {
+                thread.last_message_preview =
+                    if last.content.len() > 80 {
+                        format!("{}...", &last.content[..80])
+                    } else {
+                        last.content.clone()
+                    };
+            }
+            self.thread_history.upsert_thread(thread);
+        }
+
+        self.thread_history.save_to_disk();
+    }
+
+    /// Load a thread from history back into the active chat.
+    /// Switches mode if needed and closes the history panel.
+    pub fn load_thread(&mut self, thread_id: &str) {
+        let (mode, messages) = {
+            let thread = match self.thread_history.get_thread(thread_id) {
+                Some(t) => t,
+                None => return,
+            };
+            let msgs: Vec<ChatMessage> = thread
+                .messages
+                .iter()
+                .map(|m| ChatMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    details: None,
+                    timestamp: String::new(),
+                })
+                .collect();
+            (thread.mode, msgs)
+        };
+
+        if !messages.is_empty() {
+            self.mode_chat_histories.insert(mode, messages);
+        }
+        self.current_mode = mode;
+        self.current_thread_id = Some(thread_id.to_string());
+        self.show_thread_history = false;
+        self.preview_panel.show_mode_intro(mode.as_str());
+    }
+
     /// Check for completed AI responses (called each frame)
     /// Poll for live status updates from the AI pipeline. Call once per frame.
     pub fn poll_ai_status(&mut self) {
@@ -1116,6 +1224,9 @@ What to do next:\n\
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     self.push_chat_to(mode, assistant_msg);
+
+                    // Sync thread history after AI response
+                    self.sync_thread_history(mode);
 
                     if !self.pending_commands.is_empty() {
                         let mut summary =
@@ -1464,6 +1575,10 @@ What to do next:\n\
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
         self.push_chat(user_msg);
+
+        // Track this conversation in thread history
+        let mode = self.current_mode;
+        self.sync_thread_history(mode);
 
         // Model/provider safety: avoid picking a cloud provider with no key.
         let primary_provider = self
