@@ -7,6 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Bespoke build secrets — set in GitHub repo Settings → Secrets → Actions.
+  # If not set, builds produce a "public" binary (users configure keys at runtime).
+  LITTLE_HELPER_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+  LITTLE_HELPER_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
 
 jobs:
   build-windows:

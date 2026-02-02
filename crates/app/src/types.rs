@@ -280,7 +280,7 @@ impl Default for AppState {
         crate::utils::ensure_allowed_dirs(&mut settings);
 
         // Apply preloaded user info if available (bespoke builds)
-        if crate::secrets::PRELOAD_SKIP_ONBOARDING {
+        if crate::secrets::should_skip_onboarding() {
             settings.user_profile.onboarding_complete = true;
             settings.user_profile.terminal_permission_granted = true;
             if !crate::secrets::PRELOAD_USER_NAME.is_empty() {
