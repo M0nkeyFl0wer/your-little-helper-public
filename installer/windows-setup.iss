@@ -24,6 +24,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#SourceDir}\target\release\app.exe"; DestDir: "{app}"; DestName: "Little Helper.exe"; Flags: ignoreversion
+Source: "{#SourceDir}\target\release\ollama.exe"; DestDir: "{app}"; DestName: "ollama.exe"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Little Helper"; Filename: "{app}\Little Helper.exe"

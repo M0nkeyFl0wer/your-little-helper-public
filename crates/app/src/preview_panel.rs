@@ -422,7 +422,7 @@ impl PreviewPanel {
                         "research" => "Research Helper".to_string(),
                         "data" => "Data Helper".to_string(),
                         "content" => "Content Helper".to_string(),
-                        "build" => "Spec".to_string(),
+                        "build" => "Build".to_string(),
                         _ => format!("{} Helper", mode),
                     },
                     PreviewContent::Ascii { state } => format!("{}", state),

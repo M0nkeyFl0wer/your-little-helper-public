@@ -276,6 +276,195 @@ const BLOCKED_COMMANDS: &[&str] = &[
     "nmap",
 ];
 
+/// Translate common Unix commands to Windows equivalents.
+///
+/// LLMs frequently suggest Unix commands even when prompted for Windows.
+/// Rather than failing silently, we translate the most common ones so the
+/// experience works out of the box. This only runs on Windows builds.
+#[cfg(windows)]
+fn translate_unix_to_windows(cmd: &str) -> String {
+    let trimmed = cmd.trim();
+    let lower = trimmed.to_lowercase();
+
+    // Split into first token and the rest
+    let (first, rest) = match trimmed.split_once(char::is_whitespace) {
+        Some((f, r)) => (f, r.trim()),
+        None => (trimmed, ""),
+    };
+    let first_lower = first.to_lowercase();
+
+    match first_lower.as_str() {
+        // ls → dir
+        "ls" => {
+            if rest.is_empty() {
+                "dir".to_string()
+            } else {
+                // Strip common ls flags the user won't notice
+                let cleaned: Vec<&str> = rest
+                    .split_whitespace()
+                    .filter(|a| !a.starts_with('-'))
+                    .collect();
+                if cleaned.is_empty() {
+                    "dir".to_string()
+                } else {
+                    format!("dir {}", cleaned.join(" "))
+                }
+            }
+        }
+        // cat → type
+        "cat" => {
+            if rest.is_empty() {
+                trimmed.to_string()
+            } else {
+                format!("type {}", rest)
+            }
+        }
+        // grep → findstr
+        "grep" => {
+            // Very rough: grep -r "pattern" path  →  findstr /s /i "pattern" path\*
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let mut pattern = None;
+            let mut path = None;
+            let mut recursive = false;
+            let mut case_insensitive = false;
+            let mut skip_next = false;
+            for (i, arg) in args.iter().enumerate() {
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
+                if *arg == "-r" || *arg == "-R" || *arg == "--recursive" {
+                    recursive = true;
+                } else if *arg == "-i" || *arg == "--ignore-case" {
+                    case_insensitive = true;
+                } else if arg.starts_with("--include=") {
+                    // Skip file type filters for simplicity
+                } else if arg.starts_with('-') {
+                    // Skip other flags
+                } else if pattern.is_none() {
+                    pattern = Some(*arg);
+                } else {
+                    path = Some(*arg);
+                }
+            }
+            let pat = pattern.unwrap_or("\"\"");
+            let mut findstr = String::from("findstr");
+            if recursive {
+                findstr.push_str(" /s");
+            }
+            if case_insensitive {
+                findstr.push_str(" /i");
+            }
+            findstr.push_str(&format!(" {}", pat));
+            if let Some(p) = path {
+                findstr.push_str(&format!(" {}\\*", p));
+            }
+            findstr
+        }
+        // pwd → cd (with no args, prints current dir on Windows)
+        "pwd" => "cd".to_string(),
+        // which → where
+        "which" => format!("where {}", rest),
+        // uname → systeminfo (rough equivalent)
+        "uname" => "systeminfo".to_string(),
+        // df → wmic logicaldisk
+        "df" => "wmic logicaldisk get caption,freespace,size".to_string(),
+        // free → systeminfo (contains memory info)
+        "free" => {
+            "wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /Value".to_string()
+        }
+        // ps → tasklist
+        "ps" => "tasklist".to_string(),
+        // kill → taskkill
+        "kill" => format!("taskkill /PID {}", rest),
+        // head → powershell Select-Object
+        "head" => {
+            // head -n 20 file → powershell -c "Get-Content file | Select-Object -First 20"
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let mut n = 10;
+            let mut file = "";
+            let mut skip_next = false;
+            for (i, arg) in args.iter().enumerate() {
+                if skip_next { skip_next = false; continue; }
+                if *arg == "-n" || *arg == "-" {
+                    if let Some(next) = args.get(i + 1) {
+                        n = next.parse().unwrap_or(10);
+                        skip_next = true;
+                    }
+                } else if arg.starts_with('-') && arg.len() > 1 {
+                    // -20 style
+                    n = arg[1..].parse().unwrap_or(10);
+                } else {
+                    file = arg;
+                }
+            }
+            if file.is_empty() {
+                trimmed.to_string()
+            } else {
+                format!(
+                    "powershell -c \"Get-Content '{}' | Select-Object -First {}\"",
+                    file, n
+                )
+            }
+        }
+        // tail → powershell Select-Object -Last
+        "tail" => {
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let mut n = 10;
+            let mut file = "";
+            let mut skip_next = false;
+            for (i, arg) in args.iter().enumerate() {
+                if skip_next { skip_next = false; continue; }
+                if *arg == "-n" {
+                    if let Some(next) = args.get(i + 1) {
+                        n = next.parse().unwrap_or(10);
+                        skip_next = true;
+                    }
+                } else if arg.starts_with('-') && arg.len() > 1 {
+                    n = arg[1..].parse().unwrap_or(10);
+                } else {
+                    file = arg;
+                }
+            }
+            if file.is_empty() {
+                trimmed.to_string()
+            } else {
+                format!(
+                    "powershell -c \"Get-Content '{}' | Select-Object -Last {}\"",
+                    file, n
+                )
+            }
+        }
+        // find (the Unix one, not Windows find.exe) → dir /s /b
+        "find" if rest.contains("-name") || rest.contains("-iname") => {
+            // Rough: find /path -name "*.txt"  →  dir /s /b "path\*.txt"
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let mut search_path = ".";
+            let mut pattern = "*";
+            let mut skip_next = false;
+            for (i, arg) in args.iter().enumerate() {
+                if skip_next { skip_next = false; continue; }
+                if *arg == "-name" || *arg == "-iname" {
+                    if let Some(next) = args.get(i + 1) {
+                        pattern = next.trim_matches('"').trim_matches('\'');
+                        skip_next = true;
+                    }
+                } else if !arg.starts_with('-') && i == 0 {
+                    search_path = arg;
+                }
+            }
+            let win_path = search_path.replace('/', "\\").replace("~", "%USERPROFILE%");
+            format!("dir /s /b \"{}\\{}\"", win_path, pattern)
+        }
+        // chmod, chown → no-op on Windows, just explain
+        "chmod" | "chown" => {
+            format!("echo Permission commands are not needed on Windows (was: {} {})", first, rest)
+        }
+        // Everything else passes through unchanged
+        _ => trimmed.to_string(),
+    }
+}
+
 /// Classify a command by danger level
 pub fn classify_command(cmd: &str) -> DangerLevel {
     let cmd_lower = cmd.to_lowercase();
@@ -337,6 +526,12 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResu
     }
 
     let start = Instant::now();
+
+    // On Windows, translate common Unix commands so the AI doesn't have to
+    // get it right every time. This is a safety net, not a replacement for
+    // platform-aware prompting.
+    #[cfg(windows)]
+    let cmd = &translate_unix_to_windows(cmd);
 
     // Determine shell based on OS
     let (shell, shell_arg) = if cfg!(windows) {
