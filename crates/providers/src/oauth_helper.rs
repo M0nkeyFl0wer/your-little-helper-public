@@ -7,6 +7,7 @@ use oauth2::{
 };
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 use url::Url;
 
 pub struct OAuthFlow {
@@ -22,6 +23,11 @@ impl OAuthFlow {
         token_url: String,
         scopes: Vec<String>,
     ) -> Result<Self> {
+        // Try a few ports in case 8765 is busy
+        let (listener, port) = bind_callback_listener()?;
+        // Keep listener alive by storing it — we'll use the port for the redirect URI
+        drop(listener); // We'll re-bind in authenticate()
+
         let client = BasicClient::new(
             ClientId::new(client_id),
             client_secret.map(ClientSecret::new),
@@ -29,7 +35,7 @@ impl OAuthFlow {
             Some(TokenUrl::new(token_url)?),
         )
         .set_redirect_uri(RedirectUrl::new(
-            "http://localhost:8765/callback".to_string(),
+            format!("http://localhost:{}/callback", port),
         )?);
 
         Ok(Self { client, scopes })
@@ -61,9 +67,11 @@ impl OAuthFlow {
             eprintln!("Please open the URL manually");
         }
 
-        // Start local server to receive callback
-        let listener = TcpListener::bind("127.0.0.1:8765")?;
-        println!("Waiting for authorization...");
+        // Start local server to receive callback (with timeout)
+        let (listener, _port) = bind_callback_listener()?;
+        // Use non-blocking accept with a poll loop so we time out after 5 minutes
+        listener.set_nonblocking(true)?;
+        println!("Waiting for authorization (5 min timeout)...");
 
         let (code, state) = receive_callback(&listener)?;
 
@@ -87,47 +95,74 @@ impl OAuthFlow {
     }
 }
 
-fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
-    for stream in listener.incoming() {
-        if let Ok(mut stream) = stream {
-            let mut reader = BufReader::new(&stream);
-            let mut request_line = String::new();
-            reader.read_line(&mut request_line)?;
-
-            // Parse the request line to get the URL
-            let redirect_url = request_line
-                .split_whitespace()
-                .nth(1)
-                .ok_or_else(|| anyhow!("Invalid request"))?;
-
-            let url = Url::parse(&format!("http://localhost{}", redirect_url))?;
-
-            // Extract code and state from query parameters
-            let code = url
-                .query_pairs()
-                .find(|(key, _)| key == "code")
-                .map(|(_, value)| value.to_string())
-                .ok_or_else(|| anyhow!("No authorization code in callback"))?;
-
-            let state = url
-                .query_pairs()
-                .find(|(key, _)| key == "state")
-                .map(|(_, value)| value.to_string())
-                .ok_or_else(|| anyhow!("No state in callback"))?;
-
-            // Send success response
-            let response = "HTTP/1.1 200 OK\r\n\
-                           Content-Type: text/html\r\n\r\n\
-                           <html><body>\
-                           <h1>Authentication successful!</h1>\
-                           <p>You can close this window and return to Little Helper.</p>\
-                           </body></html>";
-            stream.write_all(response.as_bytes())?;
-            stream.flush()?;
-
-            return Ok((code, state));
+/// Try to bind a callback listener on one of several ports.
+fn bind_callback_listener() -> Result<(TcpListener, u16)> {
+    let ports = [8765, 8766, 8767, 18765, 28765];
+    for port in ports {
+        if let Ok(listener) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            return Ok((listener, port));
         }
     }
+    Err(anyhow!("Could not bind OAuth callback listener on any port"))
+}
 
-    Err(anyhow!("Failed to receive callback"))
+fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                // Got a connection — set it to blocking for reading
+                stream.set_nonblocking(false)?;
+                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+                let mut reader = BufReader::new(&stream);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line)?;
+
+                // Parse the request line to get the URL
+                let redirect_url = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .ok_or_else(|| anyhow!("Invalid request"))?;
+
+                let url = Url::parse(&format!("http://localhost{}", redirect_url))?;
+
+                // Extract code and state from query parameters
+                let code = url
+                    .query_pairs()
+                    .find(|(key, _)| key == "code")
+                    .map(|(_, value)| value.to_string())
+                    .ok_or_else(|| anyhow!("No authorization code in callback"))?;
+
+                let state = url
+                    .query_pairs()
+                    .find(|(key, _)| key == "state")
+                    .map(|(_, value)| value.to_string())
+                    .ok_or_else(|| anyhow!("No state in callback"))?;
+
+                // Send success response
+                let response = "HTTP/1.1 200 OK\r\n\
+                               Content-Type: text/html\r\n\r\n\
+                               <html><body>\
+                               <h1>Authentication successful!</h1>\
+                               <p>You can close this window and return to Little Helper.</p>\
+                               </body></html>";
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
+
+                return Ok((code, state));
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Non-blocking: no connection yet, check timeout
+                if std::time::Instant::now() > deadline {
+                    return Err(anyhow!(
+                        "OAuth callback timed out after 5 minutes. Please try again."
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(anyhow!("Failed to accept OAuth callback: {}", e)),
+        }
+    }
 }
