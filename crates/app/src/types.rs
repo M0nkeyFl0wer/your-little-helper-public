@@ -244,6 +244,7 @@ pub struct AppState {
     // Build mode inputs and status
     pub spec_kit_path_input: String,
     pub build_folder_input: String,
+    pub build_project_name_input: String,
     pub build_status: Option<String>,
     pub build_status_is_error: bool,
 
@@ -508,6 +509,7 @@ impl Default for AppState {
                 .clone()
                 .or_else(|| dirs::home_dir().map(|h| h.to_string_lossy().to_string()))
                 .unwrap_or_default(),
+            build_project_name_input: String::new(),
             build_status: None,
             build_status_is_error: false,
 
@@ -1816,27 +1818,62 @@ ALWAYS:
                     user_name, ddd_workflow, personas, campaign_docs, capabilities
                 )
             },
-            ChatMode::Build => format!(
-                r#"You are Little Helper in BUILD mode, helping {}.
+            ChatMode::Build => {
+                let spec_kit_path = self.spec_kit_path();
+                let spec_kit_available = spec_kit_path.exists();
+                let folder = self.build_folder_input.trim().to_string();
+                let project_name = self.build_project_name_input.trim().to_string();
+
+                let spec_kit_section = if spec_kit_available {
+                    let sk = spec_kit_path.to_string_lossy();
+                    let mut section = format!(
+                        r#"SPEC KIT ASSISTANT:
+Spec Kit is available at: {sk}
+Run it with: <command>cd "{folder}" && node "{sk}" SUBCOMMAND</command>
+
+Available subcommands (run them in order):
+  init PROJECTNAME  — Create a new project with constitution
+  specify           — Create the feature spec
+  clarify           — Ask clarifying questions about the spec
+  plan              — Generate an implementation plan
+  analyze           — Cross-check spec, plan for consistency
+  tasks             — Break the plan into tasks
+  implement         — Execute tasks one by one
+
+"#);
+                    if !folder.is_empty() {
+                        section.push_str(&format!("Current project folder: {}\n", folder));
+                    }
+                    if !project_name.is_empty() {
+                        section.push_str(&format!("Project name: {}\n", project_name));
+                    }
+                    section
+                } else {
+                    "SPEC KIT: Not found. Help the user set it up in Settings, or scaffold the project manually with <command> tags.\n".to_string()
+                };
+
+                format!(
+                    r#"You are Little Helper in BUILD mode, helping {user_name}.
 
 YOUR ROLE: Practical builder who creates projects and runs spec-driven workflows without asking the user to use a terminal.
 
 RULES:
 - Always say "folder" (never "directory")
 - Offer simple steps and buttons; avoid terminal jargon
-- When you need a location, ask which folder to use
-- Use spec-kit commands when available (spec init / spec check / spec run)
+- When you run spec-kit commands, use <command> tags — they will execute automatically if safe
+- If the user hasn't set a project folder or name yet, ask for them before running spec-kit
+
+{spec_kit_section}
 
 WORKFLOW:
-1. Ask what they want to build
-2. Ask which folder to use
-3. Use spec-kit to create specs and run implementation
-4. Summarize progress clearly
+1. Ask what they want to build (if not already clear)
+2. Confirm the folder and project name shown above (or ask if missing)
+3. Run spec-kit commands via <command> tags to scaffold and build
+4. Summarize progress clearly after each step
 
-{}
-"#,
-                user_name, capabilities
-            ),
+{capabilities}
+"#)
+            },
         };
 
         let (api_messages, prompt_tokens_est, dropped) =

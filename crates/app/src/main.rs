@@ -1165,6 +1165,53 @@ impl eframe::App for LittleHelperApp {
 
                 ui.add_space(4.0);
 
+                // Build mode: minimal setup bar (folder + project name)
+                if s.current_mode == ChatMode::Build {
+                    egui::Frame::none()
+                        .fill(if dark {
+                            egui::Color32::from_rgb(35, 35, 45)
+                        } else {
+                            egui::Color32::from_rgb(245, 245, 250)
+                        })
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Folder:")
+                                        .size(12.0)
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(160, 160, 180)
+                                        } else {
+                                            egui::Color32::from_rgb(80, 80, 100)
+                                        }),
+                                );
+                                ui.add_sized(
+                                    [ui.available_width() * 0.55, 22.0],
+                                    egui::TextEdit::singleline(&mut s.build_folder_input)
+                                        .hint_text("~/Projects/my-app")
+                                        .font(egui::FontId::new(12.0, egui::FontFamily::Monospace)),
+                                );
+                                ui.label(
+                                    egui::RichText::new("Name:")
+                                        .size(12.0)
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(160, 160, 180)
+                                        } else {
+                                            egui::Color32::from_rgb(80, 80, 100)
+                                        }),
+                                );
+                                ui.add_sized(
+                                    [ui.available_width(), 22.0],
+                                    egui::TextEdit::singleline(&mut s.build_project_name_input)
+                                        .hint_text("my-app")
+                                        .font(egui::FontId::new(12.0, egui::FontFamily::Monospace)),
+                                );
+                            });
+                        });
+                    ui.add_space(4.0);
+                }
+
                 // Chat messages scroll area
                 let chat_height = ui.available_height() - 70.0;
 
