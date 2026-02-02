@@ -69,6 +69,7 @@ pub use types::*;
 
 // Utils module - helper functions
 mod utils;
+mod simple_md;
 
 mod state;
 pub use state::*;
@@ -256,7 +257,8 @@ impl eframe::App for LittleHelperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
 
-        // Poll for AI response (non-blocking)
+        // Poll for AI response and live status updates (non-blocking)
+        s.poll_ai_status();
         s.poll_ai_response();
         s.poll_command_result();
         s.poll_web_preview();
@@ -401,6 +403,9 @@ impl eframe::App for LittleHelperApp {
         // Poll for background Ollama setup completion
         s.poll_ollama_setup();
 
+        // Poll for background OAuth flow completion
+        s.poll_oauth_result();
+
         // Show onboarding for first-run users
         if s.current_screen == AppScreen::Onboarding {
             render_onboarding_screen(&mut s, ctx);
@@ -422,8 +427,8 @@ impl eframe::App for LittleHelperApp {
                     .first()
                     .map(|p| p == "local")
                     .unwrap_or(true);
-                // Local models on CPU get a nudge sooner (15s) since they're expected to be slow
-                let threshold = if is_local { 15 } else { 25 };
+                // CPU-only local gets nudged fast (8s) — cloud gets more patience (25s)
+                let threshold = if is_local { 8 } else { 25 };
                 if !shown && started_at.elapsed() >= Duration::from_secs(threshold) {
                     s.slow_response_hint_shown.insert(mode, true);
                     s.show_model_hint = true;
@@ -494,21 +499,40 @@ impl eframe::App for LittleHelperApp {
                     let research_unread = s.unread_modes.contains(&ChatMode::Research);
                     let build_unread = s.unread_modes.contains(&ChatMode::Build);
 
-                    egui::Frame::none()
+                    // Pulsing highlight when hint is active
+                    let hint_active = s.show_mode_picker_hint;
+                    let time = ui.input(|i| i.time);
+
+                    let (picker_stroke, picker_shadow) = if hint_active {
+                        let p = ((time * 3.0).sin() + 1.0) as f32 / 2.0; // 0..1 f32
+                        let width = 2.0 + p * 1.5;
+                        let alpha = (160.0 + p * 95.0) as u8;
+                        let glow_color = egui::Color32::from_rgba_unmultiplied(235, 140, 75, alpha);
+                        let shadow = egui::epaint::Shadow {
+                            offset: egui::vec2(0.0, 0.0),
+                            blur: 12.0 + p * 8.0,
+                            spread: 2.0,
+                            color: egui::Color32::from_rgba_unmultiplied(235, 140, 75, (80.0 + p * 60.0) as u8),
+                        };
+                        (egui::Stroke::new(width, glow_color), shadow)
+                    } else {
+                        let stroke_color = if dark {
+                            egui::Color32::from_rgb(50, 50, 58)
+                        } else {
+                            egui::Color32::from_rgb(210, 215, 225)
+                        };
+                        (egui::Stroke::new(1.0, stroke_color), egui::epaint::Shadow::NONE)
+                    };
+
+                    let picker_response = egui::Frame::none()
                         .fill(if dark {
                             egui::Color32::from_rgb(30, 30, 36)
                         } else {
                             egui::Color32::from_rgb(235, 238, 243)
                         })
                         .rounding(egui::Rounding::same(10.0))
-                        .stroke(egui::Stroke::new(
-                            1.0,
-                            if dark {
-                                egui::Color32::from_rgb(50, 50, 58)
-                            } else {
-                                egui::Color32::from_rgb(210, 215, 225)
-                            },
-                        ))
+                        .stroke(picker_stroke)
+                        .shadow(picker_shadow)
                         .inner_margin(egui::Margin::symmetric(6.0, 4.0))
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
@@ -547,20 +571,43 @@ impl eframe::App for LittleHelperApp {
                             );
                         });
 
-                    // Pulsing hint for first-time users: "Try one!" arrow
-                    if s.show_mode_picker_hint {
-                        let time = ui.input(|i| i.time);
-                        let pulse = ((time * 2.5).sin() + 1.0) / 2.0; // 0..1
-                        let alpha = (140.0 + pulse * 115.0) as u8;
-                        let hint_color = egui::Color32::from_rgba_unmultiplied(
-                            235, 140, 75, alpha, // warm orange, pulsing
+                    // Paint a floating arrow + label below the mode picker
+                    if hint_active {
+                        let picker_rect = picker_response.response.rect;
+                        let painter = ui.painter();
+                        let p = ((time * 3.0).sin() + 1.0) as f32 / 2.0;
+                        let bounce = p * 4.0; // 0–4px vertical bounce
+                        let alpha = (180.0 + p * 75.0) as u8;
+                        let arrow_color = egui::Color32::from_rgba_unmultiplied(235, 140, 75, alpha);
+
+                        // Arrow triangle pointing up at the mode picker
+                        let arrow_center_x = picker_rect.center().x;
+                        let arrow_top_y = picker_rect.bottom() + 4.0 + bounce;
+                        let arrow_size = 10.0;
+                        let triangle = vec![
+                            egui::pos2(arrow_center_x, arrow_top_y),
+                            egui::pos2(arrow_center_x - arrow_size, arrow_top_y + arrow_size),
+                            egui::pos2(arrow_center_x + arrow_size, arrow_top_y + arrow_size),
+                        ];
+                        painter.add(egui::Shape::convex_polygon(
+                            triangle,
+                            arrow_color,
+                            egui::Stroke::NONE,
+                        ));
+
+                        // Label below the arrow
+                        let label_pos = egui::pos2(
+                            arrow_center_x,
+                            arrow_top_y + arrow_size + 4.0,
                         );
-                        ui.label(
-                            egui::RichText::new(" ← try one!")
-                                .size(13.0)
-                                .strong()
-                                .color(hint_color),
+                        painter.text(
+                            label_pos,
+                            egui::Align2::CENTER_TOP,
+                            "Pick a helper to get started!",
+                            egui::FontId::new(14.0, egui::FontFamily::Proportional),
+                            arrow_color,
                         );
+
                         ctx.request_repaint(); // keep animating
                     }
 
@@ -1124,11 +1171,6 @@ impl eframe::App for LittleHelperApp {
                 let mut clicked_path: Option<PathBuf> = None;
                 // Slack is not included in the public edition
 
-                if s.current_mode == ChatMode::Build {
-                    render_build_panel(&mut *s, ui, dark);
-                    ui.add_space(12.0);
-                }
-
                 // Handover notification: show if another mode is processing
                 if let Some(thinking_mode) = s.thinking_mode {
                     if thinking_mode != s.current_mode && s.is_thinking.get(&thinking_mode).copied().unwrap_or(false) {
@@ -1333,6 +1375,12 @@ impl eframe::App for LittleHelperApp {
                             .hint_text(hint)
                             .font(egui::FontId::new(15.0, egui::FontFamily::Proportional)),
                     );
+
+                    // Re-focus the input after AI replies so the user can keep typing
+                    if s.refocus_input {
+                        s.refocus_input = false;
+                        response.request_focus();
+                    }
 
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         s.send_message();
@@ -1570,14 +1618,24 @@ impl eframe::App for LittleHelperApp {
                                 .size(12.0)
                                 .color(subtle),
                             );
-                            let api_key_status = match current_provider.as_str() {
-                                "openai" => s.settings.model.openai_auth.api_key.is_some(),
-                                "anthropic" => s.settings.model.anthropic_auth.api_key.is_some(),
-                                "gemini" => s.settings.model.gemini_auth.api_key.is_some(),
+                            let has_auth = match current_provider.as_str() {
+                                "openai" => s.settings.model.openai_auth.has_auth(),
+                                "anthropic" => s.settings.model.anthropic_auth.has_auth(),
+                                "gemini" => s.settings.model.gemini_auth.has_auth(),
+                                _ => false,
+                            };
+                            let has_oauth = match current_provider.as_str() {
+                                "gemini" => s.settings.model.gemini_auth.oauth.is_some(),
                                 _ => false,
                             };
                             ui.add_space(4.0);
-                            if api_key_status {
+                            if has_oauth {
+                                ui.label(
+                                    egui::RichText::new("  ● Signed in with Google")
+                                        .color(egui::Color32::from_rgb(0, 180, 0))
+                                        .size(12.0),
+                                );
+                            } else if has_auth {
                                 ui.label(
                                     egui::RichText::new("  ● API key saved")
                                         .color(egui::Color32::from_rgb(0, 180, 0))
@@ -1585,31 +1643,14 @@ impl eframe::App for LittleHelperApp {
                                 );
                             } else {
                                 ui.label(
-                                    egui::RichText::new("  ○ No API key — add one below in Advanced")
+                                    egui::RichText::new("  ○ No API key — paste one below or sign in")
                                         .color(egui::Color32::from_rgb(220, 160, 80))
                                         .size(12.0),
                                 );
                             }
-                        }
 
-                        ui.add_space(12.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-
-                        // ── Advanced (collapsible — API keys, folders, status, build) ──
-                        let adv_header = egui::RichText::new("Advanced")
-                            .size(14.0)
-                            .color(if dark {
-                                egui::Color32::from_rgb(160, 160, 170)
-                            } else {
-                                egui::Color32::from_rgb(100, 100, 110)
-                            });
-                        egui::CollapsingHeader::new(adv_header)
-                            .default_open(false)
-                            .show(ui, |ui| {
-
-                        // ── API Key management ──
-                        if is_cloud {
+                            // ── Keys (visible, right after provider picker) ──
+                            ui.add_space(8.0);
                             let key_name = match current_provider.as_str() {
                                 "openai" => "OpenAI",
                                 "anthropic" => "Anthropic",
@@ -1617,12 +1658,6 @@ impl eframe::App for LittleHelperApp {
                                 _ => "",
                             };
 
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(format!("{} API Key", key_name))
-                                    .size(13.0)
-                                    .strong(),
-                            );
                             ui.horizontal(|ui| {
                                 let input_field = match current_provider.as_str() {
                                     "openai" => &mut s.openai_api_key_input,
@@ -1634,17 +1669,17 @@ impl eframe::App for LittleHelperApp {
                                 ui.add(
                                     egui::TextEdit::singleline(input_field)
                                         .password(true)
-                                        .hint_text(format!("Paste {} API key...", key_name))
+                                        .hint_text(format!("Paste {} key...", key_name))
                                         .desired_width(200.0),
                                 );
 
-                                if ui.button("📋 Paste").clicked() {
+                                if ui.button("📋").on_hover_text("Paste from clipboard").clicked() {
                                     if let Some(text) = try_read_clipboard_text() {
                                         *input_field = text;
                                     }
                                 }
 
-                                let save_clicked = ui.button("💾 Save").clicked();
+                                let save_clicked = ui.button("Save").clicked();
                                 if save_clicked && !input_field.is_empty() {
                                     let key_value = input_field.clone();
                                     input_field.clear();
@@ -1661,19 +1696,125 @@ impl eframe::App for LittleHelperApp {
                                         _ => {}
                                     }
                                     save_settings(&s.settings);
-                                    s.settings_status = Some(format!("{} API key saved", key_name));
+                                    s.settings_status = Some(format!("{} key saved", key_name));
                                     s.settings_status_is_error = false;
                                 }
                             });
-                            ui.label(
-                                egui::RichText::new("Stored locally, never shared.")
+                            // ── Google Sign-In (Gemini only, requires client ID) ──
+                            let google_creds = crate::secrets::google_oauth_credentials();
+                            if current_provider == "gemini" && google_creds.is_some() {
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("— or —")
+                                            .size(11.0)
+                                            .weak(),
+                                    );
+                                });
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    let btn_enabled = !s.oauth_in_progress;
+                                    let btn_text = if s.oauth_in_progress {
+                                        "Waiting for browser..."
+                                    } else if s.settings.model.gemini_auth.oauth.is_some() {
+                                        "Re-sign in with Google"
+                                    } else {
+                                        "Sign in with Google"
+                                    };
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(btn_text)
+                                            .size(13.0),
+                                    );
+                                    if ui.add_enabled(btn_enabled, btn).clicked() {
+                                        // Start OAuth flow in background
+                                        let (tx, rx) = std::sync::mpsc::channel();
+                                        s.oauth_result_rx = Some(rx);
+                                        s.oauth_in_progress = true;
+                                        std::thread::spawn(move || {
+                                            let (client_id, client_secret) = google_creds.clone().unwrap();
+                                            let rt = tokio::runtime::Builder::new_current_thread()
+                                                .enable_all()
+                                                .build();
+                                            let result = match rt {
+                                                Ok(rt) => rt.block_on(async {
+                                                    let flow = providers::oauth_helper::OAuthFlow::new(
+                                                        client_id,
+                                                        client_secret,
+                                                        "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+                                                        "https://oauth2.googleapis.com/token".to_string(),
+                                                        vec![
+                                                            "https://www.googleapis.com/auth/generative-language.retriever".to_string(),
+                                                        ],
+                                                    )?;
+                                                    flow.authenticate().await
+                                                }),
+                                                Err(e) => Err(anyhow::anyhow!("Failed to start runtime: {}", e)),
+                                            };
+                                            match result {
+                                                Ok((access_token, refresh_token)) => {
+                                                    let _ = tx.send(crate::types::OAuthResult {
+                                                        provider: "gemini".to_string(),
+                                                        access_token,
+                                                        refresh_token,
+                                                        error: None,
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(crate::types::OAuthResult {
+                                                        provider: "gemini".to_string(),
+                                                        access_token: String::new(),
+                                                        refresh_token: None,
+                                                        error: Some(e.to_string()),
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    }
+                                    if s.oauth_in_progress {
+                                        ui.spinner();
+                                    }
+                                });
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Sign in with your Google account — no API key needed."
+                                    )
                                     .size(11.0)
                                     .weak(),
-                            );
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(8.0);
+                                );
+                            }
+
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Stored locally, never shared.")
+                                        .size(11.0)
+                                        .weak(),
+                                );
+                                ui.add_space(8.0);
+                                ui.add(egui::Hyperlink::from_label_and_url(
+                                    egui::RichText::new("Get free API keys")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(100, 170, 240)),
+                                    "https://openrouter.ai/keys",
+                                ));
+                            });
                         }
+
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // ── Advanced (collapsible — folders, build tools, performance) ──
+                        let adv_header = egui::RichText::new("Advanced")
+                            .size(14.0)
+                            .color(if dark {
+                                egui::Color32::from_rgb(160, 160, 170)
+                            } else {
+                                egui::Color32::from_rgb(100, 100, 110)
+                            });
+                        egui::CollapsingHeader::new(adv_header)
+                            .default_open(false)
+                            .show(ui, |ui| {
 
                         // ── Allowed Folders ──
                         ui.label(
@@ -1881,162 +2022,6 @@ impl eframe::App for LittleHelperApp {
 
         // Slack is not included in the public edition
     }
-}
-
-fn render_build_panel(s: &mut AppState, ui: &mut egui::Ui, dark: bool) {
-    let heading_color = if dark {
-        egui::Color32::from_rgb(220, 220, 230)
-    } else {
-        egui::Color32::from_rgb(40, 40, 50)
-    };
-
-    let subtle_color = if dark {
-        egui::Color32::from_rgb(160, 160, 180)
-    } else {
-        egui::Color32::from_rgb(80, 80, 90)
-    };
-
-    let spec_kit_path = s.spec_kit_path();
-    let spec_kit_ready = spec_kit_path.exists();
-
-    egui::Frame::none()
-        .fill(if dark {
-            egui::Color32::from_rgb(35, 35, 42)
-        } else {
-            egui::Color32::from_rgb(245, 247, 250)
-        })
-        .rounding(egui::Rounding::same(10.0))
-        .inner_margin(egui::Margin::same(12.0))
-        .show(ui, |ui| {
-            ui.heading(
-                egui::RichText::new("Build")
-                    .color(heading_color)
-                    .size(16.0),
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Powered by Spec Kit Assistant. Use this to scaffold a project and run build tasks."
-                )
-                    .color(subtle_color)
-                    .size(11.0),
-            );
-
-            ui.add_space(6.0);
-
-            let status_text = if spec_kit_ready {
-                "Spec Kit: Ready"
-            } else {
-                "Spec Kit: Not found"
-            };
-            let status_color = if spec_kit_ready {
-                egui::Color32::from_rgb(100, 180, 100)
-            } else {
-                egui::Color32::from_rgb(220, 140, 60)
-            };
-            ui.label(egui::RichText::new(status_text).color(status_color).size(11.0));
-            ui.label(
-                egui::RichText::new(format!("Path: {}", spec_kit_path.display()))
-                    .color(subtle_color)
-                    .size(10.0),
-            );
-
-            if !spec_kit_ready {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Find Spec Kit Assistant…").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("JavaScript", &["js"])
-                            .set_title("Select spec-assistant.js")
-                            .pick_file()
-                        {
-                            s.settings.build.spec_kit_path = Some(
-                                path.canonicalize()
-                                    .unwrap_or(path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            );
-                            save_settings(&s.settings);
-                            s.build_status = Some("Spec connected.".to_string());
-                            s.build_status_is_error = false;
-                        }
-                    }
-                    ui.label(egui::RichText::new("Tip: it’s usually named").size(11.0).color(subtle_color));
-                    ui.label(
-                        egui::RichText::new("spec-assistant.js")
-                            .size(11.0)
-                            .monospace()
-                            .color(subtle_color),
-                    );
-                });
-            }
-
-            if let Some(status) = &s.build_status {
-                let color = if s.build_status_is_error {
-                    egui::Color32::from_rgb(220, 120, 120)
-                } else {
-                    egui::Color32::from_rgb(100, 180, 100)
-                };
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new(status).color(color).size(11.0));
-            }
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            ui.label(egui::RichText::new("Project folder").color(subtle_color));
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut s.build_folder_input);
-                if ui.button("Use Home").clicked() {
-                    if let Some(home) = dirs::home_dir() {
-                        s.build_folder_input = home.to_string_lossy().to_string();
-                    }
-                }
-            });
-
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new("Project name").color(subtle_color));
-            ui.text_edit_singleline(&mut s.build_project_name_input);
-
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new("What should we build?").color(subtle_color));
-            ui.text_edit_singleline(&mut s.build_description_input);
-
-            ui.add_space(8.0);
-
-            ui.horizontal(|ui| {
-                if ui.button("Start Project").clicked() {
-                    let name = s.build_project_name_input.trim();
-                    if name.is_empty() {
-                        s.build_status = Some("Please enter a project name.".to_string());
-                        s.build_status_is_error = true;
-                    } else {
-                        s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
-                        save_settings(&s.settings);
-                        s.run_spec_kit_command(vec!["init".to_string(), name.to_string()]);
-                    }
-                }
-
-                if ui.button("Check Project").clicked() {
-                    s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
-                    save_settings(&s.settings);
-                    s.run_spec_kit_command(vec!["check".to_string()]);
-                }
-
-                if ui.button("Run Task").clicked() {
-                    let description = s.build_description_input.trim();
-                    if description.is_empty() {
-                        s.build_status = Some("Please describe what to build.".to_string());
-                        s.build_status_is_error = true;
-                    } else {
-                        let args = vec!["run".to_string(), description.to_string()];
-                        s.settings.build.default_project_folder = Some(s.build_folder_input.trim().to_string());
-                        save_settings(&s.settings);
-                        s.run_spec_kit_command(args);
-                    }
-                }
-            });
-        });
 }
 
 fn mode_button(
@@ -2468,18 +2453,10 @@ fn render_message(
                 };
 
                 if paths.is_empty() {
-                    ui.label(
-                        egui::RichText::new(&msg.content)
-                            .color(text_color)
-                            .size(15.0),
-                    );
+                    simple_md::render_markdown(ui, &msg.content, text_color);
                 } else {
-                    // Render text with clickable paths
-                    ui.label(
-                        egui::RichText::new(&msg.content)
-                            .color(text_color)
-                            .size(15.0),
-                    );
+                    // Render text with clickable paths + markdown
+                    simple_md::render_markdown(ui, &msg.content, text_color);
 
                     ui.add_space(8.0);
                     ui.separator();

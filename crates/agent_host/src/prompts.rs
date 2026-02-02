@@ -259,8 +259,51 @@ fn format_examples(items: &[&str]) -> String {
 }
 
 /// Get introduction text for displaying in the preview panel when switching modes
+/// The spec-kit workflow steps shown in the Build mode preview panel.
+static BUILD_WORKFLOW: &[WorkflowStep] = &[
+    WorkflowStep {
+        name: "Constitution",
+        description: "Project principles and ground rules",
+        prompt: "Create a constitution for my project",
+    },
+    WorkflowStep {
+        name: "Spec",
+        description: "Define what the feature does",
+        prompt: "Write the spec for the main feature",
+    },
+    WorkflowStep {
+        name: "Clarify",
+        description: "Fill in any gaps in the spec",
+        prompt: "Check the spec for gaps and clarify them",
+    },
+    WorkflowStep {
+        name: "Plan",
+        description: "Design the implementation approach",
+        prompt: "Generate an implementation plan from the spec",
+    },
+    WorkflowStep {
+        name: "Analyze",
+        description: "Cross-check for consistency",
+        prompt: "Analyze the spec and plan for consistency",
+    },
+    WorkflowStep {
+        name: "Tasks",
+        description: "Break the plan into actionable tasks",
+        prompt: "Break the plan into tasks",
+    },
+    WorkflowStep {
+        name: "Implement",
+        description: "Build it, one task at a time",
+        prompt: "Start implementing the tasks",
+    },
+];
+
 pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
     let prompt = get_mode_prompt(mode);
+    let workflow_steps = match mode.to_lowercase().as_str() {
+        "build" => Some(BUILD_WORKFLOW),
+        _ => None,
+    };
     ModeIntroduction {
         agent_name: prompt.name,
         mode_name: prompt.mode,
@@ -276,7 +319,17 @@ pub fn get_mode_introduction(mode: &str) -> ModeIntroduction {
         description: prompt.personality,
         capabilities: prompt.expertise,
         example_prompts: prompt.example_questions,
+        workflow_steps,
     }
+}
+
+/// A step in the spec-driven workflow (for Build mode progress tracker)
+#[derive(Clone, Debug)]
+pub struct WorkflowStep {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// The prompt to run this step (clickable in the preview panel)
+    pub prompt: &'static str,
 }
 
 /// Mode introduction content for the preview panel
@@ -288,6 +341,8 @@ pub struct ModeIntroduction {
     pub description: &'static str,
     pub capabilities: &'static [&'static str],
     pub example_prompts: &'static [&'static str],
+    /// Optional workflow steps (Build mode shows these as a progress tracker)
+    pub workflow_steps: Option<&'static [WorkflowStep]>,
 }
 
 // ============================================================================
@@ -424,11 +479,11 @@ static BUILD_PROMPT: ModePrompt = ModePrompt {
         "Turning rough ideas into a plan",
     ],
     example_questions: &[
-        "Build me a tiny CLI tool",
-        "Start a new project called photo-sorter",
-        "Set up a simple web app",
-        "Run the spec and generate the scaffold",
-        "Why did my build fail?",
+        "I want to build a recipe organizer app",
+        "Create the constitution for my project",
+        "Write the spec for the main feature",
+        "Generate a plan from the spec",
+        "Break the plan into tasks and start building",
     ],
     tools_description: "Spec Kit assistant runner, project scaffolding, safe command execution",
     tone: "Playful, confident, and very hands-on. You keep it simple and offer big, obvious buttons/choices when possible.",

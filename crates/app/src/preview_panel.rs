@@ -533,6 +533,15 @@ impl PreviewPanel {
                 let intro = get_mode_introduction(&mode);
                 let ascii_art = get_mode_art(&mode);
 
+                let subtle_color = if is_dark_mode {
+                    egui::Color32::from_rgb(140, 140, 160)
+                } else {
+                    egui::Color32::from_rgb(100, 100, 120)
+                };
+                let _step_done_color = egui::Color32::from_rgb(80, 180, 80);
+                let step_next_color = accent_color;
+                let step_pending_color = subtle_color;
+
                 ui.vertical_centered(|ui| {
                     // ASCII art mascot
                     ui.add(egui::Label::new(
@@ -557,15 +566,84 @@ impl PreviewPanel {
 
                     ui.add_space(20.0);
 
-                    // Capabilities section
-                    ui.heading(egui::RichText::new("What I can help with:").size(14.0));
-                    ui.add_space(5.0);
+                    // ── Workflow steps (Build mode) or Capabilities (other modes) ──
+                    if let Some(steps) = intro.workflow_steps {
+                        ui.heading(egui::RichText::new("The Workflow").size(14.0));
+                        ui.label(
+                            egui::RichText::new("Each step builds on the last. Click a step to run it.")
+                                .size(11.0)
+                                .color(subtle_color),
+                        );
+                        ui.add_space(8.0);
 
-                    for capability in intro.capabilities.iter().take(4) {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(accent_color, "•");
-                            ui.label(*capability);
-                        });
+                        for (i, step) in steps.iter().enumerate() {
+                            // For now all steps start as "pending" — the first is "next"
+                            // (Future: check for actual .speckit files to determine status)
+                            let is_next = i == 0;
+
+                            let (icon, name_color) = if is_next {
+                                ("▶", step_next_color)
+                            } else {
+                                ("○", step_pending_color)
+                            };
+
+                            let step_prompt = step.prompt.to_string();
+                            let response = ui
+                                .horizontal(|ui| {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new(icon)
+                                            .size(12.0)
+                                            .color(name_color),
+                                    );
+                                    let btn = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(step.name)
+                                                .size(13.0)
+                                                .strong()
+                                                .color(name_color),
+                                        )
+                                        .frame(false),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("— {}", step.description))
+                                            .size(12.0)
+                                            .color(subtle_color),
+                                    );
+                                    btn
+                                })
+                                .inner;
+
+                            if response.clicked() {
+                                self.state.clicked_prompt = Some(step_prompt);
+                            }
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+
+                            // Connector line between steps (except last)
+                            if i < steps.len() - 1 {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(14.0);
+                                    ui.label(
+                                        egui::RichText::new("│")
+                                            .size(10.0)
+                                            .color(step_pending_color),
+                                    );
+                                });
+                            }
+                        }
+                    } else {
+                        // Non-workflow modes: show capabilities list
+                        ui.heading(egui::RichText::new("What I can help with:").size(14.0));
+                        ui.add_space(5.0);
+
+                        for capability in intro.capabilities.iter().take(4) {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(accent_color, "•");
+                                ui.label(*capability);
+                            });
+                        }
                     }
 
                     ui.add_space(20.0);
@@ -573,10 +651,9 @@ impl PreviewPanel {
                     // Example prompts section - clickable to populate chat input
                     ui.heading(egui::RichText::new("Try asking me:").size(14.0));
                     ui.label(
-                        egui::RichText::new("Tip: These suggestions are clickable — click one to fill the prompt box.")
+                        egui::RichText::new("Click a suggestion to fill the prompt box.")
                             .size(11.0)
-                            .color(text_color)
-                            .weak(),
+                            .color(subtle_color),
                     );
                     ui.add_space(5.0);
 

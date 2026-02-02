@@ -41,6 +41,7 @@ secrets.json
 .credentials.json
 **/credentials.json
 **/.oauth*
+client_secret*.json
 
 # Settings with potential secrets
 settings.json
