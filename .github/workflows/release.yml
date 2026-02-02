@@ -24,10 +24,15 @@ jobs:
 
       - name: Bundle Ollama
         run: |
-          # Download Ollama CLI for Windows
-          Invoke-WebRequest -Uri "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.exe" -OutFile "ollama.exe"
-          # Place next to app binary so Inno Setup can pick it up
-          Copy-Item ollama.exe target\release\ollama.exe
+          # Download Ollama standalone CLI zip for Windows
+          Invoke-WebRequest -Uri "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip" -OutFile "ollama.zip"
+          Expand-Archive -Path ollama.zip -DestinationPath ollama-extracted
+          # The zip contains ollama.exe (and lib/ for GPU support)
+          Copy-Item ollama-extracted\ollama.exe target\release\ollama.exe
+          # Also copy GPU libraries if present
+          if (Test-Path ollama-extracted\lib) {
+            Copy-Item -Recurse ollama-extracted\lib target\release\lib
+          }
 
       - name: Download Inno Setup
         run: choco install innosetup -y
@@ -110,10 +115,12 @@ jobs:
 
       - name: Bundle Ollama
         run: |
-          # Download Ollama CLI binary for macOS (universal)
-          curl -fsSL -o ollama "https://github.com/ollama/ollama/releases/latest/download/ollama-darwin"
+          # Download Ollama CLI for macOS (tgz archive)
+          curl -fsSL -o ollama-darwin.tgz "https://github.com/ollama/ollama/releases/latest/download/ollama-darwin.tgz"
+          tar xzf ollama-darwin.tgz
+          # The archive extracts to bin/ollama
+          mv bin/ollama ollama || true
           chmod +x ollama
-          # Verify it works
           file ollama
 
       - name: Create App Bundle
@@ -193,8 +200,13 @@ jobs:
 
       - name: Bundle Ollama
         run: |
-          # Download Ollama CLI binary for Linux amd64
-          curl -fsSL -o ollama "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64"
+          # Download Ollama CLI for Linux amd64 (zstd archive)
+          curl -fsSL -o ollama-linux.tar.zst "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tar.zst"
+          # Ubuntu may not have zstd; install it
+          sudo apt-get install -y zstd || true
+          tar --zstd -xf ollama-linux.tar.zst
+          # The archive extracts to bin/ollama
+          mv bin/ollama ollama || true
           chmod +x ollama
           file ollama
 

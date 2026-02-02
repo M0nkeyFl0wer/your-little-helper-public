@@ -65,12 +65,10 @@ const SAFE_COMMANDS: &[&str] = &[
     "tree",
     "which",
     "whereis",
-    // Text processing (read-only)
+    // Text processing (read-only — sed/awk excluded, they can modify files)
     "grep",
     "rg",
     "ag",
-    "awk",
-    "sed",
     "sort",
     "uniq",
     "cut",
@@ -157,10 +155,8 @@ const SAFE_COMMANDS: &[&str] = &[
     "git fetch",
     "git ls-files",
     "git blame",
-    // Rust/Cargo (read operations)
+    // Rust/Cargo (read-only operations — build/test excluded, they run arbitrary code)
     "cargo check",
-    "cargo test",
-    "cargo build",
     "cargo clippy",
     "cargo fmt --check",
     "rustc --version",
@@ -943,35 +939,49 @@ pub async fn web_search(query: &str) -> Result<CommandResult> {
     let encoded_query = urlencoding::encode(query);
     let url = format!("https://html.duckduckgo.com/html/?q={}", encoded_query);
 
-    // Use curl to fetch results (available on most systems)
-    let output = Command::new("curl")
-        .arg("-s") // Silent
-        .arg("-L") // Follow redirects
-        .arg("-A") // User agent
-        .arg("Mozilla/5.0 (compatible; LittleHelper/1.0)")
-        .arg(&url)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await?;
+    // Use reqwest instead of shelling out to curl (works on all platforms)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Mozilla/5.0 (compatible; LittleHelper/1.0)")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
+    let response = client.get(&url).send().await;
     let duration_ms = start.elapsed().as_millis() as u64;
-    let html = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-    if !output.status.success() {
-        return Ok(CommandResult {
-            command: format!("web_search: {}", query),
-            exit_code: output.status.code().unwrap_or(-1),
-            stdout: String::new(),
-            stderr: stderr.clone(),
-            output: format!("Search failed: {}", stderr),
-            duration_ms,
-            success: false,
-            summary: "Search failed".to_string(),
-            needed_sudo: false,
-        });
-    }
+    let html = match response {
+        Ok(resp) if resp.status().is_success() => {
+            resp.text().await.unwrap_or_default()
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            return Ok(CommandResult {
+                command: format!("web_search: {}", query),
+                exit_code: status.as_u16() as i32,
+                stdout: String::new(),
+                stderr: format!("HTTP {}", status),
+                output: format!("Search failed: HTTP {}", status),
+                duration_ms,
+                success: false,
+                summary: "Search failed".to_string(),
+                needed_sudo: false,
+            });
+        }
+        Err(e) => {
+            return Ok(CommandResult {
+                command: format!("web_search: {}", query),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: e.to_string(),
+                output: format!("Search failed: {}", e),
+                duration_ms,
+                success: false,
+                summary: "Search failed".to_string(),
+                needed_sudo: false,
+            });
+        }
+    };
 
     // Parse results from HTML - extract titles and snippets
     let results = parse_ddg_results(&html);
@@ -1011,9 +1021,15 @@ fn parse_ddg_results(html: &str) -> Vec<(String, String, String)> {
     // Simple regex-based parsing (not perfect but works for basic extraction)
 
     // Find result links - they contain the title
-    let title_re =
-        regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)</a>"#).unwrap();
-    let snippet_re = regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]+)"#).unwrap();
+    use std::sync::OnceLock;
+    static TITLE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static SNIPPET_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let title_re = TITLE_RE.get_or_init(|| {
+        regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)</a>"#).unwrap()
+    });
+    let snippet_re = SNIPPET_RE.get_or_init(|| {
+        regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]+)"#).unwrap()
+    });
 
     let titles: Vec<(String, String)> = title_re
         .captures_iter(html)

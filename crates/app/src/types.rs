@@ -60,6 +60,14 @@ pub struct WebPreviewResult {
     pub snippet: Option<String>,
 }
 
+/// Result from the background Ollama setup thread.
+pub struct OllamaSetupResult {
+    pub status: crate::ollama_manager::OllamaStatus,
+    pub ollama_up: bool,
+    pub recommended_model: String,
+    pub recommended_desc: String,
+}
+
 /// Current app screen
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
@@ -240,6 +248,9 @@ pub struct AppState {
     // CPU/memory nudge
     pub cpu_high_since: Option<Instant>,
     pub cpu_nudge_dismissed: bool,
+
+    // Background Ollama setup channel (fires once at startup)
+    pub ollama_setup_rx: Option<Receiver<OllamaSetupResult>>,
 }
 
 impl Default for AppState {
@@ -256,75 +267,98 @@ impl Default for AppState {
             }
         }
 
-        // ── Ensure Ollama is running (bundled or system-installed) ──
-        use crate::ollama_manager::{self, OllamaStatus};
+        // ── Start Ollama in the background (don't block the UI) ──
+        // Quick check: is Ollama already listening? (fast, non-blocking)
+        let ollama_already_up = crate::ollama_manager::ollama_reachable();
 
-        let ollama_status = ollama_manager::ensure_ollama_running();
-        let ollama_up = matches!(
-            ollama_status,
-            OllamaStatus::AlreadyRunning | OllamaStatus::Started
-        );
+        // Kick off Ollama startup + model pull in a background thread.
+        // Results arrive via the ollama_setup_rx channel.
+        let (ollama_tx, ollama_rx) = std::sync::mpsc::channel::<OllamaSetupResult>();
+        {
+            let settings_clone = settings.clone();
+            std::thread::spawn(move || {
+                use crate::ollama_manager::{self, OllamaStatus};
 
-        // Pick the right model for this machine's hardware
-        let (recommended, recommended_desc) = ollama_manager::recommended_model();
-        if ollama_up && settings.model.local_model == "llama3.2:3b" {
-            // Only override the default; if the user manually chose a model, respect it.
-            settings.model.local_model = recommended.to_string();
-        }
-
-        // Pull the recommended model in the background if Ollama is up but model isn't local yet
-        if ollama_up {
-            if let Some(binary) = ollama_manager::ollama_binary() {
-                let model_tag = settings.model.local_model.clone();
-                if !ollama_manager::model_available(&binary, &model_tag) {
-                    let bin = binary.clone();
-                    let tag = model_tag.clone();
-                    std::thread::spawn(move || {
-                        let _ = ollama_manager::pull_model(&bin, &tag);
-                    });
-                }
-            }
-        }
-
-        // Smart provider fallback:
-        // - Cloud selected but no key? Fall back to local if Ollama is running.
-        // - Local selected but Ollama is down? Fall back to a cloud provider if a key exists.
-        let primary_provider = settings
-            .model
-            .provider_preference
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("local");
-        let missing_key = match primary_provider {
-            "openai" => settings.model.openai_auth.api_key.is_none(),
-            "anthropic" => settings.model.anthropic_auth.api_key.is_none(),
-            "gemini" => settings.model.gemini_auth.api_key.is_none(),
-            _ => false,
-        };
-        if primary_provider != "local" && missing_key && ollama_up {
-            settings.model.provider_preference = vec![
-                "local".to_string(),
-                "anthropic".to_string(),
-                "openai".to_string(),
-                "gemini".to_string(),
-            ];
-            crate::utils::save_settings(&settings);
-        } else if primary_provider == "local" && !ollama_up {
-            let fallback = if settings.model.anthropic_auth.api_key.is_some() {
-                Some("anthropic")
-            } else if settings.model.openai_auth.api_key.is_some() {
-                Some("openai")
-            } else if settings.model.gemini_auth.api_key.is_some() {
-                Some("gemini")
-            } else {
-                None
-            };
-            if let Some(provider) = fallback {
-                set_primary_provider_preference(
-                    &mut settings.model.provider_preference,
-                    provider,
+                let status = ollama_manager::ensure_ollama_running();
+                let ollama_up = matches!(
+                    status,
+                    OllamaStatus::AlreadyRunning | OllamaStatus::Started
                 );
+
+                // Pick model based on RAM
+                let (recommended, recommended_desc) = ollama_manager::recommended_model();
+                let mut model_to_use = settings_clone.model.local_model.clone();
+                if ollama_up && model_to_use == "llama3.2:3b" {
+                    model_to_use = recommended.to_string();
+                }
+
+                // Pull model if needed
+                if ollama_up {
+                    if let Some(binary) = ollama_manager::ollama_binary() {
+                        if !ollama_manager::model_available(&binary, &model_to_use) {
+                            let _ = ollama_manager::pull_model(&binary, &model_to_use);
+                        }
+                    }
+                }
+
+                let _ = ollama_tx.send(OllamaSetupResult {
+                    status,
+                    ollama_up,
+                    recommended_model: recommended.to_string(),
+                    recommended_desc: recommended_desc.to_string(),
+                });
+            });
+        }
+
+        // If Ollama was already running, apply provider fallback immediately.
+        // Otherwise, defer until the background thread reports back.
+        if ollama_already_up {
+            let primary_provider = settings
+                .model
+                .provider_preference
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("local");
+            let missing_key = match primary_provider {
+                "openai" => settings.model.openai_auth.api_key.is_none(),
+                "anthropic" => settings.model.anthropic_auth.api_key.is_none(),
+                "gemini" => settings.model.gemini_auth.api_key.is_none(),
+                _ => false,
+            };
+            if primary_provider != "local" && missing_key {
+                settings.model.provider_preference = vec![
+                    "local".to_string(),
+                    "anthropic".to_string(),
+                    "openai".to_string(),
+                    "gemini".to_string(),
+                ];
                 crate::utils::save_settings(&settings);
+            }
+        } else if !ollama_already_up {
+            // Ollama not running yet — if local is preferred, try cloud fallback
+            let primary_provider = settings
+                .model
+                .provider_preference
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("local");
+            if primary_provider == "local" {
+                let fallback = if settings.model.anthropic_auth.api_key.is_some() {
+                    Some("anthropic")
+                } else if settings.model.openai_auth.api_key.is_some() {
+                    Some("openai")
+                } else if settings.model.gemini_auth.api_key.is_some() {
+                    Some("gemini")
+                } else {
+                    None
+                };
+                if let Some(provider) = fallback {
+                    set_primary_provider_preference(
+                        &mut settings.model.provider_preference,
+                        provider,
+                    );
+                    crate::utils::save_settings(&settings);
+                }
             }
         }
 
@@ -345,68 +379,23 @@ impl Default for AppState {
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
 
-        // Build a startup status message based on what happened with Ollama
-        let has_any_cloud_key = settings.model.openai_auth.api_key.is_some()
-            || settings.model.anthropic_auth.api_key.is_some()
-            || settings.model.gemini_auth.api_key.is_some();
-        let final_provider = settings
-            .model
-            .provider_preference
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("local");
-
-        let setup_warning = match &ollama_status {
-            OllamaStatus::Started => {
-                Some(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!(
-                        "Local AI started automatically. Using {} for this session.",
-                        recommended_desc
-                    ),
-                    details: None,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                })
-            }
-            OllamaStatus::NotFound | OllamaStatus::StartFailed(_)
-                if final_provider == "local" && !has_any_cloud_key =>
-            {
-                Some(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: "Heads up: I couldn't start the local AI engine, and no cloud API key is set.\n\n\
-To get started, open **Settings** (gear icon) and paste a Gemini, OpenAI, or Anthropic API key."
-                        .to_string(),
-                    details: None,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                })
-            }
-            OllamaStatus::NotFound | OllamaStatus::StartFailed(_) if has_any_cloud_key => {
-                Some(ChatMessage {
-                    role: "assistant".to_string(),
-                    content:
-                        "Local AI isn't available, so I switched to your cloud provider. You can change this in Settings."
-                            .to_string(),
-                    details: None,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                })
-            }
-            _ => None,
-        };
-
         // Initialize preview panel with mode intro
         let mut preview_panel = crate::preview_panel::PreviewPanel::new();
         preview_panel.show_mode_intro("find");
 
-        let mut find_history = vec![welcome_msg.clone()];
-        let mut fix_history = vec![welcome_msg.clone()];
-        if let Some(warning) = setup_warning {
-            find_history.push(warning.clone());
-            fix_history.push(warning);
-        }
+        let find_history = vec![welcome_msg.clone()];
+        let fix_history = vec![welcome_msg.clone()];
+
+        // Show onboarding for first-run users
+        let initial_screen = if settings.user_profile.onboarding_complete {
+            AppScreen::Chat
+        } else {
+            AppScreen::Onboarding
+        };
 
         Self {
             settings: settings.clone(),
-            current_screen: AppScreen::Chat,
+            current_screen: initial_screen,
             current_mode: ChatMode::Find,
             previous_mode: None,
             spec_intro_shown: false,
@@ -509,11 +498,96 @@ To get started, open **Settings** (gear icon) and paste a Gemini, OpenAI, or Ant
 
             cpu_high_since: None,
             cpu_nudge_dismissed: false,
+            ollama_setup_rx: Some(ollama_rx),
         }
     }
 }
 
 impl AppState {
+    /// Poll for background Ollama setup completion. Call once per frame.
+    /// When the setup thread finishes, applies provider fallback and posts
+    /// a status message into the chat history.
+    pub fn poll_ollama_setup(&mut self) {
+        let result = match &self.ollama_setup_rx {
+            Some(rx) => rx.try_recv().ok(),
+            None => return,
+        };
+        let Some(result) = result else { return };
+        // Consume the channel — only fires once
+        self.ollama_setup_rx = None;
+
+        use crate::ollama_manager::OllamaStatus;
+
+        // Apply recommended model if still on default
+        if result.ollama_up && self.settings.model.local_model == "llama3.2:3b" {
+            self.settings.model.local_model = result.recommended_model.clone();
+            crate::utils::save_settings(&self.settings);
+        }
+
+        // Provider fallback based on final Ollama state
+        if result.ollama_up {
+            let primary = self.settings.model.provider_preference
+                .first().map(|s| s.as_str()).unwrap_or("local");
+            let missing_key = match primary {
+                "openai" => self.settings.model.openai_auth.api_key.is_none(),
+                "anthropic" => self.settings.model.anthropic_auth.api_key.is_none(),
+                "gemini" => self.settings.model.gemini_auth.api_key.is_none(),
+                _ => false,
+            };
+            if primary != "local" && missing_key {
+                self.settings.model.provider_preference = vec![
+                    "local".to_string(), "anthropic".to_string(),
+                    "openai".to_string(), "gemini".to_string(),
+                ];
+                crate::utils::save_settings(&self.settings);
+            }
+        }
+
+        // Post a status message
+        let has_any_cloud_key = self.settings.model.openai_auth.api_key.is_some()
+            || self.settings.model.anthropic_auth.api_key.is_some()
+            || self.settings.model.gemini_auth.api_key.is_some();
+
+        let msg = match &result.status {
+            OllamaStatus::Started => Some(format!(
+                "Local AI started automatically. Using {} for this session.",
+                result.recommended_desc
+            )),
+            OllamaStatus::AlreadyRunning => None, // already running, no fuss
+            OllamaStatus::NotFound | OllamaStatus::StartFailed(_)
+                if !has_any_cloud_key =>
+            {
+                Some(
+                    "Heads up: I couldn't start the local AI engine, and no cloud API key is set.\n\n\
+                    To get started, open **Settings** (gear icon) and paste a Gemini, OpenAI, or Anthropic API key."
+                        .to_string()
+                )
+            }
+            OllamaStatus::NotFound | OllamaStatus::StartFailed(_) => {
+                Some(
+                    "Local AI isn't available, so I switched to your cloud provider. You can change this in Settings."
+                        .to_string()
+                )
+            }
+        };
+
+        if let Some(content) = msg {
+            let chat_msg = ChatMessage {
+                role: "assistant".to_string(),
+                content,
+                details: None,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            };
+            // Post to Find and Fix histories (the default visible tabs)
+            if let Some(h) = self.mode_chat_histories.get_mut(&ChatMode::Find) {
+                h.push(chat_msg.clone());
+            }
+            if let Some(h) = self.mode_chat_histories.get_mut(&ChatMode::Fix) {
+                h.push(chat_msg);
+            }
+        }
+    }
+
     fn ollama_reachable() -> bool {
         crate::ollama_manager::ollama_reachable()
     }

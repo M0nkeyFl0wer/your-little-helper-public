@@ -75,11 +75,13 @@ pub use state::*;
 
 /// Extract file paths from text
 fn extract_paths(text: &str, allowed_dirs: &[String]) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    use std::sync::OnceLock;
+    static PATH_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let path_regex = PATH_RE.get_or_init(|| {
+        regex::Regex::new(r#"(?:^|[\s"'(])([~/][^\s"'()]+\.[a-zA-Z0-9]+)"#).unwrap()
+    });
 
-    // Match absolute paths like /home/user/file.txt or ~/file.txt
-    // Match paths like /home/user/file.txt or ~/file.txt
-    let path_regex = regex::Regex::new(r#"(?:^|[\s"'(])([~/][^\s"'()]+\.[a-zA-Z0-9]+)"#).unwrap();
+    let mut paths = Vec::new();
 
     for cap in path_regex.captures_iter(text) {
         if let Some(m) = cap.get(1) {
@@ -140,10 +142,20 @@ fn preload_openai_enabled() -> bool {
 
 /// Clean up AI response by removing action tags
 fn clean_ai_response(response: &str) -> String {
-    // Remove <preview>, <search>, <command> tags and their content
-    let re_preview = regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap();
-    let re_search = regex::Regex::new(r"(?s)<search>.*?</search>").unwrap();
-    let re_command = regex::Regex::new(r"(?s)<command>.*?</command>").unwrap();
+    use std::sync::OnceLock;
+    static RE_PREVIEW: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_SEARCH: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_COMMAND: OnceLock<regex::Regex> = OnceLock::new();
+
+    let re_preview = RE_PREVIEW.get_or_init(|| {
+        regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap()
+    });
+    let re_search = RE_SEARCH.get_or_init(|| {
+        regex::Regex::new(r"(?s)<search>.*?</search>").unwrap()
+    });
+    let re_command = RE_COMMAND.get_or_init(|| {
+        regex::Regex::new(r"(?s)<command>.*?</command>").unwrap()
+    });
 
     let cleaned = re_preview.replace_all(response, "");
     let cleaned = re_search.replace_all(&cleaned, "");
@@ -357,9 +369,13 @@ impl eframe::App for LittleHelperApp {
         }
         ctx.set_style(style);
 
-        // Onboarding should be “in flow” (chat + per-tab). Don’t trap users on a separate screen.
+        // Poll for background Ollama setup completion
+        s.poll_ollama_setup();
+
+        // Show onboarding for first-run users
         if s.current_screen == AppScreen::Onboarding {
-            s.current_screen = AppScreen::Chat;
+            render_onboarding_screen(&mut s, ctx);
+            return;
         }
 
         // Load mascot texture if not already loaded
