@@ -11,6 +11,9 @@ use std::sync::mpsc::Sender;
 
 use futures::future::{AbortRegistration, Abortable};
 /// Run AI generation in background thread (non-blocking)
+///
+/// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
+/// The UI polls this channel each frame to update the thinking indicator.
 pub fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
     settings: shared::settings::ModelProvider,
@@ -18,6 +21,7 @@ pub fn run_ai_generation(
     allow_web: bool,
     allowed_dirs: Vec<String>,
     tx: Sender<AiResult>,
+    status_tx: Sender<String>,
     abort_reg: AbortRegistration,
 ) {
     use agent_host::{classify_command, web_search, DangerLevel};
@@ -50,8 +54,10 @@ pub fn run_ai_generation(
         let mut pending_commands: Vec<String> = Vec::new();
 
         // Loop for multi-turn interactions (max 5 iterations)
-        for _iteration in 0..5 {
+        for iteration in 0..5 {
             // Get AI response
+            let stage = if iteration == 0 { "Thinking" } else { "Thinking again with new info" };
+            let _ = status_tx.send(stage.to_string());
             let response = router.generate(msgs.clone()).await?;
 
             // Check for preview tags
@@ -105,6 +111,7 @@ pub fn run_ai_generation(
 
             // Execute searches
             for query in &searches {
+                let _ = status_tx.send(format!("Searching: {}", query));
                 if !allow_web {
                     results.push(format!(
                         "[Search blocked: Internet access disabled]\nQuery: {}",
@@ -160,6 +167,7 @@ pub fn run_ai_generation(
                 }
 
                 if danger == DangerLevel::Safe {
+                    let _ = status_tx.send(format!("Running: {}", truncate_for_status(cmd)));
                     match agent_host::execute_command(cmd, 60).await {
                         Ok(r) => {
                             all_executed_commands.push((
@@ -184,6 +192,7 @@ pub fn run_ai_generation(
                         }
                     }
                 } else {
+                    let _ = status_tx.send("Waiting for your approval".to_string());
                     results.push(format!("[Command '{}' queued for user approval]", cmd));
                     if !pending_commands.iter().any(|c| c == cmd) {
                         pending_commands.push(cmd.clone());
@@ -235,4 +244,14 @@ pub fn run_ai_generation(
     };
 
     let _ = tx.send(ai_result);
+}
+
+/// Truncate a command string for display in the status indicator.
+fn truncate_for_status(s: &str) -> String {
+    let first_line = s.lines().next().unwrap_or(s);
+    if first_line.len() > 60 {
+        format!("{}…", &first_line[..57])
+    } else {
+        first_line.to_string()
+    }
 }

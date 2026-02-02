@@ -101,6 +101,13 @@ pub mod settings {
         pub share_system_summary: bool,
     }
 
+    impl ProviderAuth {
+        /// Returns true if either an API key or OAuth token is configured.
+        pub fn has_auth(&self) -> bool {
+            self.api_key.is_some() || self.oauth.is_some()
+        }
+    }
+
     impl Default for ProviderAuth {
         fn default() -> Self {
             Self {

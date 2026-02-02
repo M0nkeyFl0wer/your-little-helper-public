@@ -60,6 +60,14 @@ pub struct WebPreviewResult {
     pub snippet: Option<String>,
 }
 
+/// Result from a background OAuth flow.
+pub struct OAuthResult {
+    pub provider: String,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Result from the background Ollama setup thread.
 pub struct OllamaSetupResult {
     pub status: crate::ollama_manager::OllamaStatus,
@@ -192,6 +200,9 @@ pub struct AppState {
     /// File to auto-open after response
     pub pending_preview: Option<PathBuf>,
 
+    // Re-focus the chat input after AI replies
+    pub refocus_input: bool,
+
     // Onboarding
     pub onboarding_name: String,
 
@@ -233,8 +244,6 @@ pub struct AppState {
     // Build mode inputs and status
     pub spec_kit_path_input: String,
     pub build_folder_input: String,
-    pub build_project_name_input: String,
-    pub build_description_input: String,
     pub build_status: Option<String>,
     pub build_status_is_error: bool,
 
@@ -255,6 +264,14 @@ pub struct AppState {
 
     // Background Ollama setup channel (fires once at startup)
     pub ollama_setup_rx: Option<Receiver<OllamaSetupResult>>,
+
+    // Live status updates from the AI pipeline (e.g. "Searching…", "Running command…")
+    pub ai_status_rx: Option<Receiver<String>>,
+
+    // Background OAuth flow channel
+    pub oauth_result_rx: Option<Receiver<OAuthResult>>,
+    /// True while an OAuth browser flow is in progress
+    pub oauth_in_progress: bool,
 }
 
 impl Default for AppState {
@@ -324,9 +341,9 @@ impl Default for AppState {
                 .map(|s| s.as_str())
                 .unwrap_or("local");
             let missing_key = match primary_provider {
-                "openai" => settings.model.openai_auth.api_key.is_none(),
-                "anthropic" => settings.model.anthropic_auth.api_key.is_none(),
-                "gemini" => settings.model.gemini_auth.api_key.is_none(),
+                "openai" => !settings.model.openai_auth.has_auth(),
+                "anthropic" => !settings.model.anthropic_auth.has_auth(),
+                "gemini" => !settings.model.gemini_auth.has_auth(),
                 _ => false,
             };
             if primary_provider != "local" && missing_key {
@@ -347,11 +364,11 @@ impl Default for AppState {
                 .map(|s| s.as_str())
                 .unwrap_or("local");
             if primary_provider == "local" {
-                let fallback = if settings.model.anthropic_auth.api_key.is_some() {
+                let fallback = if settings.model.anthropic_auth.has_auth() {
                     Some("anthropic")
-                } else if settings.model.openai_auth.api_key.is_some() {
+                } else if settings.model.openai_auth.has_auth() {
                     Some("openai")
-                } else if settings.model.gemini_auth.api_key.is_some() {
+                } else if settings.model.gemini_auth.has_auth() {
                     Some("gemini")
                 } else {
                     None
@@ -461,6 +478,7 @@ impl Default for AppState {
             show_preview: true,
             active_viewer: ActiveViewer::Panel,
             pending_preview: None,
+            refocus_input: false,
             onboarding_name: String::new(),
             pending_commands: Vec::new(),
             password_dialog: crate::modals::PasswordDialog::new("sudo_password"),
@@ -490,8 +508,6 @@ impl Default for AppState {
                 .clone()
                 .or_else(|| dirs::home_dir().map(|h| h.to_string_lossy().to_string()))
                 .unwrap_or_default(),
-            build_project_name_input: String::new(),
-            build_description_input: String::new(),
             build_status: None,
             build_status_is_error: false,
 
@@ -506,6 +522,9 @@ impl Default for AppState {
             cpu_high_since: None,
             cpu_nudge_dismissed: false,
             ollama_setup_rx: Some(ollama_rx),
+            ai_status_rx: None,
+            oauth_result_rx: None,
+            oauth_in_progress: false,
         }
     }
 }
@@ -536,9 +555,9 @@ impl AppState {
             let primary = self.settings.model.provider_preference
                 .first().map(|s| s.as_str()).unwrap_or("local");
             let missing_key = match primary {
-                "openai" => self.settings.model.openai_auth.api_key.is_none(),
-                "anthropic" => self.settings.model.anthropic_auth.api_key.is_none(),
-                "gemini" => self.settings.model.gemini_auth.api_key.is_none(),
+                "openai" => !self.settings.model.openai_auth.has_auth(),
+                "anthropic" => !self.settings.model.anthropic_auth.has_auth(),
+                "gemini" => !self.settings.model.gemini_auth.has_auth(),
                 _ => false,
             };
             if primary != "local" && missing_key {
@@ -551,18 +570,21 @@ impl AppState {
         }
 
         // Post a status message
-        let has_any_cloud_key = self.settings.model.openai_auth.api_key.is_some()
-            || self.settings.model.anthropic_auth.api_key.is_some()
-            || self.settings.model.gemini_auth.api_key.is_some();
+        let has_any_cloud_key = self.settings.model.openai_auth.has_auth()
+            || self.settings.model.anthropic_auth.has_auth()
+            || self.settings.model.gemini_auth.has_auth();
 
         let gpu = crate::ollama_manager::has_gpu_acceleration();
 
         let msg = match &result.status {
             OllamaStatus::Started if !gpu => Some(format!(
                 "Local AI started — using {}.\n\n\
-                Heads up: no GPU detected, so responses may be a bit slow. \
-                Everything still works and stays private on your machine! \
-                For faster answers, you can add a cloud provider in Settings.",
+                Your computer doesn't have a GPU that speeds up AI, so the \
+                local model will be pretty slow. It still works and keeps \
+                everything private!\n\n\
+                **Recommendation:** For a much better experience, open \
+                **Settings** and switch to a cloud provider like Gemini \
+                (free tier available) or paste an API key for OpenAI/Anthropic.",
                 result.recommended_desc
             )),
             OllamaStatus::Started => Some(format!(
@@ -604,15 +626,49 @@ impl AppState {
         }
     }
 
+    /// Poll for background OAuth flow completion. Call once per frame.
+    pub fn poll_oauth_result(&mut self) {
+        let result = match &self.oauth_result_rx {
+            Some(rx) => rx.try_recv().ok(),
+            None => return,
+        };
+        let Some(result) = result else { return };
+        self.oauth_result_rx = None;
+        self.oauth_in_progress = false;
+
+        if let Some(err) = &result.error {
+            self.settings_status = Some(format!("Sign-in failed: {}", err));
+            self.settings_status_is_error = true;
+            return;
+        }
+
+        let oauth_creds = shared::settings::OAuthCredentials {
+            access_token: result.access_token,
+            refresh_token: result.refresh_token,
+            expires_at: Some(chrono::Utc::now().timestamp() + 3600), // ~1 hour
+        };
+
+        match result.provider.as_str() {
+            "gemini" => {
+                self.settings.model.gemini_auth.oauth = Some(oauth_creds);
+            }
+            _ => {}
+        }
+
+        crate::utils::save_settings(&self.settings);
+        self.settings_status = Some("Signed in with Google!".to_string());
+        self.settings_status_is_error = false;
+    }
+
     fn ollama_reachable() -> bool {
         crate::ollama_manager::ollama_reachable()
     }
 
     fn provider_has_api_key(&self, provider: &str) -> bool {
         match provider {
-            "openai" => self.settings.model.openai_auth.api_key.is_some(),
-            "anthropic" => self.settings.model.anthropic_auth.api_key.is_some(),
-            "gemini" => self.settings.model.gemini_auth.api_key.is_some(),
+            "openai" => self.settings.model.openai_auth.has_auth(),
+            "anthropic" => self.settings.model.anthropic_auth.has_auth(),
+            "gemini" => self.settings.model.gemini_auth.has_auth(),
             _ => true,
         }
     }
@@ -841,6 +897,22 @@ impl AppState {
     }
 
     /// Check for completed AI responses (called each frame)
+    /// Poll for live status updates from the AI pipeline. Call once per frame.
+    pub fn poll_ai_status(&mut self) {
+        if let Some(rx) = &self.ai_status_rx {
+            // Drain all pending status updates (use the latest one)
+            let mut latest: Option<String> = None;
+            while let Ok(status) = rx.try_recv() {
+                latest = Some(status);
+            }
+            if let Some(status) = latest {
+                if let Some(mode) = self.thinking_mode {
+                    self.thinking_status.insert(mode, status);
+                }
+            }
+        }
+    }
+
     pub fn poll_ai_response(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
             // Non-blocking check for result
@@ -856,9 +928,11 @@ impl AppState {
                     self.slow_response_hint_shown.remove(&mode);
                 }
                 self.thinking_mode = None;
+                self.ai_status_rx = None;
                 self.show_model_hint = false;
                 self.model_hint_started_at = None;
                 self.ai_result_rx = None;
+                self.refocus_input = true;
 
                 // Return to welcome view (unless Rick Roll is showing)
                 if matches!(self.active_viewer, ActiveViewer::Matrix) {
@@ -1798,6 +1872,10 @@ WORKFLOW:
     ) {
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
+
+        let (status_tx, status_rx) = channel::<String>();
+        self.ai_status_rx = Some(status_rx);
+
         let mode = self.thinking_mode.unwrap_or(self.current_mode);
 
         let (abort_handle, abort_reg) = futures::future::AbortHandle::new_pair();
@@ -1827,6 +1905,7 @@ WORKFLOW:
                     allow_web,
                     allowed_dirs,
                     tx,
+                    status_tx,
                     abort_reg,
                 );
             }));

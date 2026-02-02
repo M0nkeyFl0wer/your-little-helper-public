@@ -13,6 +13,7 @@ use url::Url;
 pub struct OAuthFlow {
     client: BasicClient,
     scopes: Vec<String>,
+    port: u16,
 }
 
 impl OAuthFlow {
@@ -25,8 +26,9 @@ impl OAuthFlow {
     ) -> Result<Self> {
         // Try a few ports in case 8765 is busy
         let (listener, port) = bind_callback_listener()?;
-        // Keep listener alive by storing it — we'll use the port for the redirect URI
-        drop(listener); // We'll re-bind in authenticate()
+        // Drop listener — we'll re-bind the same port in authenticate().
+        // The port is likely still free for the brief window.
+        drop(listener);
 
         let client = BasicClient::new(
             ClientId::new(client_id),
@@ -38,7 +40,7 @@ impl OAuthFlow {
             format!("http://localhost:{}/callback", port),
         )?);
 
-        Ok(Self { client, scopes })
+        Ok(Self { client, scopes, port })
     }
 
     pub async fn authenticate(&self) -> Result<(String, Option<String>)> {
@@ -68,7 +70,9 @@ impl OAuthFlow {
         }
 
         // Start local server to receive callback (with timeout)
-        let (listener, _port) = bind_callback_listener()?;
+        // Re-bind the same port we registered as redirect URI
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port))
+            .map_err(|e| anyhow!("Could not re-bind OAuth callback port {}: {}", self.port, e))?;
         // Use non-blocking accept with a poll loop so we time out after 5 minutes
         listener.set_nonblocking(true)?;
         println!("Waiting for authorization (5 min timeout)...");
