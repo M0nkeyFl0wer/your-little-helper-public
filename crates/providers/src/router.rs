@@ -18,33 +18,39 @@ impl ProviderRouter {
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
         let mut last_error = None;
 
-        // Try providers in order of preference
-        for (idx, provider) in self.config.provider_preference.iter().enumerate() {
+        // Try providers in order of preference, falling back on failure
+        for provider in self.config.provider_preference.iter() {
             let result = match provider.as_str() {
                 "local" => {
                     let client = OllamaClient::new(self.config.local_model.clone());
                     client.generate(messages.clone()).await
                 }
                 "openai" => {
-                    let client = OpenAIClient::from_auth(
+                    match OpenAIClient::from_auth(
                         &self.config.openai_model,
                         &self.config.openai_auth,
-                    )?;
-                    client.generate(messages.clone()).await
+                    ) {
+                        Ok(client) => client.generate(messages.clone()).await,
+                        Err(e) => Err(e),
+                    }
                 }
                 "anthropic" => {
-                    let client = AnthropicClient::from_auth(
+                    match AnthropicClient::from_auth(
                         &self.config.anthropic_model,
                         &self.config.anthropic_auth,
-                    )?;
-                    client.generate(messages.clone()).await
+                    ) {
+                        Ok(client) => client.generate(messages.clone()).await,
+                        Err(e) => Err(e),
+                    }
                 }
                 "gemini" => {
-                    let client = GeminiClient::from_auth(
+                    match GeminiClient::from_auth(
                         &self.config.gemini_model,
                         &self.config.gemini_auth,
-                    )?;
-                    client.generate(messages.clone()).await
+                    ) {
+                        Ok(client) => client.generate(messages.clone()).await,
+                        Err(e) => Err(e),
+                    }
                 }
                 _ => {
                     last_error = Some(anyhow!("Unknown provider: {}", provider));
@@ -55,11 +61,6 @@ impl ProviderRouter {
             match result {
                 Ok(response) => return Ok(response),
                 Err(e) => {
-                    // If the user-selected PRIMARY provider fails (cloud), surface the error
-                    // instead of silently falling back to a different provider.
-                    if idx == 0 && provider.as_str() != "local" {
-                        return Err(e);
-                    }
                     last_error = Some(e);
                     continue;
                 }

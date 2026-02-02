@@ -569,12 +569,13 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResu
                 combined.push_str(&stderr);
             }
 
-            // Truncate to reasonable size
+            // Truncate to reasonable size (char-safe to avoid UTF-8 panics)
             if combined.len() > 10000 {
+                let total = combined.len();
+                let truncated: String = combined.chars().take(10000).collect();
                 combined = format!(
                     "{}...\n[Output truncated, {} bytes total]",
-                    &combined[..10000],
-                    combined.len()
+                    truncated, total
                 );
             }
 

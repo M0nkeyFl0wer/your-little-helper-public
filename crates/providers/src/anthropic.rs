@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AnthropicRequest {
@@ -43,17 +44,17 @@ impl AnthropicClient {
         let key =
             env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
             auth_token: key,
             model: model.to_string(),
         })
     }
 
     pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
-        let auth_token = if let Some(oauth) = &auth.oauth {
-            oauth.access_token.clone()
-        } else if let Some(api_key) = &auth.api_key {
+        let auth_token = if let Some(api_key) = &auth.api_key {
             api_key.clone()
+        } else if let Some(oauth) = &auth.oauth {
+            oauth.access_token.clone()
         } else {
             // Try environment variable as fallback
             env::var("ANTHROPIC_API_KEY")
@@ -61,7 +62,7 @@ impl AnthropicClient {
         };
 
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
             auth_token,
             model: model.to_string(),
         })
@@ -110,7 +111,13 @@ impl AnthropicClient {
             .await?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("anthropic error: {}", resp.status()));
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let detail: String = body.chars().take(800).collect();
+            if detail.trim().is_empty() {
+                return Err(anyhow!("anthropic error: {}", status));
+            }
+            return Err(anyhow!("anthropic error: {}\n{}", status, detail));
         }
 
         let body: AnthropicResponse = resp.json().await?;
