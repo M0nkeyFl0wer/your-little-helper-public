@@ -1891,6 +1891,32 @@ impl eframe::App for LittleHelperApp {
                             needs_save = true;
                         }
 
+                        // Brave Search API key
+                        if s.settings.enable_internet_research {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Search API key:");
+                                let mut key = s.settings.brave_search_api_key.clone().unwrap_or_default();
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(&mut key)
+                                        .password(true)
+                                        .hint_text("Brave Search API key (free at brave.com/search/api)")
+                                        .desired_width(200.0),
+                                );
+                                if resp.changed() {
+                                    s.settings.brave_search_api_key = if key.is_empty() { None } else { Some(key) };
+                                    needs_save = true;
+                                }
+                            });
+                            if s.settings.brave_search_api_key.is_none() {
+                                ui.label(
+                                    egui::RichText::new("Without an API key, search uses Wikipedia only. Get a free key at brave.com/search/api")
+                                        .size(11.0)
+                                        .weak()
+                                );
+                            }
+                        }
+
                         if needs_save {
                             save_settings(&s.settings);
                             s.settings_status = Some("Saved".to_string());

@@ -104,6 +104,9 @@ pub mod settings {
         pub enable_persona_context: bool,
         #[serde(default)]
         pub share_system_summary: bool,
+        /// Brave Search API key (free tier: 2000 queries/month)
+        #[serde(default)]
+        pub brave_search_api_key: Option<String>,
     }
 
     impl ProviderAuth {
@@ -154,6 +157,7 @@ pub mod settings {
                 enable_persona_context: false,
                 // For early testers: start enabled; user can turn off anytime.
                 share_system_summary: true,
+                brave_search_api_key: None,
             }
         }
     }
