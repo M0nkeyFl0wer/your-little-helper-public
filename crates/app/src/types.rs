@@ -1919,6 +1919,13 @@ WORKFLOW:
             .insert(mode, std::time::Instant::now());
         self.slow_response_hint_shown.insert(mode, false);
 
+        // Set Brave Search API key as env var if configured
+        if let Some(ref key) = self.settings.brave_search_api_key {
+            if !key.is_empty() {
+                std::env::set_var("BRAVE_SEARCH_API_KEY", key);
+            }
+        }
+
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
 

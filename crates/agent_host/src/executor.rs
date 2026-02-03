@@ -930,38 +930,50 @@ pub fn needs_elevation(result: &CommandResult) -> bool {
         || result.stderr.contains("must be root")
 }
 
-/// Perform a web search using DuckDuckGo's HTML interface
-/// Returns search results as text
+/// Web search using Brave Search API (free tier: 2000 queries/month).
+/// Falls back to Wikipedia API if no Brave key is set.
 pub async fn web_search(query: &str) -> Result<CommandResult> {
+    // Try Brave Search API first (if key is available)
+    if let Ok(api_key) = std::env::var("BRAVE_SEARCH_API_KEY") {
+        return brave_search(query, &api_key).await;
+    }
+    // Fallback: Wikipedia API (always works, no CAPTCHA)
+    fallback_search(query).await
+}
+
+async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
     let start = Instant::now();
+    let encoded = urlencoding::encode(query);
+    let url = format!(
+        "https://api.search.brave.com/res/v1/web/search?q={}&count=8",
+        encoded
+    );
 
-    // Use DuckDuckGo's lite/HTML interface for simple text results
-    let encoded_query = urlencoding::encode(query);
-    let url = format!("https://html.duckduckgo.com/html/?q={}", encoded_query);
-
-    // Use reqwest instead of shelling out to curl (works on all platforms)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent("Mozilla/5.0 (compatible; LittleHelper/1.0)")
-        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("HTTP client error: {}", e))?;
 
-    let response = client.get(&url).send().await;
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "gzip")
+        .header("X-Subscription-Token", api_key)
+        .send()
+        .await;
+
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    let html = match response {
-        Ok(resp) if resp.status().is_success() => {
-            resp.text().await.unwrap_or_default()
-        }
-        Ok(resp) => {
-            let status = resp.status();
+    let body = match resp {
+        Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+        Ok(r) => {
+            let status = r.status();
             return Ok(CommandResult {
                 command: format!("web_search: {}", query),
                 exit_code: status.as_u16() as i32,
                 stdout: String::new(),
-                stderr: format!("HTTP {}", status),
-                output: format!("Search failed: HTTP {}", status),
+                stderr: format!("Brave API HTTP {}", status),
+                output: format!("Search failed: HTTP {} — check your BRAVE_SEARCH_API_KEY", status),
                 duration_ms,
                 success: false,
                 summary: "Search failed".to_string(),
@@ -983,22 +995,28 @@ pub async fn web_search(query: &str) -> Result<CommandResult> {
         }
     };
 
-    // Parse results from HTML - extract titles and snippets
-    let results = parse_ddg_results(&html);
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    let web_results = parsed["web"]["results"].as_array();
 
-    let result_count = results.len();
-    let output_text = if results.is_empty() {
-        "No results found.".to_string()
-    } else {
-        results
-            .iter()
-            .enumerate()
-            .map(|(i, (title, snippet, url))| {
-                format!("{}. {}\n   {}\n   URL: {}\n", i + 1, title, snippet, url)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+    let output_text = match web_results {
+        Some(results) if !results.is_empty() => {
+            results
+                .iter()
+                .take(8)
+                .enumerate()
+                .map(|(i, r)| {
+                    let title = r["title"].as_str().unwrap_or("");
+                    let desc = r["description"].as_str().unwrap_or("");
+                    let url = r["url"].as_str().unwrap_or("");
+                    format!("{}. {}\n   {}\n   URL: {}\n", i + 1, title, desc, url)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => "No results found.".to_string(),
     };
+
+    let count = web_results.map(|r| r.len().min(8)).unwrap_or(0);
 
     Ok(CommandResult {
         command: format!("web_search: {}", query),
@@ -1008,62 +1026,82 @@ pub async fn web_search(query: &str) -> Result<CommandResult> {
         output: output_text,
         duration_ms,
         success: true,
-        summary: format!("Found {} results ({}ms)", result_count, duration_ms),
+        summary: format!("Found {} results ({}ms)", count, duration_ms),
         needed_sudo: false,
     })
 }
 
-/// Parse DuckDuckGo HTML results into (title, snippet, url) tuples
-fn parse_ddg_results(html: &str) -> Vec<(String, String, String)> {
-    let mut results = Vec::new();
+async fn fallback_search(query: &str) -> Result<CommandResult> {
+    let start = Instant::now();
 
-    // DuckDuckGo HTML format has results in <a class="result__a"> and <a class="result__snippet">
-    // Simple regex-based parsing (not perfect but works for basic extraction)
+    // Use Wikipedia API as minimal fallback — always works, no CAPTCHA
+    let encoded = urlencoding::encode(query);
+    let url = format!(
+        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&srlimit=5",
+        encoded
+    );
 
-    // Find result links - they contain the title
-    use std::sync::OnceLock;
-    static TITLE_RE: OnceLock<regex::Regex> = OnceLock::new();
-    static SNIPPET_RE: OnceLock<regex::Regex> = OnceLock::new();
-    let title_re = TITLE_RE.get_or_init(|| {
-        regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)</a>"#).unwrap()
-    });
-    let snippet_re = SNIPPET_RE.get_or_init(|| {
-        regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]+)"#).unwrap()
-    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("LittleHelper/1.0 (Desktop App)")
+        .build()
+        .map_err(|e| anyhow::anyhow!("HTTP client error: {}", e))?;
 
-    let titles: Vec<(String, String)> = title_re
-        .captures_iter(html)
-        .filter_map(|cap| {
-            let url = cap.get(1)?.as_str();
-            let title = cap.get(2)?.as_str();
-            // DuckDuckGo uses redirect URLs, try to extract actual URL
-            let actual_url = if url.contains("uddg=") {
-                url.split("uddg=")
-                    .nth(1)
-                    .and_then(|u| urlencoding::decode(u).ok())
-                    .map(|u| u.into_owned())
-                    .unwrap_or_else(|| url.to_string())
-            } else {
-                url.to_string()
-            };
-            Some((html_decode(title), actual_url))
-        })
-        .collect();
+    let resp = client.get(&url).send().await;
+    let duration_ms = start.elapsed().as_millis() as u64;
 
-    let snippets: Vec<String> = snippet_re
-        .captures_iter(html)
-        .filter_map(|cap| cap.get(1).map(|m| html_decode(m.as_str())))
-        .collect();
-
-    // Combine titles and snippets
-    for (i, (title, url)) in titles.into_iter().take(10).enumerate() {
-        let snippet = snippets.get(i).cloned().unwrap_or_default();
-        if !title.is_empty() {
-            results.push((title, snippet, url));
+    let body = match resp {
+        Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+        _ => {
+            return Ok(CommandResult {
+                command: format!("web_search: {}", query),
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "All search backends failed".to_string(),
+                output: "Search is currently unavailable. To enable full web search, add a free Brave Search API key in Settings.\nGet one at: https://api-dashboard.search.brave.com".to_string(),
+                duration_ms,
+                success: false,
+                summary: "Search unavailable".to_string(),
+                needed_sudo: false,
+            });
         }
-    }
+    };
 
-    results
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    let search_results = parsed["query"]["search"].as_array();
+    let html_tag_re = regex::Regex::new(r"<[^>]+>").unwrap();
+
+    let output_text = match search_results {
+        Some(results) if !results.is_empty() => {
+            let mut out = String::from("Results from Wikipedia (for full web search, add a Brave Search API key in Settings):\n\n");
+            for (i, r) in results.iter().take(5).enumerate() {
+                let title = r["title"].as_str().unwrap_or("");
+                let snippet = r["snippet"].as_str().unwrap_or("");
+                let clean_snippet = html_tag_re.replace_all(snippet, "").to_string();
+                out.push_str(&format!(
+                    "{}. {}\n   {}\n   URL: https://en.wikipedia.org/wiki/{}\n\n",
+                    i + 1, title, clean_snippet,
+                    urlencoding::encode(title)
+                ));
+            }
+            out
+        }
+        _ => "No results found. For full web search, add a Brave Search API key in Settings.\nGet one free at: https://api-dashboard.search.brave.com".to_string(),
+    };
+
+    let count = search_results.map(|r| r.len().min(5)).unwrap_or(0);
+
+    Ok(CommandResult {
+        command: format!("web_search: {}", query),
+        exit_code: 0,
+        stdout: output_text.clone(),
+        stderr: String::new(),
+        output: output_text,
+        duration_ms,
+        success: count > 0,
+        summary: format!("Found {} results ({}ms)", count, duration_ms),
+        needed_sudo: false,
+    })
 }
 
 /// Basic HTML entity decoding
