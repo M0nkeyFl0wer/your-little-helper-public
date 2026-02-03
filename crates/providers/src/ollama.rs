@@ -3,7 +3,16 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use std::env;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(120))
+        .pool_max_idle_per_host(2)
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaChatRequest<'a> {
@@ -34,7 +43,7 @@ impl OllamaClient {
         let base =
             env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
         Self {
-            http: Client::builder().timeout(Duration::from_secs(120)).build().unwrap_or_else(|_| Client::new()),
+            http: SHARED_HTTP.clone(),
             base,
             model,
         }

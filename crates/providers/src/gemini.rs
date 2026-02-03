@@ -4,7 +4,17 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+/// Shared HTTP client — keeps TCP/TLS connections alive across requests.
+static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(120))
+        .pool_max_idle_per_host(2)
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GeminiContent {
@@ -61,7 +71,7 @@ impl GeminiClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("GEMINI_API_KEY").map_err(|_| anyhow!("GEMINI_API_KEY not set"))?;
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(45)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token: key,
             model: model.to_string(),
             use_oauth: false,
@@ -81,7 +91,7 @@ impl GeminiClient {
         };
 
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(45)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token,
             model: model.to_string(),
             use_oauth,
@@ -172,34 +182,49 @@ impl GeminiClient {
             contents: raw_contents,
             system_instruction,
         };
-        let mut request = self.http.post(url).json(&req);
-        if self.use_oauth {
-            request = request.header("Authorization", format!("Bearer {}", self.auth_token));
-        }
-        let resp = request.send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let body = body.trim();
-            if body.is_empty() {
-                return Err(anyhow!("gemini error: {}", status));
+        // Retry loop for transient errors (429 rate-limit, 503 overloaded)
+        let mut last_status = reqwest::StatusCode::OK;
+        let mut last_body = String::new();
+        for attempt in 0..4u32 {
+            if attempt > 0 {
+                let delay = Duration::from_millis(1000 * 2u64.pow(attempt - 1)); // 1s, 2s, 4s
+                tokio::time::sleep(delay).await;
             }
-            let body = if body.len() > 800 {
-                let truncated: String = body.chars().take(800).collect();
-                format!("{}...", truncated)
-            } else {
-                body.to_string()
-            };
-            return Err(anyhow!("gemini error: {}\n{}", status, body));
+            let mut request = self.http.post(&url).json(&req);
+            if self.use_oauth {
+                request = request.header("Authorization", format!("Bearer {}", self.auth_token));
+            }
+            let resp = request.send().await?;
+            if resp.status().is_success() {
+                let body: GeminiResponse = resp.json().await?;
+                let text = body
+                    .candidates
+                    .get(0)
+                    .and_then(|c| c.content.as_ref())
+                    .and_then(|c| c.parts.get(0))
+                    .map(|p| p.text.clone())
+                    .unwrap_or_default();
+                return Ok(text);
+            }
+            last_status = resp.status();
+            last_body = resp.text().await.unwrap_or_default();
+            // Only retry on 429 (rate limit) or 503 (overloaded)
+            if last_status != reqwest::StatusCode::TOO_MANY_REQUESTS
+                && last_status != reqwest::StatusCode::SERVICE_UNAVAILABLE
+            {
+                break;
+            }
         }
-        let body: GeminiResponse = resp.json().await?;
-        let text = body
-            .candidates
-            .get(0)
-            .and_then(|c| c.content.as_ref())
-            .and_then(|c| c.parts.get(0))
-            .map(|p| p.text.clone())
-            .unwrap_or_default();
-        Ok(text)
+
+        let body = last_body.trim().to_string();
+        if body.is_empty() {
+            return Err(anyhow!("gemini error: {}", last_status));
+        }
+        let body = if body.len() > 800 {
+            format!("{}...", &body.chars().take(800).collect::<String>())
+        } else {
+            body
+        };
+        Err(anyhow!("gemini error: {}\n{}", last_status, body))
     }
 }

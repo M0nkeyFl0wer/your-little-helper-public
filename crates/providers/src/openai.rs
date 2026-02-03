@@ -4,7 +4,16 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(120))
+        .pool_max_idle_per_host(2)
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAIRequest {
@@ -32,19 +41,23 @@ pub struct OpenAIClient {
     http: Client,
     auth_token: String,
     model: String,
+    base_url: String,
 }
+
+const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 
 impl OpenAIClient {
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("OPENAI_API_KEY").map_err(|_| anyhow!("OPENAI_API_KEY not set"))?;
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token: key,
             model: model.to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
         })
     }
 
-    pub fn from_auth(model: &str, auth: &ProviderAuth) -> Result<Self> {
+    pub fn from_auth(model: &str, auth: &ProviderAuth, base_url: Option<&str>) -> Result<Self> {
         let auth_token = if let Some(api_key) = &auth.api_key {
             api_key.clone()
         } else if let Some(oauth) = &auth.oauth {
@@ -56,14 +69,18 @@ impl OpenAIClient {
         };
 
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token,
             model: model.to_string(),
+            base_url: base_url
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/')
+                .to_string(),
         })
     }
 
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
-        let url = "https://api.openai.com/v1/chat/completions";
+        let url = format!("{}/v1/chat/completions", self.base_url);
         let openai_messages: Vec<OpenAIMessage> = messages
             .into_iter()
             .map(|m| OpenAIMessage {
@@ -77,7 +94,7 @@ impl OpenAIClient {
         };
         let resp = self
             .http
-            .post(url)
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .header("Content-Type", "application/json")
             .json(&req)

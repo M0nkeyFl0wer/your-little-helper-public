@@ -272,6 +272,19 @@ impl eframe::App for LittleHelperApp {
         let any_thinking = s.is_thinking.values().any(|&v| v);
         if any_thinking {
             ctx.request_repaint();
+
+            // Show Matrix animation only after 3+ seconds of thinking (avoids flicker on fast responses)
+            if let Some(mode) = s.thinking_mode {
+                let elapsed = s.thinking_started_at
+                    .get(&mode)
+                    .map(|t| t.elapsed().as_secs())
+                    .unwrap_or(0);
+                if elapsed >= 5
+                    && !matches!(s.active_viewer, ActiveViewer::Matrix | ActiveViewer::RickRoll)
+                {
+                    s.active_viewer = ActiveViewer::Matrix;
+                }
+            }
         }
 
         // Detect mode change and show mode introduction
@@ -1084,11 +1097,16 @@ impl eframe::App for LittleHelperApp {
         }
 
         // Thread history panel (left side, toggled)
+        // Auto-hide on narrow windows to avoid squishing the chat
+        let window_width = ctx.screen_rect().width();
+        if s.show_thread_history && window_width < 700.0 {
+            s.show_thread_history = false;
+        }
         if s.show_thread_history {
             egui::SidePanel::left("thread_history_panel")
-                .default_width(280.0)
-                .min_width(220.0)
-                .max_width(360.0)
+                .default_width(260.0)
+                .min_width(200.0)
+                .max_width(320.0)
                 .frame(
                     egui::Frame::none()
                         .fill(if dark {
@@ -1444,47 +1462,37 @@ impl eframe::App for LittleHelperApp {
                         } else {
                             egui::Color32::from_rgb(245, 245, 250)
                         })
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                        .rounding(egui::Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("Folder:")
-                                        .size(12.0)
-                                        .color(if dark {
-                                            egui::Color32::from_rgb(160, 160, 180)
-                                        } else {
-                                            egui::Color32::from_rgb(80, 80, 100)
-                                        }),
-                                );
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let label_color = if dark {
+                                    egui::Color32::from_rgb(140, 140, 160)
+                                } else {
+                                    egui::Color32::from_rgb(90, 90, 110)
+                                };
+                                ui.label(egui::RichText::new("Folder:").size(11.0).color(label_color));
                                 ui.add_sized(
-                                    [ui.available_width() * 0.55, 22.0],
+                                    [ui.available_width() * 0.55, 18.0],
                                     egui::TextEdit::singleline(&mut s.build_folder_input)
                                         .hint_text("~/Projects/my-app")
-                                        .font(egui::FontId::new(12.0, egui::FontFamily::Monospace)),
+                                        .font(egui::FontId::new(11.0, egui::FontFamily::Monospace)),
                                 );
-                                ui.label(
-                                    egui::RichText::new("Name:")
-                                        .size(12.0)
-                                        .color(if dark {
-                                            egui::Color32::from_rgb(160, 160, 180)
-                                        } else {
-                                            egui::Color32::from_rgb(80, 80, 100)
-                                        }),
-                                );
+                                ui.label(egui::RichText::new("Name:").size(11.0).color(label_color));
                                 ui.add_sized(
-                                    [ui.available_width(), 22.0],
+                                    [ui.available_width(), 18.0],
                                     egui::TextEdit::singleline(&mut s.build_project_name_input)
                                         .hint_text("my-app")
-                                        .font(egui::FontId::new(12.0, egui::FontFamily::Monospace)),
+                                        .font(egui::FontId::new(11.0, egui::FontFamily::Monospace)),
                                 );
                             });
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                 }
 
                 // Chat messages scroll area
-                let chat_height = ui.available_height() - 70.0;
+                let chat_height = ui.available_height() - 100.0;
 
                 let mut clicked_path: Option<PathBuf> = None;
                 // Slack is not included in the public edition

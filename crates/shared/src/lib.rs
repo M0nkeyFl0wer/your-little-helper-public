@@ -31,6 +31,11 @@ pub mod settings {
         pub anthropic_model: String,          // e.g., "claude-sonnet-4-20250514"
         pub gemini_model: String,             // e.g., "gemini-2.5-flash"
 
+        /// Custom base URL for OpenAI-compatible APIs (Kimi, OpenRouter, Together, etc.)
+        /// When set, the "openai" provider routes to this URL instead of api.openai.com.
+        #[serde(default)]
+        pub openai_base_url: Option<String>,
+
         // Authentication (either API key or OAuth)
         pub openai_auth: ProviderAuth,
         pub anthropic_auth: ProviderAuth,
@@ -133,6 +138,7 @@ pub mod settings {
                     openai_model: "gpt-4o-mini".into(),
                     anthropic_model: "claude-sonnet-4-20250514".into(),
                     gemini_model: "gemini-2.5-flash".into(),
+                    openai_base_url: None,
                     openai_auth: ProviderAuth::default(),
                     anthropic_auth: ProviderAuth::default(),
                     gemini_auth: ProviderAuth::default(),
