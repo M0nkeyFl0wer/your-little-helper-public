@@ -284,6 +284,11 @@ impl PreviewPanel {
         self.current_file_path.clone()
     }
 
+    /// Get the current preview content (for saving/restoring per-mode state)
+    pub fn current_content(&self) -> Option<PreviewContent> {
+        self.state.content.clone()
+    }
+
     pub fn current_web_url(&self) -> Option<String> {
         if let Some(PreviewContent::Web { url, .. }) = &self.state.content {
             Some(url.clone())
@@ -646,39 +651,7 @@ impl PreviewPanel {
                         }
                     }
 
-                    ui.add_space(20.0);
-
-                    // Example prompts section - clickable to populate chat input
-                    ui.heading(egui::RichText::new("Try asking me:").size(14.0));
-                    ui.label(
-                        egui::RichText::new("Click a suggestion to fill the prompt box.")
-                            .size(11.0)
-                            .color(subtle_color),
-                    );
-                    ui.add_space(5.0);
-
-                    for example in intro.example_prompts.iter().take(3) {
-                        let example_text = example.to_string();
-                        let response = ui
-                            .horizontal(|ui| {
-                                ui.colored_label(accent_color, "→");
-                                let btn = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(format!("\"{}\"", example)).italics(),
-                                    )
-                                    .frame(false),
-                                );
-                                btn
-                            })
-                            .inner;
-
-                        if response.clicked() {
-                            self.state.clicked_prompt = Some(example_text);
-                        }
-                        if response.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                    }
+                    // Quick actions are in the sidebar — no need to duplicate here
                 });
             }
             Some(PreviewContent::CleanupPlan {
