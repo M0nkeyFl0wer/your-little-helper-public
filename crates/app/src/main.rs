@@ -293,12 +293,16 @@ impl eframe::App for LittleHelperApp {
             // Dismiss the "try one!" hint on first mode switch
             s.show_mode_picker_hint = false;
 
-            // Save current input text for the old mode
+            // Save current input text and preview state for the old mode
             if let Some(prev_mode) = s.previous_mode {
                 if !s.input_text.is_empty() {
                     let draft = s.input_text.clone();
                     s.mode_input_drafts.insert(prev_mode, draft);
                 }
+                // Save preview state for the old mode
+                let saved_viewer = s.active_viewer.clone();
+                let saved_content = s.preview_panel.current_content();
+                s.mode_preview_state.insert(prev_mode, (saved_viewer, saved_content));
             }
 
             // Restore input text for the new mode (or clear it)
@@ -311,8 +315,19 @@ impl eframe::App for LittleHelperApp {
                 .cloned()
                 .unwrap_or_default();
 
+            // Restore preview state for the new mode (or show mode intro)
             let mode_str = s.current_mode.as_str();
-            s.preview_panel.show_mode_intro(mode_str);
+            if let Some((viewer, content)) = s.mode_preview_state.get(&new_mode).cloned() {
+                s.active_viewer = viewer;
+                if let Some(c) = content {
+                    s.preview_panel.show_content(c);
+                } else {
+                    s.preview_panel.show_mode_intro(mode_str);
+                }
+            } else {
+                s.active_viewer = ActiveViewer::Panel;
+                s.preview_panel.show_mode_intro(mode_str);
+            }
 
             // First-time Fix intro: Doc introduces itself and offers a health scan
             if s.current_mode == ChatMode::Fix && !s.fix_intro_shown {
@@ -1638,21 +1653,24 @@ impl eframe::App for LittleHelperApp {
                 if !s.pending_commands.is_empty() {
                     ui.group(|ui| {
                         ui.label(
-                            egui::RichText::new("Commands awaiting approval")
+                            egui::RichText::new("I'd like to run something on your computer:")
                                 .strong()
                                 .color(egui::Color32::from_rgb(200, 150, 80)),
                         );
                         ui.add_space(6.0);
                         let pending = s.pending_commands.clone();
                         for cmd in pending {
+                            let friendly = friendly_command_description(&cmd);
+                            ui.label(&friendly);
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(format!("$ {}", cmd)).monospace());
-                                if ui.button("Run").clicked() {
+                                if ui.button("Allow").clicked() {
                                     s.approve_command(cmd.clone());
                                 }
-                                if ui.button("Dismiss").clicked() {
+                                if ui.button("Skip").clicked() {
                                     s.pending_commands.retain(|c| c != &cmd);
                                 }
+                                // Show technical detail on hover
+                                ui.weak("ℹ").on_hover_text(format!("Technical: {}", cmd));
                             });
                         }
                     });
@@ -1727,6 +1745,33 @@ impl eframe::App for LittleHelperApp {
                     }
                 });
             });
+
+        // Password dialog for sudo commands
+        {
+            use crate::modals::{Modal, ModalResult};
+            s.password_dialog.update(ctx);
+            let result = s.password_dialog.take_result();
+            match result {
+                ModalResult::Confirmed(password) => {
+                    if let Some(cmd) = s.pending_sudo_command.take() {
+                        s.execute_sudo_command(cmd, password);
+                    }
+                }
+                ModalResult::Cancelled => {
+                    s.pending_sudo_command = None;
+                    let mode = s.current_mode;
+                    s.is_thinking.insert(mode, false);
+                    s.thinking_status.insert(mode, String::new());
+                    s.push_chat(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: "No worries — I skipped that command. Let me know if you'd like to try a different approach.".to_string(),
+                        details: None,
+                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    });
+                }
+                ModalResult::Pending => {}
+            }
+        }
 
         // Settings dialog
         if s.show_settings_dialog {
@@ -2535,6 +2580,49 @@ fn render_welcome_panel(ui: &mut egui::Ui, dark: bool, current_mode: &ChatMode) 
             ui.add_space(2.0);
         }
     });
+}
+
+/// Translate a raw shell command into a plain-English description for non-technical users.
+fn friendly_command_description(cmd: &str) -> String {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let base = parts.first().copied().unwrap_or("");
+    // Strip leading sudo
+    let (is_sudo, effective) = if base == "sudo" {
+        (true, parts.get(1).copied().unwrap_or(""))
+    } else {
+        (false, base)
+    };
+    let prefix = if is_sudo { "Install/update (needs admin): " } else { "" };
+
+    let desc = match effective {
+        "apt" | "apt-get" | "dnf" | "pacman" | "yum" | "zypper" =>
+            "Update or install software packages".to_string(),
+        "systemctl" => format!("Manage a system service ({})",
+            parts.last().unwrap_or(&"service")),
+        "find" => "Search for files on your computer".to_string(),
+        "grep" | "rg" => "Search inside files for text".to_string(),
+        "ls" | "dir" => "List files in a folder".to_string(),
+        "cat" | "less" | "head" | "tail" | "bat" => "Read a file".to_string(),
+        "cp" => "Copy a file".to_string(),
+        "mv" => "Move or rename a file".to_string(),
+        "rm" => "Delete a file".to_string(),
+        "mkdir" => "Create a new folder".to_string(),
+        "chmod" | "chown" => "Change file permissions".to_string(),
+        "df" => "Check disk space".to_string(),
+        "du" => "Check folder sizes".to_string(),
+        "top" | "htop" | "btop" => "Show running processes".to_string(),
+        "ps" => "List running processes".to_string(),
+        "kill" | "killall" => "Stop a running program".to_string(),
+        "ping" => "Test network connection".to_string(),
+        "curl" | "wget" => "Download something from the web".to_string(),
+        "uname" => "Check system info".to_string(),
+        "free" => "Check memory usage".to_string(),
+        "lsblk" | "fdisk" | "blkid" => "Check disk/drive info".to_string(),
+        "ip" | "ifconfig" => "Check network settings".to_string(),
+        "mount" | "umount" => "Mount or unmount a drive".to_string(),
+        _ => format!("Run: {}", cmd),
+    };
+    format!("{}{}", prefix, desc)
 }
 
 /// Render command output in the preview panel

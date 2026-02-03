@@ -202,6 +202,9 @@ pub struct AppState {
     /// File to auto-open after response
     pub pending_preview: Option<PathBuf>,
 
+    /// Per-mode preview state: saves (ActiveViewer, PreviewContent) when switching modes
+    pub mode_preview_state: HashMap<ChatMode, (ActiveViewer, Option<shared::preview_types::PreviewContent>)>,
+
     // Re-focus the chat input after AI replies
     pub refocus_input: bool,
 
@@ -408,7 +411,8 @@ impl Default for AppState {
         preview_panel.show_mode_intro("find");
 
         let find_history = vec![welcome_msg.clone()];
-        let fix_history = vec![welcome_msg.clone()];
+        // Fix mode gets its own Doc intro on first switch — no generic welcome needed
+        let fix_history = Vec::new();
 
         // Show onboarding for first-run users
         let initial_screen = if settings.user_profile.onboarding_complete {
@@ -432,7 +436,17 @@ impl Default for AppState {
                 let mut h = HashMap::new();
                 h.insert(ChatMode::Find, find_history);
                 h.insert(ChatMode::Fix, fix_history);
-                h.insert(ChatMode::Research, Vec::new());
+                h.insert(ChatMode::Research, vec![ChatMessage {
+                    role: "assistant".to_string(),
+                    content: format!(
+                        "Hi {}! I'm Scholar — your research assistant.\n\n\
+                        I can search the web, dig into topics, cross-reference sources, and put together reports.\n\n\
+                        Try asking me to research something, or say **\"write a report on...\"** and I'll create a document for you.",
+                        user_name
+                    ),
+                    details: None,
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                }]);
                 h.insert(ChatMode::Data, Vec::new());
                 h.insert(ChatMode::Content, Vec::new());
                 h.insert(ChatMode::Build, Vec::new());
@@ -482,6 +496,7 @@ impl Default for AppState {
             show_preview: true,
             active_viewer: ActiveViewer::Panel,
             pending_preview: None,
+            mode_preview_state: HashMap::new(),
             refocus_input: false,
             onboarding_name: String::new(),
             pending_commands: Vec::new(),
@@ -1139,12 +1154,26 @@ What to do next:\n\
                     self.pending_commands = result.pending_commands.clone();
 
                     // Show executed commands in preview panel (not in chat — keep it clean)
+                    // Also extract real file paths from command output for clickable buttons
+                    let mut found_files: Vec<String> = Vec::new();
                     if !result.executed_commands.is_empty() {
                         if let Some((cmd, output, _)) = result.executed_commands.last() {
                             self.active_viewer =
                                 ActiveViewer::CommandOutput(cmd.clone(), output.clone());
                         }
                         self.show_preview = true;
+
+                        // Extract real file paths from all command outputs
+                        for (_cmd, output, success) in &result.executed_commands {
+                            if *success {
+                                for line in output.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with('/') && std::path::Path::new(trimmed).exists() {
+                                        found_files.push(trimmed.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Parse for preview tags (<preview type="..." ...>)
@@ -1187,11 +1216,19 @@ What to do next:\n\
                     // Clean up response - remove action tags (both old and new style)
                     let clean_response = clean_ai_response(&result.response);
                     // Also strip new-style preview tags
-                    let clean_response = strip_preview_tags(&clean_response);
+                    let mut clean_response = strip_preview_tags(&clean_response);
+
+                    // Append real file paths found from commands so they become clickable
+                    if !found_files.is_empty() && !found_files.iter().any(|f| clean_response.contains(f)) {
+                        clean_response.push_str("\n\nFiles found:\n");
+                        for f in &found_files {
+                            clean_response.push_str(&format!("  {}\n", f));
+                        }
+                    }
 
                     let assistant_msg = ChatMessage {
                         role: "assistant".to_string(),
-                        content: if clean_response.is_empty() {
+                        content: if clean_response.trim().is_empty() {
                             result.response.clone()
                         } else {
                             clean_response
@@ -1205,14 +1242,9 @@ What to do next:\n\
                     self.sync_thread_history(mode);
 
                     if !self.pending_commands.is_empty() {
-                        let mut summary =
-                            String::from("I need your approval before running these commands:\n");
-                        for cmd in &self.pending_commands {
-                            summary.push_str(&format!("\n`{}`", cmd));
-                        }
                         self.push_chat_to(mode, ChatMessage {
                             role: "assistant".to_string(),
-                            content: summary,
+                            content: "I'd like to do something that needs your OK first — check the buttons below.".to_string(),
                             details: None,
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
@@ -1698,8 +1730,17 @@ RESPONSE STYLE: After commands run, always reply with a friendly plain-language 
                 format!(
                     r#"You are Little Helper in DEEP RESEARCH mode, helping {user_name}.
 YOUR ROLE: Thorough researcher. Search multiple angles, cross-reference sources, cite everything.
-Use <search>query</search> for web searches. Use <command>cmd</command> for scripts (python3, curl, jq available).
-Use <preview>path</preview> to show documents. Distinguish facts from speculation.
+
+TOOLS:
+- <search>query</search> — ALWAYS use this to search the web. Do NOT suggest websites — search for the user.
+- <command>cmd</command> — Run scripts (python3, curl, jq available). Use to save reports to files.
+- <preview>path</preview> — Show documents in the preview panel.
+
+IMPORTANT: When the user asks you to research something, you MUST use <search> tags to actually search. Never just list websites.
+When asked to write a report or create a document, save it using <command>cat > ~/Documents/report-title.md << 'ENDREPORT' ... ENDREPORT</command> then <preview> the file.
+
+Distinguish facts from speculation. Cite your sources with URLs.
+RESPONSE STYLE: Explain findings in plain language. The user is non-technical.
 {capabilities}"#
                 )
             },
