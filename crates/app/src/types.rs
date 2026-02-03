@@ -1138,37 +1138,13 @@ What to do next:\n\
                     self.pending_preview = result.preview_file;
                     self.pending_commands = result.pending_commands.clone();
 
-                    // Show executed commands in preview panel if any ran
+                    // Show executed commands in preview panel (not in chat — keep it clean)
                     if !result.executed_commands.is_empty() {
-                        // Show last command output in preview
                         if let Some((cmd, output, _)) = result.executed_commands.last() {
                             self.active_viewer =
                                 ActiveViewer::CommandOutput(cmd.clone(), output.clone());
                         }
-
-                        // Also add summary to chat
-                        let mut cmd_summary = String::from("**Commands executed:**\n");
-                        for (cmd, output, success) in &result.executed_commands {
-                            let status = if *success { "[OK]" } else { "[FAILED]" };
-                            cmd_summary.push_str(&format!("\n`{}` {}\n", cmd, status));
-                            // Show truncated output
-                            let output_preview = if output.len() > 300 {
-                                let truncated: String = output.chars().take(300).collect();
-                                format!("{}...", truncated)
-                            } else {
-                                output.clone()
-                            };
-                            if !output_preview.trim().is_empty() {
-                                cmd_summary
-                                    .push_str(&format!("```\n{}\n```\n", output_preview.trim()));
-                            }
-                        }
-                        self.push_chat_to(mode, ChatMessage {
-                            role: "assistant".to_string(),
-                            content: cmd_summary,
-                            details: None,
-                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                        });
+                        self.show_preview = true;
                     }
 
                     // Parse for preview tags (<preview type="..." ...>)
@@ -1624,10 +1600,8 @@ What to do next:\n\
         self.thinking_mode = Some(self.current_mode);
         self.is_thinking.insert(self.current_mode, true);
 
-        // Show Matrix animation while processing (unless Rick Roll is showing)
-        if !matches!(self.active_viewer, ActiveViewer::RickRoll) {
-            self.active_viewer = ActiveViewer::Matrix;
-        }
+        // Don't show Matrix immediately — it's distracting for quick responses.
+        // The main loop will switch to Matrix after a few seconds of thinking.
         self.show_preview = true;
 
         // Prepare context based on current mode
@@ -1678,194 +1652,55 @@ Instead, provide instructions the user can run manually.
             )
         };
 
-        // Platform-specific Find mode commands
-        let find_commands = if is_windows {
-            r#"
-WINDOWS COMMANDS TO USE:
-- List files: <command>dir /s /b "C:\Users\%USERNAME%\Documents\*.pdf"</command>
-- Find by name: <command>dir /s /b "C:\Users\%USERNAME%\*report*"</command>
-- Search content: <command>findstr /s /i "keyword" "C:\Users\%USERNAME%\Documents\*.txt"</command>
-- List recent: <command>dir /od "C:\Users\%USERNAME%\Documents"</command>
-- Show file info: <command>dir "filepath"</command>
-
-COMMON PATHS:
-- Documents: C:\Users\%USERNAME%\Documents
-- Desktop: C:\Users\%USERNAME%\Desktop
-- Downloads: C:\Users\%USERNAME%\Downloads
-
-EXAMPLE - User asks "find my tax documents":
-<command>dir /s /b "C:\Users\%USERNAME%\Documents\*tax*"</command>
-<command>dir /s /b "C:\Users\%USERNAME%\Downloads\*tax*"</command>
-"#
+        // Platform-specific Find mode hints
+        let find_hint = if is_windows {
+            r#"Platform: Windows. Common dirs: Documents, Desktop, Downloads.
+SEARCH TECHNIQUES — always use wildcards for partial/fuzzy matching:
+- By name: <command>dir /s /b "C:\Users\%USERNAME%\*keyword*"</command>
+- By extension: <command>dir /s /b "C:\Users\%USERNAME%\Documents\*.pdf"</command>
+- By content: <command>findstr /s /i "keyword" "C:\Users\%USERNAME%\Documents\*.*"</command>
+IMPORTANT: Always use *wildcards* around search terms (e.g. *tax* not tax). Search multiple common folders."#
         } else {
-            r#"
-UNIX/MAC COMMANDS TO USE:
-- List files: <command>find ~/Documents -name "*.pdf" 2>/dev/null</command>
-- Find by name: <command>find ~ -name "*report*" 2>/dev/null | head -20</command>
-- Search content: <command>grep -r "keyword" ~/Documents --include="*.txt" 2>/dev/null</command>
-- List recent: <command>ls -lt ~/Documents | head -20</command>
-- Show file info: <command>ls -la "filepath"</command>
-
-COMMON PATHS:
-- Documents: ~/Documents
-- Desktop: ~/Desktop
-- Downloads: ~/Downloads
-
-EXAMPLE - User asks "find my tax documents":
-<command>find ~/Documents -iname "*tax*" 2>/dev/null</command>
-<command>find ~/Downloads -iname "*tax*" 2>/dev/null</command>
-"#
+            r#"Platform: Unix/Mac. Common dirs: ~/Documents, ~/Desktop, ~/Downloads.
+SEARCH TECHNIQUES — always use wildcards and -iname for case-insensitive partial matching:
+- By name: <command>find ~ -iname "*keyword*" -type f 2>/dev/null | head -30</command>
+- By extension: <command>find ~/Documents -iname "*.pdf" 2>/dev/null | head -30</command>
+- By content: <command>grep -ril "keyword" ~/Documents 2>/dev/null | head -20</command>
+- Recent files: <command>find ~ -iname "*keyword*" -mtime -30 -type f 2>/dev/null | head -20</command>
+IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not tax). Search broadly first, then narrow down."#
         };
 
-        // Platform-specific Fix mode commands
-        let fix_commands = if is_windows {
-            r#"
-WINDOWS DIAGNOSTIC COMMANDS:
-- System info: <command>systeminfo</command>
-- Disk space: <command>wmic logicaldisk get size,freespace,caption</command>
-- Memory: <command>wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /Value</command>
-- Network: <command>ipconfig /all</command>
-- Ping test: <command>ping -n 3 google.com</command>
-- DNS test: <command>nslookup google.com</command>
-- Running processes: <command>tasklist</command>
-- Services: <command>sc query</command>
-- Ports in use: <command>netstat -an | findstr LISTENING</command>
-- Environment: <command>set</command>
-
-EXAMPLE - User says "my internet is slow":
-<command>ping -n 5 google.com</command>
-<command>ipconfig /all</command>
-<command>netstat -an | findstr ESTABLISHED</command>
-"#
+        // Platform-specific Fix mode hints (kept minimal to reduce prompt size)
+        let fix_hint = if is_windows {
+            "Diagnostics: systeminfo, wmic, ipconfig, ping, tasklist, netstat. Use PowerShell when needed."
         } else {
-            r#"
-UNIX/MAC DIAGNOSTIC COMMANDS:
-- System info: <command>uname -a</command>
-- Disk space: <command>df -h</command>
-- Memory: <command>free -h</command> or <command>vm_stat</command> (Mac)
-- Network: <command>ip addr</command> or <command>ifconfig</command>
-- Ping test: <command>ping -c 3 google.com</command>
-- DNS test: <command>nslookup google.com</command>
-- Running processes: <command>ps aux | head -20</command>
-- Services: <command>systemctl list-units --type=service --state=running</command>
-- Ports in use: <command>netstat -tulpn 2>/dev/null || lsof -i -P</command>
-- Logs: <command>tail -50 /var/log/syslog 2>/dev/null || tail -50 /var/log/system.log</command>
-
-EXAMPLE - User says "my computer is slow":
-<command>top -bn1 | head -15</command>
-<command>df -h</command>
-<command>free -h</command>
-"#
+            "Diagnostics: uname -a, df -h, free -h, ip addr, ping, ps aux, systemctl, journalctl, lsof."
         };
 
         let system_prompt = match self.current_mode {
             ChatMode::Find => format!(
-                r#"You are Little Helper in FIND mode, helping {}.
-
-YOUR JOB: Help the user locate files and content inside the folders they allowed.
-
-FILE FINDING:
-{}
-
-RULES:
-- Prefer safe, read-only actions
-- Use <preview>path</preview> to show files in the preview panel
-- If you propose commands, keep them simple and single-step
-
-{}
-"#,
-                user_name, find_commands, capabilities
+                r#"You are Little Helper in FIND mode, helping {user_name}.
+YOUR JOB: Locate files and content. Use <command>cmd</command> to search. Use <preview>path</preview> to show files.
+Keep commands read-only and single-step. {find_hint}
+RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what was found (e.g. "I found 3 files matching 'mandate':" followed by a clean list). Never show raw terminal commands to the user. The user is non-technical.
+{capabilities}"#
             ),
             ChatMode::Fix => format!(
-                r#"You are Little Helper in FIX mode, a terminal agent helping {}.
-
-YOUR JOB: Tech support! Diagnose problems, find files, fix issues. EXECUTE COMMANDS - don't just explain!
-
-FILE FINDING:
-{}
-
-DIAGNOSTICS:
-{}
-
-WORKFLOW:
-1. When user describes a problem, IMMEDIATELY run diagnostic commands
-2. If they need to find files, run search commands
-3. <search>search for solutions</search> if needed
-4. Analyze output, explain findings
-5. Run fix commands (with explanation)
-6. Use <preview>path</preview> to show files in preview panel
-
-{}
-"#,
-                user_name, find_commands, fix_commands, capabilities
+                r#"You are Little Helper in FIX mode, helping {user_name}.
+YOUR JOB: Tech support — diagnose, find files, fix issues. Run commands, don't just explain.
+{find_hint}
+{fix_hint}
+Workflow: run diagnostics → <search>search solutions</search> if needed → explain → fix. Use <preview>path</preview> to show files.
+RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what you found and what you recommend. Never show raw terminal commands to the user. The user is non-technical.
+{capabilities}"#
             ),
             ChatMode::Research => {
-                // Cross-platform research prompt
-                #[cfg(target_os = "windows")]
-                let script_example = r#"PYTHON SCRIPTING (Windows):
-You can create and run Python scripts for research:
-<command>echo import requests > research_script.py && echo import json >> research_script.py && python research_script.py</command>
-
-Or for longer scripts, save to a file first:
-<command>python -c "import requests; print(requests.get('https://api.example.com').text)"</command>
-
-API RESEARCH (when needed):
-- Use curl for quick API tests: <command>curl -s "https://api.example.com/data"</command>
-- Use PowerShell: <command>powershell -c "Invoke-WebRequest -Uri 'https://api.example.com/data'"</command>
-- Write Python for complex API interactions
-
-AVAILABLE TOOLS:
-- python, pip (can install packages)
-- curl (HTTP requests)
-- PowerShell for advanced scripting"#;
-
-                #[cfg(not(target_os = "windows"))]
-                let script_example = r#"PYTHON SCRIPTING:
-You can create and run Python scripts for research:
-<command>cat << 'EOF' > /tmp/research_script.py
-import requests
-import json
-# Your research code here
-print(json.dumps(results, indent=2))
-EOF
-python3 /tmp/research_script.py</command>
-
-API RESEARCH (when needed):
-- Use curl for quick API tests: <command>curl -s "https://api.example.com/data" | jq</command>
-- Write Python for complex API interactions
-- Save results to files for analysis
-
-AVAILABLE TOOLS:
-- python3, pip (can install packages)
-- curl, wget (HTTP requests)
-- jq (JSON processing)
-- Standard Unix tools"#;
-
                 format!(
-                    r#"You are Little Helper in DEEP RESEARCH mode, helping {}.
-
-YOUR ROLE: Thorough researcher with ability to search, analyze, and create tools.
-
-RESEARCH WORKFLOW:
-1. Understand the research question - ask clarifying questions
-2. <search>initial broad search</search> to understand the landscape
-3. <search>more specific searches</search> based on initial findings
-4. Cross-reference multiple sources
-5. If needed, write Python scripts to analyze data or call APIs
-
-{}
-
-ALWAYS:
-- Search multiple times from different angles
-- Cite your sources
-- Show relevant documents in preview: <preview>path/to/doc</preview>
-- Summarize findings clearly
-- Distinguish facts from speculation
-- Note when information might be outdated
-
-{}
-"#,
-                    user_name, script_example, capabilities
+                    r#"You are Little Helper in DEEP RESEARCH mode, helping {user_name}.
+YOUR ROLE: Thorough researcher. Search multiple angles, cross-reference sources, cite everything.
+Use <search>query</search> for web searches. Use <command>cmd</command> for scripts (python3, curl, jq available).
+Use <preview>path</preview> to show documents. Distinguish facts from speculation.
+{capabilities}"#
                 )
             },
             ChatMode::Data => format!(

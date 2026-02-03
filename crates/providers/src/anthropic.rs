@@ -4,7 +4,16 @@ use serde::{Deserialize, Serialize};
 use shared::agent_api::ChatMessage;
 use shared::settings::ProviderAuth;
 use std::env;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(120))
+        .pool_max_idle_per_host(2)
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AnthropicRequest {
@@ -44,7 +53,7 @@ impl AnthropicClient {
         let key =
             env::var("ANTHROPIC_API_KEY").map_err(|_| anyhow!("ANTHROPIC_API_KEY not set"))?;
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token: key,
             model: model.to_string(),
         })
@@ -62,7 +71,7 @@ impl AnthropicClient {
         };
 
         Ok(Self {
-            http: Client::builder().timeout(Duration::from_secs(60)).build()?,
+            http: SHARED_HTTP.clone(),
             auth_token,
             model: model.to_string(),
         })

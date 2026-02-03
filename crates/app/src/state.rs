@@ -45,7 +45,7 @@ pub fn run_ai_generation(
 
     // Pre-compile regexes
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
-    let cmd_re = regex::Regex::new(r"(?s)<command>(.*?)</command>").unwrap();
+    let cmd_re = regex::Regex::new(r"(?s)<(?:command|request|cmd|run)>(.*?)</(?:command|request|cmd|run)>").unwrap();
 
     let result = rt.block_on(Abortable::new(async {
         let mut msgs = messages;
@@ -209,9 +209,16 @@ pub fn run_ai_generation(
             }
         }
 
+        // Ran out of iterations — ask the model to summarize what it found
+        let _ = status_tx.send("Summarizing results...".to_string());
+        msgs.push(ApiChatMessage {
+            role: "user".to_string(),
+            content: "Summarize what you found so far in plain language. Don't include any command tags.".to_string(),
+        });
+        let summary = router.generate(msgs).await
+            .unwrap_or_else(|_| "I ran several searches but couldn't generate a summary. Check the preview panel for raw results.".to_string());
         Ok((
-            "I've done several steps of research. Let me know if you need more details!"
-                .to_string(),
+            summary,
             file_to_preview,
             all_executed_commands,
             pending_commands,

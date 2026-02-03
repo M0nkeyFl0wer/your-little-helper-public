@@ -29,6 +29,7 @@ impl ProviderRouter {
                     match OpenAIClient::from_auth(
                         &self.config.openai_model,
                         &self.config.openai_auth,
+                        self.config.openai_base_url.as_deref(),
                     ) {
                         Ok(client) => client.generate(messages.clone()).await,
                         Err(e) => Err(e),

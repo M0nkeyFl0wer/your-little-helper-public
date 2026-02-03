@@ -326,8 +326,14 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
 /// Clean up AI response by removing thinking tags and normalizing whitespace
 pub fn clean_ai_response(response: &str) -> String {
     // Remove <thinking> tags and their content
-    let thinking_regex = regex::Regex::new(r"<thinking>.*?</thinking>").unwrap();
-    let cleaned = thinking_regex.replace_all(response, "");
+    let thinking_re = regex::Regex::new(r"(?s)<thinking>.*?</thinking>").unwrap();
+    let cleaned = thinking_re.replace_all(response, "");
+
+    // Remove action tags the user shouldn't see
+    let action_re = regex::Regex::new(
+        r"(?s)<(?:command|request|cmd|run|search|preview)>.*?</(?:command|request|cmd|run|search|preview)>"
+    ).unwrap();
+    let cleaned = action_re.replace_all(&cleaned, "");
 
     // Remove any leading/trailing whitespace and normalize newlines
     cleaned
