@@ -145,6 +145,7 @@ pub fn run_ai_generation(
             }
 
             // Run safe commands automatically; queue the rest for approval.
+            let mut safe_command_executed = false;
             for cmd in &commands {
                 if !allow_terminal {
                     all_executed_commands.push((
@@ -196,11 +197,13 @@ pub fn run_ai_generation(
                                     r.output
                                 }
                             ));
+                            safe_command_executed = true;
                         }
                         Err(e) => {
                             all_executed_commands
                                 .push((cmd.clone(), e.to_string(), false));
                             results.push(format!("[Command failed]\n$ {}\n{}", cmd, e));
+                            safe_command_executed = true;
                         }
                     }
                 } else {
@@ -209,6 +212,10 @@ pub fn run_ai_generation(
                     if !pending_commands.iter().any(|c| c == cmd) {
                         pending_commands.push(cmd.clone());
                     }
+                }
+
+                if safe_command_executed {
+                    break;
                 }
             }
 
