@@ -1,0 +1,67 @@
+{
+  "id": "ca40c570-3d0d-48ca-83da-639a9dc50aff",
+  "version": "1.0",
+  "projectId": "a-test-app",
+  "projectPath": "/home/flower/Projects/little-helper/a-test-app",
+  "currentPhase": "onboarding",
+  "phases": {
+    "onboarding": {
+      "status": "in_progress",
+      "startedAt": "2026-02-02T22:35:19.501Z",
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "specify": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "clarify": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "plan": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "tasks": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "implement": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    },
+    "test": {
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "artifacts": [],
+      "errors": []
+    }
+  },
+  "decisions": [],
+  "preferences": {
+    "showAdvancedOptions": false,
+    "celebrationsEnabled": true,
+    "streamingEnabled": true,
+    "soundEnabled": false
+  },
+  "createdAt": "2026-02-02T22:35:19.500Z",
+  "updatedAt": "2026-02-02T22:35:20.502Z"
+}
