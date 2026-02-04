@@ -55,12 +55,15 @@ pub fn run_ai_generation(
         let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
         let mut pending_commands: Vec<String> = Vec::new();
 
+        let mut display_response = String::new();
+
         // Loop for multi-turn interactions (max 5 iterations)
         for iteration in 0..5 {
             // Get AI response
             let stage = if iteration == 0 { "Thinking" } else { "Thinking again with new info" };
             let _ = status_tx.send(stage.to_string());
             let response = router.generate(msgs.clone()).await?;
+            display_response = response.clone();
 
             // Check for preview tags
             for tag in shared::preview_types::parse_preview_tags(&response) {
@@ -103,7 +106,7 @@ pub fn run_ai_generation(
                     ),
                     anyhow::Error,
                 >((
-                    response,
+                    display_response,
                     file_to_preview,
                     all_executed_commands,
                     pending_commands,
@@ -165,6 +168,7 @@ pub fn run_ai_generation(
                     continue;
                 }
                 let danger = classify_command(cmd);
+                eprintln!("COMMAND CLASSIFY: {} -> {:?}", cmd, danger);
                 if danger == DangerLevel::Blocked {
                     all_executed_commands.push((
                         cmd.clone(),
@@ -185,8 +189,7 @@ pub fn run_ai_generation(
                                 r.success,
                             ));
                             results.push(format!(
-                                "[Command output]\n$ {}\n{}",
-                                cmd,
+                                "[Command completed]\n{}",
                                 if r.output.trim().is_empty() {
                                     "(no output)".to_string()
                                 } else {
@@ -207,6 +210,10 @@ pub fn run_ai_generation(
                         pending_commands.push(cmd.clone());
                     }
                 }
+            }
+
+            if !searches.is_empty() || !commands.is_empty() {
+                display_response = String::new();
             }
 
             // Add results back to conversation
