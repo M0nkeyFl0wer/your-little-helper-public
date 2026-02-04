@@ -1417,7 +1417,9 @@ What to do next:\n\
 
         // Check if command needs sudo
         let danger_level = classify_command(&command);
+        eprintln!("DEBUG: Command '{}' classified as {:?}", command, danger_level);
         if danger_level == DangerLevel::NeedsSudo {
+            eprintln!("DEBUG: Opening password dialog for sudo command");
             #[cfg(windows)]
             {
                 self.push_chat(ChatMessage {

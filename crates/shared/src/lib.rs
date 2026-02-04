@@ -131,14 +131,14 @@ pub mod settings {
                 allowed_dirs: vec![],
                 model: ModelProvider {
                     local_model: "llama3.2:3b".into(),
-                    // Default to local first; fall back to cloud when configured.
+                    // Default to cloud providers for better results; fall back to local
                     provider_preference: vec![
-                        "local".into(),
+                        "openai".into(),  // Moonshot/Kimi via OpenAI compatibility
                         "anthropic".into(),
-                        "openai".into(),
                         "gemini".into(),
+                        "local".into(),
                     ],
-                    openai_model: "gpt-4o-mini".into(),
+                    openai_model: "kimi-k2-5".into(),
                     anthropic_model: "claude-sonnet-4-20250514".into(),
                     gemini_model: "gemini-2.5-flash".into(),
                     openai_base_url: None,
