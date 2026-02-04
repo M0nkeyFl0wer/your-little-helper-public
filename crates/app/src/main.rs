@@ -1785,8 +1785,8 @@ impl eframe::App for LittleHelperApp {
                 .collapsible(false)
                 .resizable(true)
                 .open(&mut open)
-                // Keep the error message readable; don't cover the left-side chat.
-                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 12.0])
+                // Center the window for stable resizing behavior
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.set_min_width(460.0);
                     ui.set_max_height(640.0);
