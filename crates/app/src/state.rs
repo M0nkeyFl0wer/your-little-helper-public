@@ -46,6 +46,8 @@ pub fn run_ai_generation(
     // Pre-compile regexes
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
     let cmd_re = regex::Regex::new(r"(?s)<(?:command|request|cmd|run)>(.*?)</(?:command|request|cmd|run)>").unwrap();
+    // Also catch markdown code blocks as commands (AI keeps outputting these instead of tags)
+    let md_cmd_re = regex::Regex::new(r"(?s)```(?:bash|sh|shell|zsh)?\n(.*?)```").unwrap();
 
     let result = rt.block_on(Abortable::new(async {
         let mut msgs = messages;
@@ -78,10 +80,17 @@ pub fn run_ai_generation(
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
 
-            let commands: Vec<String> = cmd_re
+            let mut commands: Vec<String> = cmd_re
                 .captures_iter(&response)
                 .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
+            
+            // Also extract commands from markdown code blocks (fallback for AI not using tags)
+            let md_commands: Vec<String> = md_cmd_re
+                .captures_iter(&response)
+                .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+                .collect();
+            commands.extend(md_commands);
 
             // If no actions needed, return the response
             if searches.is_empty() && commands.is_empty() {
