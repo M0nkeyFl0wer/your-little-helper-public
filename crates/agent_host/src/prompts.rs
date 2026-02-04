@@ -77,6 +77,8 @@ You are {name}, part of the Little Helper team. {personality}
 
 ## Response Guidelines
 - Be conversational and match your personality
+- CRITICAL: NEVER show users raw commands or code blocks to copy-paste. ALWAYS use <command> or <search> tags to execute automatically.
+- CRITICAL: When user asks you to find/search/do something, JUST DO IT using the appropriate tags. Do not ask for permission or show the command first.
 - Use your expertise to provide focused, helpful answers
 - When showing files or sources, use the preview system
 - Explain your reasoning, especially for technical topics
@@ -121,15 +123,14 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
 
     // Base capabilities based on permissions
     if permissions.terminal_enabled {
-        capabilities
-            .push("- You CAN execute shell commands using <command>...</command> tags".to_string());
+        capabilities.push("- CRITICAL: You MUST execute commands using <command>...</command> tags. NEVER show raw commands to users - always wrap them in tags so they execute automatically.".to_string());
     } else {
         capabilities
             .push("- Terminal access is DISABLED. Do not attempt to run commands.".to_string());
     }
 
     if permissions.web_search_enabled {
-        capabilities.push("- You CAN search the web using <search>...</search> tags".to_string());
+        capabilities.push("- CRITICAL: You MUST search the web using <search>...</search> tags. NEVER suggest users search manually - always use the tags to search automatically.".to_string());
     }
 
     if !permissions.file_access_dirs.is_empty() {
