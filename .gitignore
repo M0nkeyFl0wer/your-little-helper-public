@@ -1,0 +1,69 @@
+# Build outputs
+target/
+dist/
+*.exe
+*.dmg
+*.app
+Output/
+
+# IDE/Editor
+.idea/
+.vscode/
+**/*.swp
+**/*.swo
+*~
+
+# OS files
+**/*.DS_Store
+Thumbs.db
+
+# Dependencies
+/node_modules/
+Cargo.lock
+
+# ========================================
+# SECRETS - NEVER COMMIT THESE
+# ========================================
+
+# API keys and secrets files
+secrets.toml
+secrets.json
+.env
+.env.*
+*.key
+*.pem
+*.p12
+
+# App secrets (public builds use empty defaults)
+# For internal builds, keep secrets out of git.
+
+# OAuth tokens and credentials
+.credentials.json
+**/credentials.json
+**/.oauth*
+client_secret*.json
+
+# Settings with potential secrets
+settings.json
+config.json
+!demo-settings-template.json
+!*-example.json
+!*-template.json
+
+# Logs that might contain sensitive data
+**/*.log
+logs/
+
+# Local-only starter packs (never commit)
+seed-settings.json
+seed-mascot.png
+smudge.jpg
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Test artifacts that might contain data
+test_output/
+*.test.json
