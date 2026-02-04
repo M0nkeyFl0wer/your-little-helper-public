@@ -2883,8 +2883,14 @@ fn render_message(
             .show(ui, |ui| {
                 ui.set_max_width(600.0);
 
+                // If the assistant is mid-command, hide the raw script and show a friendly placeholder
+                let mut content_to_show = msg.content.clone();
+                if msg.role != "user" && contains_command_markup(&content_to_show) {
+                    content_to_show = "Working on it…".to_string();
+                }
+
                 // Check for file paths in the message
-                let paths = extract_paths(&msg.content, allowed_dirs);
+                let paths = extract_paths(&content_to_show, allowed_dirs);
 
                 let text_color = if dark {
                     egui::Color32::from_rgb(220, 220, 230)
@@ -2893,10 +2899,10 @@ fn render_message(
                 };
 
                 if paths.is_empty() {
-                    simple_md::render_markdown(ui, &msg.content, text_color);
+                    simple_md::render_markdown(ui, &content_to_show, text_color);
                 } else {
                     // Render text with clickable paths + markdown
-                    simple_md::render_markdown(ui, &msg.content, text_color);
+                    simple_md::render_markdown(ui, &content_to_show, text_color);
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -2956,6 +2962,15 @@ fn render_message(
     }
 
     action
+}
+
+fn contains_command_markup(text: &str) -> bool {
+    text.contains("<command>")
+        || text.contains("</command>")
+        || text.contains("```bash")
+        || text.contains("```sh")
+        || text.contains("```shell")
+        || text.contains("```zsh")
 }
 
 /// Render the onboarding screen for first-time users
