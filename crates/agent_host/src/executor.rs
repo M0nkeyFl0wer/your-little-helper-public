@@ -7,7 +7,30 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::collections::HashMap;
 use tokio::process::Command;
+
+/// Agent Session State (Virtual Environment)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionState {
+    /// Virtual environment variables for the agent (not OS envs)
+    pub env_vars: HashMap<String, String>,
+    /// Command history
+    pub history: Vec<String>,
+    /// Current working directory (virtual)
+    pub cwd: PathBuf,
+}
+
+impl SessionState {
+    pub fn new() -> Self {
+        Self {
+            env_vars: HashMap::new(),
+            history: Vec::new(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        }
+    }
+}
 
 /// Danger level for commands
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -504,7 +527,56 @@ pub fn classify_command(cmd: &str) -> DangerLevel {
 }
 
 /// Execute a command and return structured result
-pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResult> {
+pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionState) -> Result<CommandResult> {
+    state.history.push(cmd.to_string());
+    
+    // Security: Check for secrets before execution
+    if let Some(reason) = check_for_secrets(cmd) {
+         return Ok(CommandResult {
+            command: cmd.to_string(),
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("SECURITY ALERT: {}", reason),
+            output: format!("SECURITY ALERT: {}\nCommand execution blocked.", reason),
+            duration_ms: 0,
+            success: false,
+            summary: "Blocked: Secret detected".to_string(),
+            needed_sudo: false,
+        });
+    }
+
+    // Handle internal commands (cd, set_env)
+    if cmd.starts_with("cd ") {
+        let path_str = cmd.trim_start_matches("cd ").trim();
+        let new_path = state.cwd.join(path_str);
+        if new_path.exists() && new_path.is_dir() {
+             state.cwd = new_path.canonicalize()?;
+             return Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: 0,
+                stdout: format!("Changed directory to {:?}", state.cwd),
+                stderr: String::new(),
+                output: format!("Changed directory to {:?}", state.cwd),
+                duration_ms: 0,
+                success: true,
+                summary: "Directory changed".to_string(),
+                needed_sudo: false,
+            });
+        } else {
+             return Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "Directory not found".to_string(),
+                output: "Directory not found".to_string(),
+                duration_ms: 0,
+                success: false,
+                summary: "Directory not found".to_string(),
+                needed_sudo: false,
+            });
+        }
+    }
+
     let danger = classify_command(cmd);
 
     if danger == DangerLevel::Blocked {
@@ -541,6 +613,8 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResu
         Command::new(shell)
             .arg(shell_arg)
             .arg(cmd)
+            .current_dir(&state.cwd)
+            .envs(&state.env_vars)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -618,6 +692,38 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64) -> Result<CommandResu
             needed_sudo: false,
         }),
     }
+}
+
+/// Check if a command contains potential secrets
+fn check_for_secrets(cmd: &str) -> Option<String> {
+    // Basic heuristics to catch common accidental pastes
+    
+    // AWS Access Key ID (AKIA...)
+    if regex::Regex::new(r"AKIA[0-9A-Z]{16}").unwrap().is_match(cmd) {
+        return Some("Command contains a potential AWS Access Key ID".to_string());
+    }
+    
+    // Private Key Header
+    if cmd.contains("-----BEGIN PRIVATE KEY-----") || cmd.contains("-----BEGIN RSA PRIVATE KEY-----") {
+        return Some("Command contains a Private Key".to_string());
+    }
+    
+    // GitHub Personal Access Token (ghp_)
+    if regex::Regex::new(r"ghp_[a-zA-Z0-9]{36}").unwrap().is_match(cmd) {
+        return Some("Command contains a GitHub Personal Access Token".to_string());
+    }
+    
+    // Slack Token
+    if regex::Regex::new(r"xox[baprs]-[a-zA-Z0-9-]").unwrap().is_match(cmd) {
+        return Some("Command contains a Slack Token".to_string());
+    }
+
+    // OpenAI Key (sk-...)
+    if regex::Regex::new(r"sk-[a-zA-Z0-9]{20,T}").unwrap().is_match(cmd) {
+        return Some("Command contains a potential OpenAI Key".to_string());
+    }
+
+    None
 }
 
 /// Generate a user-friendly summary of command execution

@@ -11,10 +11,13 @@
 pub mod context_manager;
 pub mod context_token_manager;
 pub mod executor;
+use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 pub mod prompts;
 pub mod skill_executor;
 pub mod skills;
 pub mod token_tracker;
+pub mod daily_log;
 
 pub use prompts::{
     get_mode_introduction, get_mode_prompt, get_system_prompt, ModeIntroduction, ModePrompt,
@@ -28,7 +31,7 @@ use shared::settings::AppSettings;
 
 pub use executor::{
     classify_command, execute_command, needs_elevation, parse_progress, web_search, CommandResult,
-    DangerLevel,
+    DangerLevel, SessionState,
 };
 
 #[cfg(not(windows))]
@@ -45,13 +48,18 @@ pub struct ToolResult {
 }
 
 /// Agent host manages AI chat and command execution
+/// Agent host manages AI chat and command execution
 pub struct AgentHost {
     pub settings: AppSettings,
+    pub session_state: Arc<AsyncMutex<SessionState>>,
 }
 
 impl AgentHost {
     pub fn new(settings: AppSettings) -> Self {
-        Self { settings }
+        Self { 
+            settings,
+            session_state: Arc::new(AsyncMutex::new(SessionState::new())),
+        }
     }
 
     /// Simple chat - just AI response, no command execution
@@ -109,7 +117,8 @@ impl AgentHost {
                 };
 
                 if should_execute {
-                    let result = execute_command(&cmd, 30).await?;
+                    let mut state = self.session_state.lock().await;
+                    let result = execute_command(&cmd, 30, &mut state).await?;
 
                     // Add result to conversation
                     all_messages.push(ChatMessage {
@@ -275,8 +284,10 @@ The file will automatically open in the preview panel.
     }
 
     /// Execute a specific command (for UI-triggered execution)
+    /// Execute a specific command (for UI-triggered execution)
     pub async fn execute(&self, cmd: &str) -> Result<CommandResult> {
-        execute_command(cmd, 60).await
+        let mut state = self.session_state.lock().await;
+        execute_command(cmd, 60, &mut state).await
     }
 
     /// Check if a command needs confirmation
@@ -293,3 +304,4 @@ The file will automatically open in the preview panel.
         classify_command(cmd)
     }
 }
+pub mod graph_store;

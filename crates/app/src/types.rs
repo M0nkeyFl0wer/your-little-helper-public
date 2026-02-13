@@ -491,7 +491,28 @@ impl Default for AppState {
                     std::path::PathBuf::from("./context")
                 ).expect("Failed to create context manager")
             }),
-            skill_registry: agent_host::skills::init_empty_registry(),
+            skill_registry: {
+                let data_dir = agent_host::context_manager::ContextManager::default_dir();
+                // Initialize infrastructure (SafeFileOps, Audit, etc.)
+                let infra = Arc::new(agent_host::skills::common::init_common_infrastructure(&data_dir)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Failed to init common infra: {}", e);
+                        // Fallback to local dir if system dir fails
+                        agent_host::skills::common::init_common_infrastructure(&std::path::PathBuf::from("."))
+                            .expect("Failed to init common infra fallback")
+                    }));
+                
+                // Initialize File Index
+                let file_index = Arc::new(services::file_index::FileIndexService::new(&data_dir)
+                    .unwrap_or_else(|e| {
+                         eprintln!("Failed to init file index: {}", e);
+                         services::file_index::FileIndexService::new(&std::path::PathBuf::from("."))
+                            .expect("Failed to init file index fallback")
+                    }));
+
+                // Initialize full registry with all skills
+                agent_host::skills::init_registry(file_index, infra)
+            },
             preview_panel,
             show_preview: true,
             active_viewer: ActiveViewer::Panel,

@@ -222,8 +222,9 @@ pub fn is_path_in_allowed_dirs(path: &Path, allowed_dirs: &[String]) -> bool {
 /// Run a user command using the agent_host
 pub fn run_user_command(command: &str) -> Result<CommandResult, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    let mut session_state = agent_host::executor::SessionState::new();
     runtime
-        .block_on(agent_host::execute_command(command, 60))
+        .block_on(agent_host::executor::execute_command(command, 60, &mut session_state))
         .map_err(|e| e.to_string())
 }
 
