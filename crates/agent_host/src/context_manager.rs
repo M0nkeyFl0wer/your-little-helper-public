@@ -17,6 +17,8 @@ use shared::skill::Mode;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use walkdir::WalkDir;
+use crate::graph_store::GraphStore;
+use crate::daily_log::DailyLogManager;
 
 /// Types of context documents
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -124,6 +126,10 @@ pub struct ContextManager {
     documents: HashMap<String, ContextDocument>,
     /// Document contents cache
     content_cache: HashMap<String, String>,
+    /// Knowledge Graph for RAG
+    pub graph: GraphStore,
+    /// Daily Log Manager for Episodic Memory
+    daily_log: DailyLogManager,
 }
 
 impl ContextManager {
@@ -146,9 +152,10 @@ impl ContextManager {
         }
 
         let mut manager = Self {
-            base_dir,
             documents: HashMap::new(),
             content_cache: HashMap::new(),
+            graph: GraphStore::new(),
+            daily_log: DailyLogManager::new(&base_dir.parent().unwrap_or(&base_dir).join("memory"))?,
         };
 
         // Load existing documents
@@ -220,6 +227,18 @@ impl ContextManager {
                 size_bytes: metadata.len(),
             };
 
+            // Add to graph with appropriate mode
+            let mode = context_type.applicable_modes().first().copied().unwrap_or(shared::skill::Mode::Find);
+            let graph_mode = match mode {
+                shared::skill::Mode::Find => crate::graph_store::Mode::Find,
+                shared::skill::Mode::Fix => crate::graph_store::Mode::Fix,
+                shared::skill::Mode::Research => crate::graph_store::Mode::Research,
+                shared::skill::Mode::Build => crate::graph_store::Mode::Build,
+                shared::skill::Mode::Data => crate::graph_store::Mode::Data,
+                shared::skill::Mode::Content => crate::graph_store::Mode::Content,
+            };
+            self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode);
+
             self.documents.insert(id, doc);
         }
 
@@ -256,10 +275,45 @@ impl ContextManager {
             size_bytes: content.len() as u64,
         };
 
+        self.content_cache.insert(id.clone(), content.to_string());
+
+        // Add to graph with appropriate mode
+        let mode = context_type.applicable_modes().first().copied().unwrap_or(shared::skill::Mode::Find);
+        let graph_mode = match mode {
+            shared::skill::Mode::Find => crate::graph_store::Mode::Find,
+            shared::skill::Mode::Fix => crate::graph_store::Mode::Fix,
+            shared::skill::Mode::Research => crate::graph_store::Mode::Research,
+            shared::skill::Mode::Build => crate::graph_store::Mode::Build,
+            shared::skill::Mode::Data => crate::graph_store::Mode::Data,
+            shared::skill::Mode::Content => crate::graph_store::Mode::Content,
+        };
+        self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode);
+
         self.documents.insert(id.clone(), doc.clone());
-        self.content_cache.insert(id, content.to_string());
 
         Ok(doc)
+    }
+
+    /// Add a node to the knowledge graph manually (or via LLM extraction)
+    pub fn add_graph_node(&mut self, label: &str, category: Option<String>, source_id: &str, mode: crate::graph_store::Mode) {
+        self.graph.add_node(label, category, source_id, mode);
+    }
+
+    /// Add a relationship to the knowledge graph
+    pub fn add_graph_edge(&mut self, source_label: &str, target_label: &str, relation: &str, mode: crate::graph_store::Mode) {
+        let source_idx = self.graph.add_node(source_label, None, "system", mode);
+        let target_idx = self.graph.add_node(target_label, None, "system", mode);
+        self.graph.add_edge(source_idx, target_idx, relation);
+    }
+
+    /// Record user feedback for a specific entity/concept/command
+    pub fn record_feedback(&mut self, label: &str, positive: bool) {
+        let delta = if positive { 0.1 } else { -0.1 };
+        self.graph.update_node_feedback(label, delta);
+        // Save graph asynchronously? For now, we rely on periodic saves or manual saves.
+        // But let's try to save immediately for persistence.
+        let graph_path = self.base_dir.join("knowledge_graph.json");
+        let _ = self.graph.save_to_file(graph_path);
     }
 
     /// Remove a document
@@ -364,6 +418,33 @@ impl ContextManager {
             }
         }
 
+        // --- GRAPH RAG AUGMENTATION ---
+        // 1. Find nodes related to the query terms
+        let mut related_docs = Vec::new();
+        // Simple heuristic: treat query as a potential entity label
+        let related_entities = self.graph.find_related(&query, 2); // 2 hops depth
+        
+        for (entity_label, relation_desc) in related_entities {
+             // Find documents containing this related entity
+             for (_, doc) in self.documents.iter() {
+                if doc.tags.contains(&entity_label) || doc.name.contains(&entity_label) {
+                     related_docs.push((doc.clone(), relation_desc.clone()));
+                }
+             }
+        }
+
+        // Add related docs to results if not already present
+        for (doc, reason) in related_docs {
+            if !results.iter().any(|r| r.document.id == doc.id) {
+                 results.push(ContextSearchResult {
+                    document: doc,
+                    relevance_score: 50, // Arbitrary score for graph connection
+                    excerpts: vec![format!("Related via graph: {}", reason)],
+                });
+            }
+        }
+        // -----------------------------
+
         // Sort by relevance
         results.sort_by(|a, b| b.relevance_score.cmp(&a.relevance_score));
 
@@ -390,7 +471,18 @@ impl ContextManager {
     pub fn format_context_for_prompt(&mut self, documents: &[&ContextDocument]) -> Result<String> {
         let mut prompt = String::new();
 
-        prompt.push_str("## Available Context Documents\n\n");
+        // 1. Inject Episodic Memory (Recent Logs)
+        // This gives the agent "recent history" context
+        let recent_logs = self.get_recent_logs(3)?;
+        if !recent_logs.is_empty() {
+             prompt.push_str("## 🧠 Recent Memory (Episodic Context)\n");
+             prompt.push_str("Here is a summary of recent work and decisions:\n\n");
+             prompt.push_str(&recent_logs);
+             prompt.push_str("\n---\n\n");
+        }
+
+        // 2. Inject Semantic Memory (Documents)
+        prompt.push_str("## 📚 Reference Context (Semantic Memory)\n\n");
 
         for doc in documents {
             prompt.push_str(&format!(
@@ -423,6 +515,22 @@ impl ContextManager {
         prompt.push_str("You can reference this context in your responses. If the user asks about something covered in these documents, use the information provided.\n");
 
         Ok(prompt)
+    }
+
+    /// Retrieve recent daily logs (Episodic Memory)
+    pub fn get_recent_logs(&self, days: usize) -> Result<String> {
+        let logs = self.daily_log.list_logs()?;
+        let mut recent_content = String::new();
+        
+        // Take up to `days` logs
+        for path in logs.into_iter().take(days) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("unknown");
+                recent_content.push_str(&format!("### Log: {}\n{}\n\n", filename, content));
+            }
+        }
+        
+        Ok(recent_content)
     }
 
     /// Setup context package based on distribution level

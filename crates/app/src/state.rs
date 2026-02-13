@@ -6,6 +6,7 @@
 use crate::types::*;
 use crate::utils::*;
 use shared::agent_api::ChatMessage as ApiChatMessage;
+use agent_host::executor::SessionState;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -42,6 +43,7 @@ pub fn run_ai_generation(
     };
 
     let router = ProviderRouter::new(settings);
+    let mut session_state = SessionState::new();
 
     // Pre-compile regexes
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
@@ -55,15 +57,12 @@ pub fn run_ai_generation(
         let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
         let mut pending_commands: Vec<String> = Vec::new();
 
-        let mut display_response = String::new();
-
         // Loop for multi-turn interactions (max 5 iterations)
         for iteration in 0..5 {
             // Get AI response
             let stage = if iteration == 0 { "Thinking" } else { "Thinking again with new info" };
             let _ = status_tx.send(stage.to_string());
             let response = router.generate(msgs.clone()).await?;
-            display_response = response.clone();
 
             // Check for preview tags
             for tag in shared::preview_types::parse_preview_tags(&response) {
@@ -106,7 +105,7 @@ pub fn run_ai_generation(
                     ),
                     anyhow::Error,
                 >((
-                    display_response,
+                    response, // Was display_response
                     file_to_preview,
                     all_executed_commands,
                     pending_commands,
@@ -182,7 +181,7 @@ pub fn run_ai_generation(
 
                 if danger == DangerLevel::Safe {
                     let _ = status_tx.send(format!("Running: {}", truncate_for_status(cmd)));
-                    match agent_host::execute_command(cmd, 60).await {
+                    match agent_host::executor::execute_command(cmd, 60, &mut session_state).await {
                         Ok(r) => {
                             all_executed_commands.push((
                                 cmd.clone(),
@@ -220,7 +219,7 @@ pub fn run_ai_generation(
             }
 
             if !searches.is_empty() || !commands.is_empty() {
-                display_response = String::new();
+                // response cleared
             }
 
             // Add results back to conversation

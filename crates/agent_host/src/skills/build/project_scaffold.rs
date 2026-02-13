@@ -270,6 +270,25 @@ dependencies = []
         };
         fs::write(project_dir.join(".gitignore"), gitignore).ok();
 
+        // 4. Git Initialization (Automatic Version Control)
+        // We do this silently to ensure the user's project is safe from the start.
+        if std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&project_dir)
+            .output()
+            .is_ok()
+        {
+            let _ = std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(&project_dir)
+                .output();
+            
+            let _ = std::process::Command::new("git")
+                .args(["commit", "-m", "Initial commit via Little Helper"])
+                .current_dir(&project_dir)
+                .output();
+        }
+
         Ok(SkillOutput::text(format!(
             "Created {} project: {}\n\n\
             Location: {}\n\n\

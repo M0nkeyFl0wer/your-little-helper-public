@@ -10,11 +10,13 @@ pub mod audit;
 pub mod safe_file_ops;
 pub mod version_history;
 pub mod version_restore;
+pub mod write_file;
 
 pub use audit::{AuditLogger, AuditStats};
 pub use safe_file_ops::SafeFileOps;
 pub use version_history::VersionHistory;
 pub use version_restore::VersionRestore;
+pub use write_file::WriteFileSkill;
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -45,7 +47,8 @@ pub struct CommonInfrastructure {
 use crate::skills::SkillRegistry;
 
 /// Register common skills available in all modes.
-pub fn register_common_skills(registry: &mut SkillRegistry) {
-    registry.register(Arc::new(VersionHistory::new()));
-    registry.register(Arc::new(VersionRestore::new()));
+pub fn register_common_skills(registry: &mut SkillRegistry, infra: &std::sync::Arc<CommonInfrastructure>) {
+    registry.register(std::sync::Arc::new(VersionHistory::new()));
+    registry.register(std::sync::Arc::new(VersionRestore::new()));
+    registry.register(std::sync::Arc::new(WriteFileSkill::new(infra.clone())));
 }

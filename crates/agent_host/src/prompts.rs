@@ -48,10 +48,12 @@ pub fn get_system_prompt(
     let mode_prompt = get_mode_prompt(mode);
     let os_context = get_os_context();
     let capabilities = get_capabilities_section(mode, permissions);
+    let security_protocol = get_security_protocol();
     let preview_instructions = get_preview_instructions();
 
     format!(
         r#"# {name} - Your {mode} Helper
+
 
 ## Who You Are
 You are {name}, part of the Little Helper team. {personality}
@@ -68,6 +70,10 @@ You are {name}, part of the Little Helper team. {personality}
 {os_context}
 
 {capabilities}
+
+{capabilities}
+
+{security_protocol}
 
 {preview_instructions}
 
@@ -91,6 +97,7 @@ You are {name}, part of the Little Helper team. {personality}
         tone = mode_prompt.tone,
         os_context = os_context,
         capabilities = capabilities,
+        security_protocol = security_protocol,
         preview_instructions = preview_instructions,
         user_name = user_name,
         memory_section = if memory_summary.is_empty() {
@@ -143,7 +150,11 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
     }
 
     // Mode-specific tools
-    let mode_tools = get_mode_tools(mode);
+    let mut mode_tools = get_mode_tools(mode);
+    
+    // Add common tools if not already present
+    mode_tools.push("**Write File**: Create or update files (automatically previews & versions them)".into());
+
     if !mode_tools.is_empty() {
         capabilities.push(String::new()); // blank line
         capabilities.push("### Mode-Specific Tools".to_string());
@@ -167,6 +178,7 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
             "**CSV Analyzer**: Share a CSV file path and I'll analyze it".into(),
             "**Chart Recommender**: I'll suggest the best visualization for your data".into(),
             "**Statistics**: I can calculate summaries, trends, and patterns".into(),
+            "**PII Detector**: I automatically scan data for sensitive info (emails, phones) and warn you".into(),
         ],
         "fix" => get_fix_tools(),
         "content" => vec![
@@ -183,6 +195,8 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
             "**Project Scaffold**: I can create new project structures".into(),
             "**Spec Kit**: I can help plan features with spec-driven development".into(),
             "**Code Generator**: I can create scripts and config files".into(),
+            "**Secret Scanner**: I check for hardcoded API keys before you commit".into(),
+            "**Dependency Audit**: I check your project for vulnerable packages".into(),
         ],
         _ => vec![],
     }
@@ -228,19 +242,32 @@ fn get_fix_tools() -> Vec<String> {
 }
 
 fn get_preview_instructions() -> &'static str {
-    r#"## Preview System
-When you want to show something in the preview panel, use these tags:
+    r#"## Preview & File System (MANDATORY)
+1.  **Showing Files:** When you want to show a file to the user, use the preview tag:
+    <preview type="file" path="/path/to/file">Optional caption</preview>
 
-For files:
-   <preview type="file" path="/path/to/file">Optional caption</preview>
+2.  **Writing Files:** NEVER use `echo` or `cat` to write files. You MUST use the **Write File** tool (or `write_file` skill). 
+    - This tool automatically versions the file (so we can undo changes)
+    - It automatically generates the <preview> tag for you
+    - Usage: Call the tool with `path` and `content`.
 
-For web sources:
-   <preview type="web" url="https://...">Key finding from this source</preview>
+3.  **Images:**
+    <preview type="image" url="https://..." or path="/path/to/image">Description</preview>
 
-For images:
-   <preview type="image" url="https://..." or path="/path/to/image">Description</preview>
+4.  **Web Sources:**
+    <preview type="web" url="https://...">Key finding</preview>
+"#
+}
 
-The preview will appear alongside your response, helping the user see what you're referring to."#
+fn get_security_protocol() -> &'static str {
+    r#"## Security & Privacy Protocol (MANDATORY)
+You are a "Security First" agent. You must proactively protect the user's device, data, and identity.
+
+1.  **Stop Secrets Leaking**: If a user pastes an API key, password, or token, IMMEDIATELY offer to save it securely in the system keychain or a .env file. NEVER output it back in chat.
+2.  **Warn Before Running**: If a command looks risky (e.g., deleting files, uploading data, changing system settings), explicitly explain the risk and ask for confirmation.
+3.  **Privacy Watchdog**: If you see personal info (emails, phone numbers, addresses) in files you are analyzing, flag it: "I noticed some personal info here. Should we redact this?"
+4.  **Secure Defaults**: When generating code config, always set secure defaults (e.g., `chmod 600` for keys, `False` for debug mode).
+"#
 }
 
 fn format_list(items: &[&str]) -> String {

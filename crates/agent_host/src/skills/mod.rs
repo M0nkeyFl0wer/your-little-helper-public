@@ -19,6 +19,7 @@ pub mod data;
 pub mod find;
 pub mod fix;
 pub mod research;
+pub mod memory_optimizer;
 
 /// Registry managing all available skills
 pub struct SkillRegistry {
@@ -226,12 +227,23 @@ pub struct SkillInfo {
 
 use services::file_index::FileIndexService;
 
+use crate::skills::common::CommonInfrastructure;
+use crate::context_manager::ContextManager;
+use parking_lot::Mutex;
+
 /// Initialize the skill registry with all available skills
-pub fn init_registry(file_index: Arc<FileIndexService>) -> SkillRegistry {
+pub fn init_registry(
+    file_index: Arc<FileIndexService>,
+    infra: Arc<CommonInfrastructure>,
+    context_manager: Arc<Mutex<ContextManager>>,
+) -> SkillRegistry {
     let mut registry = SkillRegistry::new();
 
     // Register common skills (available in all modes)
-    common::register_common_skills(&mut registry);
+    common::register_common_skills(&mut registry, &infra);
+
+    // Register Memory Optimizer (The "Context Engineer")
+    registry.register(Arc::new(memory_optimizer::MemoryOptimizerSkill::new(infra.clone(), context_manager)));
 
     // Register Find mode skills
     find::register_skills(&mut registry, file_index);
