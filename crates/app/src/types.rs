@@ -188,8 +188,8 @@ pub struct AppState {
     /// Available for future agentic features
     #[allow(dead_code)]
     pub agent_host: agent_host::AgentHost,
-    /// Context manager for documents and personas
-    pub context_manager: agent_host::context_manager::ContextManager,
+    /// Context manager for documents and personas (Shared)
+    pub context_manager: std::sync::Arc<parking_lot::Mutex<agent_host::context_manager::ContextManager>>,
     /// Skill registry for available tools
     pub skill_registry: agent_host::skills::SkillRegistry,
 
@@ -421,6 +421,41 @@ impl Default for AppState {
             AppScreen::Onboarding
         };
 
+        // Initialize Context Manager (Shared)
+        let context_manager = std::sync::Arc::new(parking_lot::Mutex::new(
+            agent_host::context_manager::ContextManager::new(
+                agent_host::context_manager::ContextManager::default_dir()
+            ).unwrap_or_else(|_| {
+                agent_host::context_manager::ContextManager::new(
+                    std::path::PathBuf::from("./context")
+                ).expect("Failed to create context manager")
+            })
+        ));
+
+        // Initialize Skill Registry
+        let skill_registry = {
+            let data_dir = agent_host::context_manager::ContextManager::default_dir();
+            // Initialize infrastructure (SafeFileOps, Audit, etc.)
+            let infra = Arc::new(agent_host::skills::common::init_common_infrastructure(&data_dir)
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to init common infra: {}", e);
+                    // Fallback to local dir if system dir fails
+                    agent_host::skills::common::init_common_infrastructure(&std::path::PathBuf::from("."))
+                        .expect("Failed to init common infra fallback")
+                }));
+            
+            // Initialize File Index
+            let file_index = Arc::new(services::file_index::FileIndexService::new(&data_dir)
+                .unwrap_or_else(|e| {
+                        eprintln!("Failed to init file index: {}", e);
+                        services::file_index::FileIndexService::new(&std::path::PathBuf::from("."))
+                        .expect("Failed to init file index fallback")
+                }));
+
+            // Initialize full registry with all skills
+            agent_host::skills::init_registry(file_index, infra, context_manager.clone())
+        };
+
         Self {
             settings: settings.clone(),
             current_screen: initial_screen,
@@ -484,35 +519,8 @@ impl Default for AppState {
             show_model_hint: false,
             model_hint_started_at: None,
             agent_host: AgentHost::new(settings.clone()),
-            context_manager: agent_host::context_manager::ContextManager::new(
-                agent_host::context_manager::ContextManager::default_dir()
-            ).unwrap_or_else(|_| {
-                agent_host::context_manager::ContextManager::new(
-                    std::path::PathBuf::from("./context")
-                ).expect("Failed to create context manager")
-            }),
-            skill_registry: {
-                let data_dir = agent_host::context_manager::ContextManager::default_dir();
-                // Initialize infrastructure (SafeFileOps, Audit, etc.)
-                let infra = Arc::new(agent_host::skills::common::init_common_infrastructure(&data_dir)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Failed to init common infra: {}", e);
-                        // Fallback to local dir if system dir fails
-                        agent_host::skills::common::init_common_infrastructure(&std::path::PathBuf::from("."))
-                            .expect("Failed to init common infra fallback")
-                    }));
-                
-                // Initialize File Index
-                let file_index = Arc::new(services::file_index::FileIndexService::new(&data_dir)
-                    .unwrap_or_else(|e| {
-                         eprintln!("Failed to init file index: {}", e);
-                         services::file_index::FileIndexService::new(&std::path::PathBuf::from("."))
-                            .expect("Failed to init file index fallback")
-                    }));
-
-                // Initialize full registry with all skills
-                agent_host::skills::init_registry(file_index, infra)
-            },
+            context_manager,
+            skill_registry,
             preview_panel,
             show_preview: true,
             active_viewer: ActiveViewer::Panel,
