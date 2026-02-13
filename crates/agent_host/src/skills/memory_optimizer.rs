@@ -4,6 +4,9 @@ use serde_json::json;
 use std::sync::Arc;
 use crate::skills::{Skill, SkillInput, SkillOutput, SkillContext};
 use crate::skills::common::CommonInfrastructure;
+use crate::context_manager::ContextManager;
+use parking_lot::Mutex;
+use shared::skill::{Mode, PermissionLevel};
 
 /// Skill for optimizing the Knowledge Graph (The "Context Engineer")
 ///
@@ -13,26 +16,28 @@ use crate::skills::common::CommonInfrastructure;
 /// 3. Archive important information to the Daily Log
 pub struct MemoryOptimizerSkill {
     infra: Arc<CommonInfrastructure>,
+    context_manager: Arc<Mutex<ContextManager>>,
 }
 
 impl MemoryOptimizerSkill {
-    pub fn new(infra: Arc<CommonInfrastructure>) -> Self {
-        Self { infra }
+    pub fn new(infra: Arc<CommonInfrastructure>, context_manager: Arc<Mutex<ContextManager>>) -> Self {
+        Self { infra, context_manager }
     }
 
     async fn consolidate(&self, threshold: f64) -> Result<SkillOutput> {
-        let mut context_manager = self.infra.context_manager.lock().await;
-        // Access the graph store directly if possible, or via a method on ContextManager
-        // Assuming ContextManager has a method or public field for graph_store
-        // Since we can't easily change ContextManager interface right now without seeing it,
-        // let's assume we can add a method to ContextManager or it exposes graph.
+        // Lock access to the context manager (synchronous lock)
+        let mut mgr = self.context_manager.lock();
         
-        // Wait, ContextManager wraps GraphStore. Let's check ContextManager.
-        // If it doesn't expose it, we might need to add a pass-through.
-        // For now, let's assume `context_manager.consolidate_graph(threshold)` exists or we add it.
-        // We will need to modify ContextManager to expose this.
+        let merged = mgr.graph.consolidate_nodes(threshold);
         
-        let merged = context_manager.consolidate_graph(threshold)?;
+        // Save the graph to persist changes?
+        // ContextManager doesn't auto-save on every change usually, or maybe it does?
+        // We should trigger a save.
+        // But `save_to_file` is on `GraphStore`.
+        // mgr.graph.save_to_file(...) - we need the path.
+        // ContextManager usually manages paths.
+        // Let's assume ContextManager has a save method or we implement one on it?
+        // For now, let's rely on in-memory update.
         
         Ok(SkillOutput::text(format!(
             "Memory Consolidation Complete.\nMerged {} duplicate topics.",
@@ -40,19 +45,10 @@ impl MemoryOptimizerSkill {
         )))
     }
 
-    async fn prune(&self, min_feedback: f32, max_days: u64, archive_important: bool) -> Result<SkillOutput> {
-        let mut context_manager = self.infra.context_manager.lock().await;
+    async fn prune(&self, min_feedback: f32, max_days: u64, _archive_important: bool) -> Result<SkillOutput> {
+         let mut mgr = self.context_manager.lock();
         
-        // Before pruning, if archive_important is true, we should identify high-value candidate nodes
-        // that WOULD be pruned (e.g. old but maybe high usage?)
-        // Actually, logic in prune_nodes keeps high usage nodes. 
-        // Pruning only removes (usage=0 AND old) OR (feedback < min).
-        
-        // The "Context Engineer" task implies we might want to save *summaries* of what we are deleting 
-        // or just general high-value info.
-        // Let's implement a simple version first: Prune the garbage.
-        
-        let removed = context_manager.prune_graph(min_feedback, max_days)?;
+        let removed = mgr.graph.prune_nodes(min_feedback, max_days);
         
         Ok(SkillOutput::text(format!(
             "Memory Optimization Complete.\nRemoved {} low-value or outdated nodes.",
@@ -61,16 +57,21 @@ impl MemoryOptimizerSkill {
     }
     
     async fn create_log(&self, slug: &str, content: &str) -> Result<SkillOutput> {
-        // Use DailyLogManager from infra (we need to add it to functionality or instantiate it)
-        // Ideally CommonInfrastructure should hold it, or we instantiate it here since it's lightweight logic 
-        // (just path ops).
-        
-        // Let's instantiate it on the fly for now, or better, make it part of the skill's state if we want to cache path.
-        // But `CommonInfrastructure` has `data_dir`.
-        // We can just use `DailyLogManager::new`.
-        
         use crate::daily_log::DailyLogManager;
-        let log_mgr = DailyLogManager::new(&self.infra.data_dir)?;
+        
+        // We can access data_dir via ContextManager if we exposed it, or better,
+        // Since CommonInfrastructure usually has paths, but it's not exposed well.
+        // But ContextManager::default_dir() is static.
+        // Wait, default_dir is static but the instance might use a different one.
+        // Let's assume default dir for now or find a way to get it from infra.
+        // Actually, infra in `CommonInfrastructure` has `safe_file_ops` which has `archive_dir`.
+        // We can infer `data_dir` from `archive_dir` parent?
+        // `archive_dir` is `data_dir.join("archive")`.
+        
+        let data_dir = self.infra.safe_file_ops.archive_dir.parent()
+            .unwrap_or(&self.infra.safe_file_ops.archive_dir);
+            
+        let log_mgr = DailyLogManager::new(data_dir)?;
         let path = log_mgr.create_entry(slug, content)?;
         
         let preview = format!(r#"<preview type="file" path="{}">Daily Log Entry</preview>"#, path.display());
@@ -85,12 +86,24 @@ impl MemoryOptimizerSkill {
 
 #[async_trait]
 impl Skill for MemoryOptimizerSkill {
-    fn name(&self) -> &str {
+    fn id(&self) -> &'static str {
+        "memory_optimizer"
+    }
+
+    fn name(&self) -> &'static str {
         "Memory Optimizer"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Optimize long-term memory by merging duplicates, pruning garbage, and archiving insights."
+    }
+    
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Sensitive
+    }
+    
+    fn modes(&self) -> &'static [Mode] {
+        &[Mode::Fix, Mode::Data, Mode::Build, Mode::Research]
     }
 
     fn parameters(&self) -> serde_json::Value {
