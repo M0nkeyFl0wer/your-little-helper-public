@@ -12,6 +12,7 @@ use services::web_preview::WebPreviewService;
 use shared::agent_api::ChatMessage as ApiChatMessage;
 use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
+use shared::skill::Mode;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -98,6 +99,19 @@ pub enum ChatMode {
     Content,
     /// Build projects with spec-kit workflows
     Build,
+}
+
+impl From<ChatMode> for Mode {
+    fn from(mode: ChatMode) -> Self {
+        match mode {
+            ChatMode::Find => Mode::Find,
+            ChatMode::Fix => Mode::Fix,
+            ChatMode::Research => Mode::Research,
+            ChatMode::Data => Mode::Data,
+            ChatMode::Content => Mode::Content,
+            ChatMode::Build => Mode::Build,
+        }
+    }
 }
 
 impl ChatMode {
@@ -422,15 +436,47 @@ impl Default for AppState {
         };
 
         // Initialize Context Manager (Shared)
-        let context_manager = std::sync::Arc::new(parking_lot::Mutex::new(
-            agent_host::context_manager::ContextManager::new(
+        let context_manager = std::sync::Arc::new(parking_lot::Mutex::new({
+            let mut cm = agent_host::context_manager::ContextManager::new(
                 agent_host::context_manager::ContextManager::default_dir()
             ).unwrap_or_else(|_| {
                 agent_host::context_manager::ContextManager::new(
                     std::path::PathBuf::from("./context")
                 ).expect("Failed to create context manager")
-            })
-        ));
+            });
+            
+            // Scan configured external directories
+            if !settings.external_context_dirs.is_empty() {
+                let _ = cm.scan_external_dirs(&settings.external_context_dirs);
+            }
+            cm
+        }));
+
+        // Background Memory Optimization Task
+        let bg_cm = context_manager.clone();
+        std::thread::spawn(move || {
+            loop {
+                // Check every minute
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                
+                // Block to check trigger
+                let needs_opt = {
+                    let mut cm = bg_cm.lock();
+                    cm.needs_optimization(50) // Threshold: 50 new docs
+                };
+
+                if needs_opt {
+                    // Re-acquire lock to perform work (dropping it briefly above is fine, but we need it now)
+                    // Actually, we could have kept it, but let's be nice to other readers
+                    let mut cm = bg_cm.lock();
+                    let merged = cm.graph.consolidate_nodes(0.9);
+                    let pruned = cm.graph.prune_nodes(-0.5, 30);
+                    if merged > 0 || pruned > 0 {
+                         println!("[MemoryOptimizer] Background run: Merged {}, Pruned {}", merged, pruned);
+                    }
+                }
+            }
+        });
 
         // Initialize Skill Registry
         let skill_registry = {
@@ -1959,6 +2005,7 @@ WORKFLOW:
 
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
+        let skill_registry = self.skill_registry.clone();
 
         // Spawn background thread for AI work
         std::thread::spawn(move || {
@@ -1969,7 +2016,9 @@ WORKFLOW:
                     settings,
                     allow_terminal,
                     allow_web,
+                    mode.into(),
                     allowed_dirs,
+                    Arc::new(skill_registry),
                     tx,
                     status_tx,
                     abort_reg,

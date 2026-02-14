@@ -11,6 +11,9 @@ pub mod file_organize;
 pub mod file_preview;
 pub mod fuzzy_search;
 
+pub mod reindex;
+pub use reindex::ForceReindexSkill;
+
 pub use drive_index::{default_index_paths, DriveIndex};
 pub use file_organize::FileOrganize;
 pub use file_preview::FilePreview;
@@ -24,7 +27,8 @@ use std::sync::Arc;
 /// Register all Find mode skills with the registry
 pub fn register_skills(registry: &mut SkillRegistry, file_index: Arc<FileIndexService>) {
     registry.register(Arc::new(FuzzyFileSearch::new(file_index.clone())));
-    registry.register(Arc::new(DriveIndex::new(file_index)));
+    registry.register(Arc::new(DriveIndex::new(file_index.clone())));
+    registry.register(Arc::new(ForceReindexSkill::new(file_index)));
     registry.register(Arc::new(FilePreview::new()));
 
     // File organization with archive directory

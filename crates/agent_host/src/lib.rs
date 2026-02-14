@@ -11,9 +11,11 @@
 pub mod context_manager;
 pub mod context_token_manager;
 pub mod executor;
+pub mod embedding;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 pub mod prompts;
+pub mod security;
 pub mod skill_executor;
 pub mod skills;
 pub mod token_tracker;
@@ -56,9 +58,18 @@ pub struct AgentHost {
 
 impl AgentHost {
     pub fn new(settings: AppSettings) -> Self {
+        use std::path::PathBuf;
+        use security::PathSandbox;
+
+        // Create restricted sandbox based on allowed_dirs
+        let allowed = settings.allowed_dirs.iter().map(PathBuf::from).collect();
+        let sandbox = PathSandbox::new(allowed);
+
         Self { 
             settings,
-            session_state: Arc::new(AsyncMutex::new(SessionState::new())),
+            session_state: Arc::new(AsyncMutex::new(
+                SessionState::new().with_sandbox(sandbox)
+            )),
         }
     }
 
@@ -75,10 +86,18 @@ impl AgentHost {
         &self,
         messages: Vec<ChatMessage>,
         auto_execute_safe: bool,
+        use_fast_model: bool,
     ) -> Result<(String, Vec<ToolResult>)> {
         use providers::router::ProviderRouter;
 
-        let router = ProviderRouter::new(self.settings.model.clone());
+        let mut model_settings = self.settings.model.clone();
+        if use_fast_model {
+            model_settings.openai_model = model_settings.openai_fast_model.clone();
+            model_settings.anthropic_model = model_settings.anthropic_fast_model.clone();
+            model_settings.gemini_model = model_settings.gemini_fast_model.clone();
+        }
+
+        let router = ProviderRouter::new(model_settings);
         let mut all_messages = messages.clone();
         let mut tool_results = Vec::new();
 

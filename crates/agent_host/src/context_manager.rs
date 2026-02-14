@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use walkdir::WalkDir;
 use crate::graph_store::GraphStore;
 use crate::daily_log::DailyLogManager;
+use crate::embedding::EmbeddingService; // Added import
 
 /// Types of context documents
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -130,9 +131,30 @@ pub struct ContextManager {
     pub graph: GraphStore,
     /// Daily Log Manager for Episodic Memory
     daily_log: DailyLogManager,
+    /// Configuration for embedding service
+    pub embedding_service: Option<EmbeddingService>,
+    
+    /// Track documents added since last optimization
+    pub docs_added_since_opt: usize,
 }
 
 impl ContextManager {
+    /// Increment document counter and return current count
+    pub fn increment_docs_added(&mut self) -> usize {
+        self.docs_added_since_opt += 1;
+        self.docs_added_since_opt
+    }
+
+    /// Check if optimization is needed based on threshold
+    pub fn needs_optimization(&mut self, threshold: usize) -> bool {
+        if self.docs_added_since_opt >= threshold {
+            self.docs_added_since_opt = 0;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Create a new context manager
     pub fn new(base_dir: PathBuf) -> Result<Self> {
         // Ensure base directory exists
@@ -151,11 +173,23 @@ impl ContextManager {
             std::fs::create_dir_all(&dir)?;
         }
 
+        // Initialize embedding service (graceful failure)
+        let embedding_service = match EmbeddingService::new() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize embedding service: {}", e);
+                None
+            }
+        };
+
         let mut manager = Self {
+            base_dir: base_dir.to_path_buf(),
             documents: HashMap::new(),
             content_cache: HashMap::new(),
             graph: GraphStore::new(),
             daily_log: DailyLogManager::new(&base_dir.parent().unwrap_or(&base_dir).join("memory"))?,
+            embedding_service,
+            docs_added_since_opt: 0,
         };
 
         // Load existing documents
@@ -237,11 +271,102 @@ impl ContextManager {
                 shared::skill::Mode::Data => crate::graph_store::Mode::Data,
                 shared::skill::Mode::Content => crate::graph_store::Mode::Content,
             };
-            self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode);
+
+            // Embedding logic
+            let mut embedding = None;
+            if let Some(service) = &self.embedding_service {
+                // If not already embedded, read file and embed
+                // Note: We use doc.name as label. If multiple files have same name, we might skip embedding for second one.
+                // Improvement: Check by ID or ensure unique labels. For now, rely on idempotency.
+                if !self.graph.has_embedding(&doc.name) {
+                    // Limit embedding to reasonable file sizes to avoid startup lag
+                    if doc.size_bytes < 50_000 {
+                         if let Ok(content) = std::fs::read_to_string(&doc.path) {
+                             if let Ok(e) = service.embed(&content) {
+                                 embedding = Some(e);
+                             }
+                         }
+                    }
+                }
+            }
+
+            self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode, embedding);
 
             self.documents.insert(id, doc);
+            self.docs_added_since_opt += 1;
         }
 
+        Ok(())
+    }
+
+    /// Scan external directories and add to context
+    pub fn scan_external_dirs(&mut self, dirs: &[String]) -> Result<()> {
+        for dir_str in dirs {
+            let dir = PathBuf::from(dir_str);
+            if !dir.exists() { continue; }
+            
+            // Limit depth to avoid massive scans
+            for entry in WalkDir::new(&dir)
+                .follow_links(true)
+                .max_depth(5) 
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                let path = entry.path();
+                // Skip hidden files/dirs
+                 if path.to_string_lossy().contains("/.") {
+                    continue;
+                }
+                
+                // Only process text files
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                let valid_exts = ["md", "txt", "rs", "py", "js", "ts", "json", "toml", "yaml", "yml", "html", "css", "c", "cpp", "h"];
+                if !valid_exts.contains(&ext.as_str()) {
+                    continue;
+                }
+                
+                // Construct ID
+                // Use a stable ID based on path hash or similar? For now, path string is fine.
+                let id = format!("external/{}", path.to_string_lossy().replace("/", "_").replace("\\", "_"));
+                
+                // Check if doc exists
+                if !self.documents.contains_key(&id) {
+                     let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
+                     let metadata = std::fs::metadata(path)?;
+                     
+                     let doc = ContextDocument {
+                        id: id.clone(),
+                        name: name.clone(),
+                        context_type: ContextType::Reference,
+                        path: path.to_path_buf(),
+                        content: None,
+                        tags: vec!["external".to_string()],
+                        description: format!("External file from {}", dir_str),
+                        added_at: chrono::Utc::now(),
+                        size_bytes: metadata.len(),
+                     };
+                     
+                     // Embed
+                     let mut embedding = None;
+                     if let Some(service) = &self.embedding_service {
+                        if !self.graph.has_embedding(&doc.name) {
+                             if doc.size_bytes < 50_000 {
+                                 if let Ok(content) = std::fs::read_to_string(&doc.path) {
+                                     if let Ok(e) = service.embed(&content) {
+                                         embedding = Some(e);
+                                     }
+                                 }
+                             }
+                        }
+                     }
+                     
+                     self.graph.add_node(&doc.name, Some("External File".to_string()), &doc.id, crate::graph_store::Mode::Research, embedding);
+                     self.documents.insert(id, doc);
+                     self.docs_added_since_opt += 1;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -287,7 +412,9 @@ impl ContextManager {
             shared::skill::Mode::Data => crate::graph_store::Mode::Data,
             shared::skill::Mode::Content => crate::graph_store::Mode::Content,
         };
-        self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode);
+
+        let embedding = self.embedding_service.as_ref().and_then(|s| s.embed(content).ok());
+        self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode, embedding);
 
         self.documents.insert(id.clone(), doc.clone());
 
@@ -296,13 +423,26 @@ impl ContextManager {
 
     /// Add a node to the knowledge graph manually (or via LLM extraction)
     pub fn add_graph_node(&mut self, label: &str, category: Option<String>, source_id: &str, mode: crate::graph_store::Mode) {
-        self.graph.add_node(label, category, source_id, mode);
+        let embedding = self.embedding_service.as_ref().and_then(|s| s.embed(label).ok());
+        self.graph.add_node(label, category, source_id, mode, embedding);
     }
 
     /// Add a relationship to the knowledge graph
     pub fn add_graph_edge(&mut self, source_label: &str, target_label: &str, relation: &str, mode: crate::graph_store::Mode) {
-        let source_idx = self.graph.add_node(source_label, None, "system", mode);
-        let target_idx = self.graph.add_node(target_label, None, "system", mode);
+        // We try to embed labels if they are new nodes, but add_node handles updates.
+        // However, generating embeddings for every edge addition might be overkill if nodes exist.
+        // add_node checks if embedding exists inside the graph store logic I wrote? 
+        // No, I wrote: if let Some(node) = node_weight_mut { if node.embedding.is_none() && embedding.is_some() ... }
+        // So passing embedding is safe.
+        
+        // Optimize: Check if nodes exist to avoid embedding cost?
+        // For now, let's just do it. Labels are short.
+        let source_embedding = self.embedding_service.as_ref().and_then(|s| s.embed(source_label).ok());
+        let source_idx = self.graph.add_node(source_label, None, "system", mode, source_embedding);
+
+        let target_embedding = self.embedding_service.as_ref().and_then(|s| s.embed(target_label).ok());
+        let target_idx = self.graph.add_node(target_label, None, "system", mode, target_embedding);
+        
         self.graph.add_edge(source_idx, target_idx, relation);
     }
 
@@ -419,7 +559,45 @@ impl ContextManager {
         }
 
         // --- GRAPH RAG AUGMENTATION ---
-        // 1. Find nodes related to the query terms
+        
+        // 0. Vector Search (Semantic)
+        if let Some(service) = &self.embedding_service {
+             if let Ok(query_vec) = service.embed(query) {
+                 // Search for top 10 semantically similar nodes
+                 let vec_results = self.graph.vector_search(&query_vec, 10, 0.4); // 0.4 threshold
+                 
+                 for (idx, score) in vec_results {
+                     if let Some(node) = self.graph.graph.node_weight(idx) {
+                         // Find doc by ID (source_id)
+                         if let Some(doc) = self.documents.get(&node.source_id) {
+                             // Check mode
+                             if let Some(m) = mode {
+                                 if !doc.context_type.applicable_modes().contains(&m) {
+                                     continue;
+                                 }
+                             }
+
+                             // Add or update result
+                             let semantic_score = (score * 100.0) as u8;
+                             
+                             if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
+                                 // Boost existing score
+                                 existing.relevance_score = existing.relevance_score.max(semantic_score).min(100);
+                                 existing.excerpts.push(format!("Semantic Match ({:.2}): {}", score, node.label));
+                             } else {
+                                  results.push(ContextSearchResult {
+                                     document: doc.clone(),
+                                     relevance_score: semantic_score,
+                                     excerpts: vec![format!("Semantic Match ({:.2}): {}", score, node.label)],
+                                 });
+                             }
+                         }
+                     }
+                 }
+             }
+        }
+
+        // 1. Find nodes related to the query terms (Keyword/Graph)
         let mut related_docs = Vec::new();
         // Simple heuristic: treat query as a potential entity label
         let related_entities = self.graph.find_related(&query, 2); // 2 hops depth
@@ -427,6 +605,12 @@ impl ContextManager {
         for (entity_label, relation_desc) in related_entities {
              // Find documents containing this related entity
              for (_, doc) in self.documents.iter() {
+                if let Some(m) = mode {
+                    if !doc.context_type.applicable_modes().contains(&m) {
+                        continue;
+                    }
+                }
+
                 if doc.tags.contains(&entity_label) || doc.name.contains(&entity_label) {
                      related_docs.push((doc.clone(), relation_desc.clone()));
                 }
@@ -435,7 +619,10 @@ impl ContextManager {
 
         // Add related docs to results if not already present
         for (doc, reason) in related_docs {
-            if !results.iter().any(|r| r.document.id == doc.id) {
+            if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
+                  existing.relevance_score = existing.relevance_score.max(50);
+                  existing.excerpts.push(format!("Graph Connection: {}", reason));
+            } else {
                  results.push(ContextSearchResult {
                     document: doc,
                     relevance_score: 50, // Arbitrary score for graph connection

@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use crate::skills::{Skill, SkillInput, SkillOutput, SkillContext};
+use crate::skills::{Skill, SkillInput, SkillContext};
 use crate::skills::common::CommonInfrastructure;
 use crate::context_manager::ContextManager;
 use parking_lot::Mutex;
-use shared::skill::{Mode, PermissionLevel};
+use shared::skill::{Mode, PermissionLevel, SkillOutput};
 
 /// Skill for optimizing the Knowledge Graph (The "Context Engineer")
 ///
@@ -30,15 +30,6 @@ impl MemoryOptimizerSkill {
         
         let merged = mgr.graph.consolidate_nodes(threshold);
         
-        // Save the graph to persist changes?
-        // ContextManager doesn't auto-save on every change usually, or maybe it does?
-        // We should trigger a save.
-        // But `save_to_file` is on `GraphStore`.
-        // mgr.graph.save_to_file(...) - we need the path.
-        // ContextManager usually manages paths.
-        // Let's assume ContextManager has a save method or we implement one on it?
-        // For now, let's rely on in-memory update.
-        
         Ok(SkillOutput::text(format!(
             "Memory Consolidation Complete.\nMerged {} duplicate topics.",
             merged
@@ -59,17 +50,9 @@ impl MemoryOptimizerSkill {
     async fn create_log(&self, slug: &str, content: &str) -> Result<SkillOutput> {
         use crate::daily_log::DailyLogManager;
         
-        // We can access data_dir via ContextManager if we exposed it, or better,
-        // Since CommonInfrastructure usually has paths, but it's not exposed well.
-        // But ContextManager::default_dir() is static.
-        // Wait, default_dir is static but the instance might use a different one.
-        // Let's assume default dir for now or find a way to get it from infra.
-        // Actually, infra in `CommonInfrastructure` has `safe_file_ops` which has `archive_dir`.
-        // We can infer `data_dir` from `archive_dir` parent?
-        // `archive_dir` is `data_dir.join("archive")`.
-        
-        let data_dir = self.infra.safe_file_ops.archive_dir.parent()
-            .unwrap_or(&self.infra.safe_file_ops.archive_dir);
+        // Use public accessor for archive_dir
+        let data_dir = self.infra.safe_file_ops.archive_dir().parent()
+            .unwrap_or(&self.infra.safe_file_ops.archive_dir());
             
         let log_mgr = DailyLogManager::new(data_dir)?;
         let path = log_mgr.create_entry(slug, content)?;
@@ -106,31 +89,8 @@ impl Skill for MemoryOptimizerSkill {
         &[Mode::Fix, Mode::Data, Mode::Build, Mode::Research]
     }
 
-    fn parameters(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["consolidate", "prune", "archive"],
-                    "description": "The optimization action to perform"
-                },
-                "threshold": {
-                    "type": "number",
-                    "description": "Similarity threshold for consolidation (0.0-1.0), default 0.9"
-                },
-                "slug": {
-                    "type": "string",
-                    "description": "Slug for the log entry (archive action only)"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to archive (archive action only)"
-                }
-            },
-            "required": ["action"]
-        })
-    }
+    // Note: 'parameters' is not part of the Skill trait in this codebase.
+    // The schema is inferred from description or handled dynamically.
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
         let action = input.params.get("action").and_then(|v| v.as_str()).unwrap_or("");

@@ -30,6 +30,13 @@ pub mod settings {
         pub openai_model: String,             // e.g., "gpt-4o-mini"
         pub anthropic_model: String,          // e.g., "claude-sonnet-4-20250514"
         pub gemini_model: String,             // e.g., "gemini-2.5-flash"
+        
+        #[serde(default = "default_fast_openai")]
+        pub openai_fast_model: String,
+        #[serde(default = "default_fast_anthropic")]
+        pub anthropic_fast_model: String,
+        #[serde(default = "default_fast_gemini")]
+        pub gemini_fast_model: String,
 
         /// Custom base URL for OpenAI-compatible APIs (Kimi, OpenRouter, Together, etc.)
         /// When set, the "openai" provider routes to this URL instead of api.openai.com.
@@ -41,6 +48,10 @@ pub mod settings {
         pub anthropic_auth: ProviderAuth,
         pub gemini_auth: ProviderAuth,
     }
+
+    fn default_fast_openai() -> String { "gpt-4o-mini".to_string() }
+    fn default_fast_anthropic() -> String { "claude-3-haiku-20240307".to_string() }
+    fn default_fast_gemini() -> String { "gemini-1.5-flash".to_string() }
 
     /// User profile for personalization
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +101,8 @@ pub mod settings {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct AppSettings {
         pub allowed_dirs: Vec<String>,
+        #[serde(default)]
+        pub external_context_dirs: Vec<String>, // Directories to scan for RAG
         pub model: ModelProvider,
         pub enable_internet_research: bool,
         pub max_results: usize,
@@ -129,6 +142,7 @@ pub mod settings {
         fn default() -> Self {
             Self {
                 allowed_dirs: vec![],
+                external_context_dirs: vec![],
                 model: ModelProvider {
                     local_model: "llama3.2:3b".into(),
                     // Default to cloud providers for better results; fall back to local
@@ -140,7 +154,10 @@ pub mod settings {
                     ],
                     openai_model: "kimi-k2-5".into(),
                     anthropic_model: "claude-sonnet-4-20250514".into(),
-                    gemini_model: "gemini-2.5-flash".into(),
+                    gemini_model: "gemini-2.0-flash".to_string(),
+                    openai_fast_model: default_fast_openai(),
+                    anthropic_fast_model: default_fast_anthropic(),
+                    gemini_fast_model: default_fast_gemini(),
                     openai_base_url: None,
                     openai_auth: ProviderAuth::default(),
                     anthropic_auth: ProviderAuth::default(),
