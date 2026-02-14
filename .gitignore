@@ -19,7 +19,10 @@ Thumbs.db
 
 # Dependencies
 /node_modules/
-Cargo.lock
+
+# Local tooling state (never commit)
+.opencode/
+**/.opencode/
 
 # ========================================
 # SECRETS - NEVER COMMIT THESE

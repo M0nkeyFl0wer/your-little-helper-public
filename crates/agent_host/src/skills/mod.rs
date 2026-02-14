@@ -20,6 +20,7 @@ pub mod find;
 pub mod fix;
 pub mod research;
 pub mod memory_optimizer;
+pub mod security;
 
 /// Registry managing all available skills
 #[derive(Clone)]
@@ -245,6 +246,9 @@ pub fn init_registry(
 
     // Register Memory Optimizer (The "Context Engineer")
     registry.register(Arc::new(memory_optimizer::MemoryOptimizerSkill::new(infra.clone(), context_manager)));
+
+    // Register Security Skill (2FA)
+    registry.register(Arc::new(security::SecuritySkill::new(infra.clone())));
 
     // Register Find mode skills
     find::register_skills(&mut registry, file_index);

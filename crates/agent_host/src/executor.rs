@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use tokio::process::Command;
 
-use crate::security::PathSandbox;
+use crate::security::{PathSandbox, SecurityContext};
+use std::sync::Arc;
 
 /// Agent Session State (Virtual Environment)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,9 @@ pub struct SessionState {
     /// File system sandbox (skipped during serialization to keep state simple)
     #[serde(skip)]
     pub sandbox: Option<PathSandbox>,
+    /// Security context for 2FA (skipped during serialization)
+    #[serde(skip)]
+    pub security_context: Option<Arc<SecurityContext>>,
 }
 
 impl SessionState {
@@ -34,11 +38,17 @@ impl SessionState {
             history: Vec::new(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             sandbox: None,
+            security_context: None,
         }
     }
     
     pub fn with_sandbox(mut self, sandbox: PathSandbox) -> Self {
         self.sandbox = Some(sandbox);
+        self
+    }
+
+    pub fn with_security_context(mut self, ctx: Arc<SecurityContext>) -> Self {
+        self.security_context = Some(ctx);
         self
     }
 }
@@ -54,6 +64,8 @@ pub enum DangerLevel {
     Dangerous,
     /// Commands that require elevated privileges
     NeedsSudo,
+    /// Commands that require 2FA authentication
+    NeedsAuth,
     /// Blocked commands that should never run
     Blocked,
 }
@@ -79,6 +91,8 @@ pub struct CommandResult {
     pub summary: String,
     /// Whether sudo/password was required
     pub needed_sudo: bool,
+    /// Whether 2FA authentication was required
+    pub needed_auth: bool,
 }
 
 /// Safe commands that can run without confirmation
@@ -306,6 +320,22 @@ const BLOCKED_COMMANDS: &[&str] = &[
     "nmap",
 ];
 
+/// Commands that require 2FA authentication
+const NEEDS_AUTH_COMMANDS: &[&str] = &[
+    // Destructive file operations
+    "rm",
+    "shred",
+    "dd",
+    "mkfs",
+    // Permissions
+    "chmod",
+    "chown",
+    // Process control
+    "kill",
+    "killall",
+    "pkill",
+];
+
 /// Translate common Unix commands to Windows equivalents.
 ///
 /// LLMs frequently suggest Unix commands even when prompted for Windows.
@@ -507,6 +537,20 @@ pub fn classify_command(cmd: &str) -> DangerLevel {
         }
     }
 
+    // Check 2FA requirements
+    for auth_cmd in NEEDS_AUTH_COMMANDS {
+        if cmd_trimmed.starts_with(auth_cmd) || cmd_trimmed.contains(&format!(" {}", auth_cmd)) {
+            return DangerLevel::NeedsAuth;
+        }
+    }
+
+    // Check 2FA requirements
+    for auth_cmd in NEEDS_AUTH_COMMANDS {
+        if cmd_trimmed.starts_with(auth_cmd) || cmd_trimmed.contains(&format!(" {}", auth_cmd)) {
+            return DangerLevel::NeedsAuth;
+        }
+    }
+
     // Check if sudo is needed
     if cmd_trimmed.starts_with("sudo ") {
         return DangerLevel::NeedsSudo;
@@ -553,6 +597,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
             success: false,
             summary: "Blocked: Secret detected".to_string(),
             needed_sudo: false,
+            needed_auth: false,
         });
     }
 
@@ -569,6 +614,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
                 success: false,
                 summary: "Blocked: Sandbox violation".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         }
     }
@@ -589,6 +635,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
                 success: true,
                 summary: "Directory changed".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         } else {
              return Ok(CommandResult {
@@ -601,6 +648,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
                 success: false,
                 summary: "Directory not found".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         }
     }
@@ -618,7 +666,32 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
             success: false,
             summary: "Command blocked for safety".to_string(),
             needed_sudo: false,
+            needed_auth: false,
         });
+    }
+
+    if danger == DangerLevel::NeedsAuth {
+        // Check if authenticated
+        let authenticated = if let Some(ctx) = &state.security_context {
+            ctx.is_authenticated()
+        } else {
+            false // Default to blocked if no security context
+        };
+
+        if !authenticated {
+             return Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Authentication Required: This command requires 2FA verification.".to_string(),
+                output: "Authentication Required: This command requires 2FA verification.\nPlease run 'verify_2fa'.".to_string(),
+                duration_ms: 0,
+                success: false,
+                summary: "Blocked: 2FA Required".to_string(),
+                needed_sudo: false,
+                needed_auth: true,
+            });
+        }
     }
 
     let start = Instant::now();
@@ -695,6 +768,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
                 success,
                 summary,
                 needed_sudo,
+                needed_auth: false,
             })
         }
         Ok(Err(e)) => Ok(CommandResult {
@@ -707,6 +781,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
             success: false,
             summary: format!("Command failed: {}", e),
             needed_sudo: false,
+            needed_auth: false,
         }),
         Err(_) => Ok(CommandResult {
             command: cmd.to_string(),
@@ -718,6 +793,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
             success: false,
             summary: format!("Timed out after {}s", timeout_secs),
             needed_sudo: false,
+            needed_auth: false,
         }),
     }
 }
@@ -949,6 +1025,7 @@ pub async fn execute_with_sudo(
                 success: success && !wrong_password,
                 summary,
                 needed_sudo: true,
+                needed_auth: false,
             })
         }
         Ok(Err(e)) => Ok(CommandResult {
@@ -961,6 +1038,7 @@ pub async fn execute_with_sudo(
             success: false,
             summary: format!("Command failed: {}", e),
             needed_sudo: true,
+            needed_auth: false,
         }),
         Err(_) => Ok(CommandResult {
             command: format!("sudo {}", actual_cmd),
@@ -972,6 +1050,7 @@ pub async fn execute_with_sudo(
             success: false,
             summary: format!("Timed out after {}s", timeout_secs),
             needed_sudo: true,
+            needed_auth: false,
         }),
     }
 }
@@ -1027,6 +1106,7 @@ pub async fn execute_with_elevation(cmd: &str, timeout_secs: u64) -> Result<Comm
                     "Failed or was cancelled".to_string()
                 },
                 needed_sudo: true,
+                needed_auth: false,
             })
         }
         Ok(Err(e)) => Ok(CommandResult {
@@ -1039,6 +1119,7 @@ pub async fn execute_with_elevation(cmd: &str, timeout_secs: u64) -> Result<Comm
             success: false,
             summary: "Failed to request admin privileges".to_string(),
             needed_sudo: true,
+            needed_auth: false,
         }),
         Err(_) => Ok(CommandResult {
             command: cmd.to_string(),
@@ -1050,6 +1131,7 @@ pub async fn execute_with_elevation(cmd: &str, timeout_secs: u64) -> Result<Comm
             success: false,
             summary: "Timed out or cancelled".to_string(),
             needed_sudo: true,
+            needed_auth: false,
         }),
     }
 }
@@ -1112,6 +1194,7 @@ async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
                 success: false,
                 summary: "Search failed".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         }
         Err(e) => {
@@ -1125,6 +1208,7 @@ async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
                 success: false,
                 summary: "Search failed".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         }
     };
@@ -1162,6 +1246,7 @@ async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
         success: true,
         summary: format!("Found {} results ({}ms)", count, duration_ms),
         needed_sudo: false,
+        needed_auth: false,
     })
 }
 
@@ -1197,6 +1282,7 @@ async fn fallback_search(query: &str) -> Result<CommandResult> {
                 success: false,
                 summary: "Search unavailable".to_string(),
                 needed_sudo: false,
+                needed_auth: false,
             });
         }
     };
@@ -1235,6 +1321,7 @@ async fn fallback_search(query: &str) -> Result<CommandResult> {
         success: count > 0,
         summary: format!("Found {} results ({}ms)", count, duration_ms),
         needed_sudo: false,
+        needed_auth: false,
     })
 }
 
@@ -1263,8 +1350,8 @@ mod tests {
 
     #[test]
     fn test_classify_dangerous() {
-        assert_eq!(classify_command("rm file.txt"), DangerLevel::Dangerous);
-        assert_eq!(classify_command("chmod 777 file"), DangerLevel::Dangerous);
+        assert_eq!(classify_command("rm file.txt"), DangerLevel::NeedsAuth);
+        assert_eq!(classify_command("chmod 777 file"), DangerLevel::NeedsAuth);
     }
 
     #[test]

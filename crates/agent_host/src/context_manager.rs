@@ -296,6 +296,10 @@ impl ContextManager {
             self.docs_added_since_opt += 1;
         }
 
+        if self.needs_optimization(50) {
+            self.optimize_memory();
+        }
+
         Ok(())
     }
 
@@ -367,6 +371,10 @@ impl ContextManager {
                 }
             }
         }
+
+        if self.needs_optimization(50) {
+            self.optimize_memory();
+        }
         Ok(())
     }
 
@@ -417,8 +425,26 @@ impl ContextManager {
         self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode, embedding);
 
         self.documents.insert(id.clone(), doc.clone());
+        self.docs_added_since_opt += 1;
+
+        if self.needs_optimization(50) {
+            self.optimize_memory();
+        }
 
         Ok(doc)
+    }
+
+    /// Run memory optimization (consolidate & prune)
+    fn optimize_memory(&mut self) {
+        println!("[System] Running automated memory optimization...");
+        // Consolidate duplicates (high confidence)
+        let merged = self.graph.consolidate_nodes(0.95);
+        // Prune only very low quality nodes, keep old ones for now unless explicitly hated
+        let pruned = self.graph.prune_nodes(-0.8, 60);
+        
+        if merged > 0 || pruned > 0 {
+            println!("[System] Memory Optimized: Merged {} nodes, Pruned {} nodes.", merged, pruned);
+        }
     }
 
     /// Add a node to the knowledge graph manually (or via LLM extraction)
@@ -560,7 +586,7 @@ impl ContextManager {
 
         // --- GRAPH RAG AUGMENTATION ---
         
-        // 0. Vector Search (Semantic)
+        // 0. Vector Search (Semantic) with Graph Expansion
         if let Some(service) = &self.embedding_service {
              if let Ok(query_vec) = service.embed(query) {
                  // Search for top 10 semantically similar nodes
@@ -579,17 +605,33 @@ impl ContextManager {
 
                              // Add or update result
                              let semantic_score = (score * 100.0) as u8;
+                             let reason = format!("Semantic Match ({:.2}): {}", score, node.label);
                              
-                             if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
-                                 // Boost existing score
-                                 existing.relevance_score = existing.relevance_score.max(semantic_score).min(100);
-                                 existing.excerpts.push(format!("Semantic Match ({:.2}): {}", score, node.label));
-                             } else {
-                                  results.push(ContextSearchResult {
-                                     document: doc.clone(),
-                                     relevance_score: semantic_score,
-                                     excerpts: vec![format!("Semantic Match ({:.2}): {}", score, node.label)],
-                                 });
+                             self.add_or_boost_result(&mut results, doc, semantic_score, &reason);
+                             
+                             // --- 1-HOP GRAPH EXPANSION ---
+                             // If strong match (> 0.6), look at neighbors
+                             if score > 0.6 {
+                                 let related_nodes = self.graph.get_related_nodes(idx);
+                                 for (rel_idx, edge_label, role) in related_nodes {
+                                      if let Some(rel_node) = self.graph.graph.node_weight(rel_idx) {
+                                          if let Some(rel_doc) = self.documents.get(&rel_node.source_id) {
+                                              // Filter by mode again
+                                              if let Some(m) = mode {
+                                                 if !rel_doc.context_type.applicable_modes().contains(&m) {
+                                                     continue;
+                                                 }
+                                              }
+                                              
+                                              // Add with slightly lower score but clear reasoning
+                                              let rel_score = (score * 80.0) as u8; // 80% of original match
+                                              let rel_reason = format!("Graph Connection: {} {} {} ({})", 
+                                                  node.label, edge_label, rel_node.label, role);
+                                                  
+                                              self.add_or_boost_result(&mut results, rel_doc, rel_score, &rel_reason);
+                                          }
+                                      }
+                                 }
                              }
                          }
                      }
@@ -636,6 +678,24 @@ impl ContextManager {
         results.sort_by(|a, b| b.relevance_score.cmp(&a.relevance_score));
 
         results
+    }
+
+    /// Helper to add a result or boost it if it already exists
+    fn add_or_boost_result(&self, results: &mut Vec<ContextSearchResult>, doc: &ContextDocument, score: u8, reason: &str) {
+        if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
+            // Boost existing score
+            existing.relevance_score = existing.relevance_score.max(score).min(100);
+            // Avoid duplicate reasons
+            if !existing.excerpts.iter().any(|e| e.contains(reason)) {
+                 existing.excerpts.push(reason.to_string());
+            }
+        } else {
+             results.push(ContextSearchResult {
+                document: doc.clone(),
+                relevance_score: score,
+                excerpts: vec![reason.to_string()],
+            });
+        }
     }
 
     /// Get all documents of a specific type

@@ -2,14 +2,16 @@
 
 ## Security Overview
 
-Little Helper is designed with privacy-first principles: all processing happens locally on the user's Mac with no data sent to external servers after installation.
+Little Helper is designed with privacy-first principles: it is local-first by default, and network access is optional.
+
+If you enable Internet research and/or configure a cloud model provider (e.g. OpenAI/Anthropic/Gemini), the app will make network requests to those services. If you use only local models and keep Internet research disabled, the app can run fully offline.
 
 ## Security Features ✅
 
 ### Data Privacy
-- **Local Processing Only**: All AI conversations happen on-device
+- **Local-First**: Local models can be used without sending prompts to third parties
 - **No Telemetry**: No usage data or analytics collected
-- **No Network Calls**: App functions offline after initial setup
+- **Network Calls Are Optional**: Only when Internet research is enabled and/or a cloud provider is configured
 - **Local File Access**: File searches stay on the local machine
 
 ### Application Security
@@ -35,12 +37,16 @@ Little Helper is designed with privacy-first principles: all processing happens 
 
 ### Runtime Risks (Low)
 4. **Local AI Model**: Processes user queries and file content
-   - **Risk**: AI could theoretically be prompted to reveal sensitive info
-   - **Mitigation**: No network access, data stays local
+    - **Risk**: AI could theoretically be prompted to reveal sensitive info
+    - **Mitigation**: Keep Internet research disabled for fully offline operation
 
-5. **Full Disk Access**: App requests broad file system access
-   - **Risk**: Could read sensitive files if compromised
-   - **Mitigation**: macOS permissions system controls access
+5. **Optional Terminal Command Execution**: If enabled, the assistant can run commands on your machine
+   - **Risk**: Misuse could modify files, leak data via commands, or operate in unintended folders
+   - **Mitigation**: Restrict allowed folders, require explicit approval for sensitive actions, and treat this feature as security-critical
+
+6. **Full Disk Access**: App requests broad file system access
+    - **Risk**: Could read sensitive files if compromised
+    - **Mitigation**: macOS permissions system controls access
 
 ## Risk Mitigation
 
@@ -70,7 +76,10 @@ Little Helper is designed with privacy-first principles: all processing happens 
 
 ## Security Contact
 
-Report security issues privately to: [security email needed]
+If you discover a security issue, please report it privately.
+
+- Preferred: GitHub Security Advisories (private disclosure)
+- Alternative: create a private issue and include reproduction steps
 
 ## Threat Model
 

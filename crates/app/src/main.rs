@@ -2859,14 +2859,22 @@ fn render_message(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.add_space(8.0);
             egui::Frame::none()
-                .fill(egui::Color32::from_rgb(70, 130, 180))
+                .fill(if dark {
+                    egui::Color32::from_rgb(30, 90, 150) // Deep Blue for Dark Mode
+                } else {
+                    egui::Color32::from_rgb(220, 235, 255) // Pale Blue for Light Mode
+                })
                 .rounding(egui::Rounding::same(12.0))
                 .inner_margin(egui::Margin::same(12.0))
                 .show(ui, |ui| {
                     ui.set_max_width(500.0);
                     ui.label(
                         egui::RichText::new(&msg.content)
-                            .color(egui::Color32::WHITE)
+                            .color(if dark {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_rgb(10, 30, 50) // Dark text for Light Mode
+                            })
                             .size(15.0),
                     );
                 });
