@@ -35,16 +35,24 @@ pub fn init_common_infrastructure(data_dir: &PathBuf) -> Result<CommonInfrastruc
     let safe_file_ops = SafeFileOps::new(archive_dir);
     let audit_logger = AuditLogger::new(log_dir)?;
 
+    let security_context = Arc::new(SecurityContext::new(15)); // 15 min timeout
+
     Ok(CommonInfrastructure {
         safe_file_ops: Arc::new(safe_file_ops),
         audit_logger: Arc::new(audit_logger),
+        data_dir: data_dir.clone(),
+        security_context,
     })
 }
 
 /// Common infrastructure shared across all skills.
+use crate::security::SecurityContext;
+
 pub struct CommonInfrastructure {
     pub safe_file_ops: Arc<SafeFileOps>,
     pub audit_logger: Arc<AuditLogger>,
+    pub data_dir: PathBuf,
+    pub security_context: Arc<SecurityContext>,
 }
 
 use crate::skills::SkillRegistry;

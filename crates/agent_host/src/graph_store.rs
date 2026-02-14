@@ -187,6 +187,29 @@ impl GraphStore {
         related
     }
 
+    /// Get usage-based neighbors (1-hop) for a node index
+    /// Returns (NodeIndex, Relation String, Role [Outgoing/Incoming])
+    pub fn get_related_nodes(&self, idx: NodeIndex) -> Vec<(NodeIndex, String, String)> {
+        let mut related = Vec::new();
+        
+        // Outgoing
+        for edge in self.graph.edges(idx) {
+            use petgraph::visit::EdgeRef;
+            related.push((edge.target(), edge.weight().relation.clone(), "related to".to_string()));
+        }
+        
+        // Incoming
+        for neighbor in self.graph.neighbors_directed(idx, petgraph::Direction::Incoming) {
+             if let Some(edge_idx) = self.graph.find_edge(neighbor, idx) {
+                 if let Some(weight) = self.graph.edge_weight(edge_idx) {
+                     related.push((neighbor, weight.relation.clone(), "referenced by".to_string()));
+                 }
+             }
+        }
+        
+        related
+    }
+
     /// Update feedback for a node
     pub fn update_node_feedback(&mut self, label: &str, score_delta: f32) {
         if let Some(&idx) = self.node_map.get(label) {
@@ -497,5 +520,34 @@ mod tests {
         assert_eq!(results[0].0, n1); // Exact match first
         assert_eq!(results[1].0, n3); // Near match second
         // Y-Axis should be excluded (sim 0.0 < 0.5)
+    }
+
+    #[test]
+    fn test_get_related_nodes() {
+        let mut store = GraphStore::new();
+        
+        // Create nodes
+        let n_center = store.add_node("Center", None, "test", Mode::General, None);
+        let n_out = store.add_node("Target", None, "test", Mode::General, None);
+        let n_in = store.add_node("Source", None, "test", Mode::General, None);
+        
+        // Add edges
+        store.add_edge(n_center, n_out, "defines"); // Center -> Target
+        store.add_edge(n_in, n_center, "depends_on"); // Source -> Center
+        
+        // Get related
+        let related = store.get_related_nodes(n_center);
+        
+        assert_eq!(related.len(), 2);
+        
+        // Check Outgoing
+        assert!(related.iter().any(|(idx, rel, role)| 
+            *idx == n_out && rel == "defines" && role == "related to"
+        ));
+        
+        // Check Incoming
+        assert!(related.iter().any(|(idx, rel, role)| 
+            *idx == n_in && rel == "depends_on" && role == "referenced by"
+        ));
     }
 }

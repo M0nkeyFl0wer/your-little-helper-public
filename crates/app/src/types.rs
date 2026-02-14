@@ -455,24 +455,45 @@ impl Default for AppState {
         // Background Memory Optimization Task
         let bg_cm = context_manager.clone();
         std::thread::spawn(move || {
+            let mut last_prune = std::time::SystemTime::now();
             loop {
                 // Check every minute
                 std::thread::sleep(std::time::Duration::from_secs(60));
                 
-                // Block to check trigger
+                // 1. Reactive Check (New Docs)
                 let needs_opt = {
                     let mut cm = bg_cm.lock();
                     cm.needs_optimization(50) // Threshold: 50 new docs
                 };
+                
+                // 2. Periodic Check (Daily)
+                let elapsed = last_prune.elapsed().unwrap_or_default();
+                let daily_prune_due = elapsed.as_secs() > 86400; // 24 hours
 
-                if needs_opt {
-                    // Re-acquire lock to perform work (dropping it briefly above is fine, but we need it now)
-                    // Actually, we could have kept it, but let's be nice to other readers
+                if needs_opt || daily_prune_due {
+                    // Re-acquire lock to perform work
                     let mut cm = bg_cm.lock();
-                    let merged = cm.graph.consolidate_nodes(0.9);
+                    
+                    // Reactive consolidation
+                    if needs_opt {
+                        let merged = cm.graph.consolidate_nodes(0.9);
+                        if merged > 0 {
+                            println!("[MemoryOptimizer] Reactive: Consolidation merged {} nodes.", merged);
+                        }
+                    }
+                    
+                    // Periodic Pruning (or if reactive triggered it, might as well prune a bit)
+                    // If daily, we prune harder (older than 30 days). If reactive, maybe just very low feedback?
+                    // For simplicity, let's run the standard prune.
                     let pruned = cm.graph.prune_nodes(-0.5, 30);
-                    if merged > 0 || pruned > 0 {
-                         println!("[MemoryOptimizer] Background run: Merged {}, Pruned {}", merged, pruned);
+                    
+                    if pruned > 0 {
+                          println!("[MemoryOptimizer] Pruned {} nodes.", pruned);
+                    }
+                    
+                    if daily_prune_due {
+                        last_prune = std::time::SystemTime::now();
+                        println!("[MemoryOptimizer] Daily prune complete.");
                     }
                 }
             }
@@ -1786,13 +1807,39 @@ IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not
             "Diagnostics: uname -a, df -h, free -h, ip addr, ping, ps aux, systemctl, journalctl, lsof."
         };
 
+        // ─── CONTEXT RETRIEVAL (Graph RAG) ───
+        // Search for relevant context based on user query + current mode
+        let context_docs = {
+            let mut cm = self.context_manager.lock();
+            // Use query + mode as search terms
+            let search_query = format!("{} {}", self.current_mode.as_str(), self.input_text);
+            
+            // Limit to 3 relevant snippets to keep prompt fast
+            let results = cm.search(&search_query, None); 
+            
+            if results.is_empty() {
+                String::new()
+            } else {
+                let mut ctx = String::from("\n\nRELEVANT CONTEXT (from your knowledge graph):\n");
+                for res in results.into_iter().take(3) {
+                    ctx.push_str(&format!("- [{}]", res.document.name));
+                    // Use excerpts as the content summary
+                    for excerpt in res.excerpts {
+                         ctx.push_str(&format!("\n  > {}\n", excerpt.trim()));
+                    }
+                }
+                ctx
+            }
+        };
+
         let system_prompt = match self.current_mode {
             ChatMode::Find => format!(
                 r#"You are Little Helper in FIND mode, helping {user_name}.
 YOUR JOB: Locate files and content. Use <command>cmd</command> to search. Use <preview>path</preview> to show files.
 Keep commands read-only and single-step. {find_hint}
 RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what was found (e.g. "I found 3 files matching 'mandate':" followed by a clean list). Never show raw terminal commands to the user. The user is non-technical.
-{capabilities}"#
+{capabilities}
+{context_docs}"#
             ),
             ChatMode::Fix => format!(
                 r#"You are Little Helper in FIX mode, helping {user_name}.
@@ -1801,7 +1848,8 @@ YOUR JOB: Tech support — diagnose, find files, fix issues. Run commands, don't
 {fix_hint}
 Workflow: run diagnostics → <search>search solutions</search> if needed → explain → fix. Use <preview>path</preview> to show files.
 RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what you found and what you recommend. Never show raw terminal commands to the user. The user is non-technical.
-{capabilities}"#
+{capabilities}
+{context_docs}"#
             ),
             ChatMode::Research => {
                 format!(
@@ -1818,12 +1866,12 @@ When asked to write a report or create a document, save it using <command>cat > 
 
 Distinguish facts from speculation. Cite your sources with URLs.
 RESPONSE STYLE: Explain findings in plain language. The user is non-technical.
-{capabilities}"#
+{capabilities}
+{context_docs}"#
                 )
             },
             ChatMode::Data => format!(
-                "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. Use <command></command> to examine files. ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{}",
-                user_name, capabilities
+                "You are Little Helper, a data assistant helping {user_name}. Help work with CSV files, JSON data, and databases. Use <command></command> to examine files. ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{capabilities}\n{context_docs}",
             ),
             ChatMode::Content => {
                 // Load full campaign context + personas + DDD workflow for Content mode

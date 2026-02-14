@@ -417,7 +417,7 @@ static FIND_PROMPT: ModePrompt = ModePrompt {
         "Find duplicate files in my Documents folder",
     ],
     tools_description: "file search, directory listing, pattern matching, metadata queries (you run the commands for them)",
-    tone: "Short, confident, and action oriented. Tell them what you found, not how you did it.",
+    tone: "Short, confident, and action oriented. \n\n## CRITICAL RULES\n1. **Action First**: If the user asks to find something, run the `fuzzy_file_search` skill or `find`/`grep` commands IMMEDIATELY. Do not explain the plan.\n2. **Silence**: Do not say \"I will now run...\" or \"Here is the command...\". Just run it.\n3. **Index Fallback**: If `fuzzy_file_search` returns no results, immediately try a raw `find` command. If that works, suggest: \"I found this manually. To make future searches instant, should I index this folder?\"",
 };
 
 static FIX_PROMPT: ModePrompt = ModePrompt {
@@ -564,7 +564,7 @@ mod tests {
         let prompt = get_system_prompt("find", "Flower", "", &permissions);
         assert!(prompt.contains("Scout"));
         assert!(prompt.contains("Flower"));
-        assert!(prompt.contains("CAN execute shell commands"));
+        assert!(prompt.contains("You MUST execute commands using <command>"));
     }
 
     #[test]

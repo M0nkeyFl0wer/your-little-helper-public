@@ -4,6 +4,43 @@
 
 use std::path::{Path, PathBuf};
 use shared::settings::AppSettings;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+
+/// Context for tracking authentication state (2FA)
+#[derive(Debug)]
+pub struct SecurityContext {
+    last_auth_time: AtomicI64, // Timestamp in seconds, 0 = never
+    auth_timeout: Duration,
+}
+
+impl SecurityContext {
+    pub fn new(timeout_mins: u64) -> Self {
+        Self {
+            last_auth_time: AtomicI64::new(0),
+            auth_timeout: Duration::from_secs(timeout_mins * 60),
+        }
+    }
+
+    /// Mark the session as authenticated NOW.
+    pub fn authenticate(&self) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        self.last_auth_time.store(now, Ordering::Relaxed);
+    }
+
+    /// Check if the session is currently authenticated (within timeout).
+    pub fn is_authenticated(&self) -> bool {
+        let last = self.last_auth_time.load(Ordering::Relaxed);
+        if last == 0 {
+            return false;
+        }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let elapsed = now - last;
+        // Check if elapsed is positive and within timeout
+        elapsed >= 0 && elapsed < self.auth_timeout.as_secs() as i64
+    }
+}
 
 /// A sandbox that restricts file access to specific allowed directories.
 #[derive(Debug, Clone)]
