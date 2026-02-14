@@ -23,6 +23,7 @@ dirs = "5"
 reqwest = { workspace = true }
 html2text = { workspace = true }
 walkdir = "2.4"
+fastembed = "4"
 petgraph = { version = "0.8.3", features = ["serde-1"] }
 strsim = { workspace = true }
 

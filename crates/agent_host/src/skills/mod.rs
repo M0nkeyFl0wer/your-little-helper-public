@@ -22,6 +22,7 @@ pub mod research;
 pub mod memory_optimizer;
 
 /// Registry managing all available skills
+#[derive(Clone)]
 pub struct SkillRegistry {
     /// All registered skills by ID
     skills: HashMap<String, Arc<dyn Skill>>,

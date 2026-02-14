@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use tokio::process::Command;
 
+use crate::security::PathSandbox;
+
 /// Agent Session State (Virtual Environment)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
@@ -20,6 +22,9 @@ pub struct SessionState {
     pub history: Vec<String>,
     /// Current working directory (virtual)
     pub cwd: PathBuf,
+    /// File system sandbox (skipped during serialization to keep state simple)
+    #[serde(skip)]
+    pub sandbox: Option<PathSandbox>,
 }
 
 impl SessionState {
@@ -28,7 +33,13 @@ impl SessionState {
             env_vars: HashMap::new(),
             history: Vec::new(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            sandbox: None,
         }
+    }
+    
+    pub fn with_sandbox(mut self, sandbox: PathSandbox) -> Self {
+        self.sandbox = Some(sandbox);
+        self
     }
 }
 
@@ -543,6 +554,23 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
             summary: "Blocked: Secret detected".to_string(),
             needed_sudo: false,
         });
+    }
+
+    // Security: Check for path violations (Sandboxing)
+    if let Some(sandbox) = &state.sandbox {
+        if let Err(msg) = sandbox.validate_command(cmd, &state.cwd) {
+            return Ok(CommandResult {
+                command: cmd.to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: format!("SANDBOX ALERT: {}", msg),
+                output: format!("SANDBOX ALERT: {}\nCommand execution blocked due to file system restrictions.", msg),
+                duration_ms: 0,
+                success: false,
+                summary: "Blocked: Sandbox violation".to_string(),
+                needed_sudo: false,
+            });
+        }
     }
 
     // Handle internal commands (cd, set_env)

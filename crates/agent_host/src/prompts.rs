@@ -51,6 +51,19 @@ pub fn get_system_prompt(
     let security_protocol = get_security_protocol();
     let preview_instructions = get_preview_instructions();
 
+    let skill_instructions = r#"
+## Skill Access (POWER USER)
+You have access to specialized SKILLS. To use them, output a <skill> tag:
+<skill id="skill_id">
+{ "param": "value" }
+</skill>
+
+Common Skills:
+- memory_optimize (consolidate, prune)
+- web_search (query)
+- write_file (path, content)
+"#;
+
     format!(
         r#"# {name} - Your {mode} Helper
 
@@ -68,6 +81,8 @@ You are {name}, part of the Little Helper team. {personality}
 {tone}
 
 {os_context}
+
+{skill_instructions}
 
 {capabilities}
 
@@ -99,6 +114,7 @@ You are {name}, part of the Little Helper team. {personality}
         capabilities = capabilities,
         security_protocol = security_protocol,
         preview_instructions = preview_instructions,
+        skill_instructions = skill_instructions,
         user_name = user_name,
         memory_section = if memory_summary.is_empty() {
             String::new()
@@ -163,6 +179,10 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
         }
     }
 
+    // Add Git Helper for all modes (but emphasize in Build)
+    capabilities.push("### Universal Skills".to_string());
+    capabilities.push("- **Git Helper**: `git_status`, `git_add`, `git_commit` - Help users manage their Real Git repository.".to_string());
+
     format!("## Your Capabilities\n{}", capabilities.join("\n"))
 }
 
@@ -192,9 +212,10 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
             "**File Organizer**: I can suggest organization for messy folders (NO deletion)".into(),
         ],
         "build" => vec![
-            "**Project Scaffold**: I can create new project structures".into(),
-            "**Spec Kit**: I can help plan features with spec-driven development".into(),
-            "**Code Generator**: I can create scripts and config files".into(),
+            "**Project Scaffold**: `spec_scaffold <name>` - Create a new project with Spec Kit structure".into(),
+            "**Spec Init**: `spec_init` - Create a new feature specification".into(),
+            "**Spec Implement**: `spec_implement <spec>` - Read a spec and write the code (The Agent IS the Swarm)".into(),
+            "**Git Helper**: `git_commit <msg>` - Commit your changes to the project repo".into(),
             "**Secret Scanner**: I check for hardcoded API keys before you commit".into(),
             "**Dependency Audit**: I check your project for vulnerable packages".into(),
         ],
@@ -444,7 +465,7 @@ static RESEARCH_PROMPT: ModePrompt = ModePrompt {
         "Compare these two approaches and cite sources",
     ],
     tools_description: "web search, article reader, synthesis (you trigger searches automatically)",
-    tone: "Helpful and direct. Deliver the answer and cite sources naturally. No talk about the tooling unless asked.",
+    tone: "Helpful and direct. Deliver the answer and cite sources naturally. No talk about the tooling unless asked. \n\n## Deep Research Protocol\nIf the user asks for a 'Deep Search' or 'Research Report':\n1. Break the topic into sub-questions.\n2. Run multiple searches for each sub-question.\n3. Read the most promising articles.\n4. Synthesize everything into a comprehensive report with citations.",
 };
 
 static DATA_PROMPT: ModePrompt = ModePrompt {
@@ -504,6 +525,8 @@ static BUILD_PROMPT: ModePrompt = ModePrompt {
         "Project setup and dependency wiring",
         "Troubleshooting build failures",
         "Turning rough ideas into a plan",
+        "Testing (Unit, Integration, Playwright)",
+        "Deployment guidance (Netlify, Vercel, Docker)",
     ],
     example_questions: &[
         "I want to build a recipe organizer app",
@@ -512,8 +535,8 @@ static BUILD_PROMPT: ModePrompt = ModePrompt {
         "Generate a plan from the spec",
         "Break the plan into tasks and start building",
     ],
-    tools_description: "Spec Kit assistant runner, project scaffolding, safe command execution",
-    tone: "Playful, confident, and very hands-on. You keep it simple and offer big, obvious buttons/choices when possible.",
+    tools_description: "Spec Kit runner, safe terminal automation, project scaffold, test runner",
+    tone: "Playful, confident, and very hands-on. You are the builder. You don't just plan, you EXECUTE using your skills. Guide users through the entire lifecycle: Spec -> Build -> Test -> Deploy. Hold their hand through testing (Playwright, Unit Tests) and Deployment.",
 };
 
 #[cfg(test)]

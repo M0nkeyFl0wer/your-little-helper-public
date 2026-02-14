@@ -2,16 +2,10 @@
 //!
 //! Integrates with spec-kit-assistant for structured project workflows.
 
-mod project_scaffold;
-mod spec_check;
-mod spec_init;
-mod spec_run;
-mod spec_utils;
+mod rust_spec;
+pub mod spec_tracker;
 
-pub use project_scaffold::ProjectScaffoldSkill;
-pub use spec_check::SpecCheckSkill;
-pub use spec_init::SpecInitSkill;
-pub use spec_run::SpecRunSkill;
+pub use rust_spec::{SpecInitSkill, SpecScaffoldSkill, SpecImplementSkill, SpecNextTaskSkill};
 
 use crate::skills::SkillRegistry;
 use std::sync::Arc;
@@ -19,7 +13,7 @@ use std::sync::Arc;
 /// Register all build skills
 pub fn register_build_skills(registry: &mut SkillRegistry) {
     registry.register(Arc::new(SpecInitSkill));
-    registry.register(Arc::new(SpecCheckSkill));
-    registry.register(Arc::new(SpecRunSkill));
-    registry.register(Arc::new(ProjectScaffoldSkill));
+    registry.register(Arc::new(SpecScaffoldSkill));
+    registry.register(Arc::new(SpecImplementSkill));
+    registry.register(Arc::new(SpecNextTaskSkill));
 }

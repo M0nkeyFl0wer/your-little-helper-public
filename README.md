@@ -8,7 +8,8 @@
 /_____/   U
 ```
 
-Your Little Helper is a private desktop assistant. Find files, fix problems, do research, and build projects.
+**Your Private Agentic Assistant.**  
+Little Helper is more than a chatbot—it's a desktop agent with a semantic brain, git-backed memory, and a powerful spec-driven build system. It runs locally, keeping your data safe.
 
 ## Download
 
@@ -21,77 +22,63 @@ Your Little Helper is a private desktop assistant. Find files, fix problems, do 
 
 ---
 
-## Quick Install
+## What Makes It Different?
 
+### 🧠 Semantic Brain (Graph RAG)
+Unlike standard bots that forget everything, Little Helper builds a knowledge graph of your entities, projects, and preferences. It learns from your feedback and connects the dots between related concepts using a locally structured graph database.
+
+### 🛡️ Dual-Layer Git Memory
+1.  **Shadow Git (`.little-helper/versions`):** Every file change you make is backed up here automatically. This is your "Undo" button. It works even if you haven't initialized a real git repo.
+2.  **Real Git Integration:** The agent acts as your "Git Co-pilot." It can `git init`, `git add`, and `git commit` to your actual project repository, helping you maintain a clean history without leaving the chat.
+
+### 🏗️ Spec-Driven Development (Native Rust)
+The `Build` mode features a native "Spec Kit" workflow to take you from idea to code:
+1.  **Scaffold**: `scaffold my-app` (Creates `specs/`, `src/`, and `git init`)
+2.  **Spec**: `init spec` (Creates a structured spec template in `specs/`)
+3.  **Implement**: `implement spec` (The agent reads the spec and writes the code)
+
+*No Node.js or external dependencies required—just pure Rust power.*
+
+---
+
+## Modes & Skills
+
+| Mode | Personality | Superpower |
+|------|-------------|------------|
+| **Find** | **Scout** | Deep file search & metadata hunting |
+| **Fix** | **Doc** | System diagnostics & auto-healing (with permission) |
+| **Research** | **Scholar** | Multi-hop web research with citation verification |
+| **Build** | **Spec** | **Spec-Kit & Git Co-pilot** |
+| **Data** | **Analyst** | CSV/JSON analysis & visualization |
+| **Content** | **Muse** | Creative writing & persona management |
+
+**Built-in Viewers:** Text, Images, PDF, CSV, JSON, HTML
+
+---
+
+## Privacy Protocols
+
+- **Local First:** Logic runs on your machine.
+- **Permissioned Access:** "Terminal commands are never auto-run." You approve every valid command.
+- **Secret Scanning:** The agent proactively detects and warns before you paste secrets or API keys.
+- **Safe Defaults:** Generated scripts use safe permissions (e.g., `chmod 600`).
+
+---
+
+## Quick Start
 ### Mac
-
-1. Download `LittleHelper-macOS-arm64.zip`
-2. Unzip and double-click **"Setup Little Helper.app"**
-3. Click Install, enter your password, wait ~5 min
-4. Done!
-
-*First time opening: if macOS warns "unidentified developer" - right-click > Open > Open*
-
-**Or use Terminal:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper-public/main/install-easy.sh | bash
-```
+`curl -fsSL https://raw.githubusercontent.com/M0nkeyFl0wer/your-little-helper-public/main/install-easy.sh | bash`
 
 ### Windows
-
-1. Download `LittleHelper-Windows.zip`
-2. Unzip and double-click **"Install.bat"**
-3. Follow prompts, wait ~5 min for AI download
-4. Done!
-
-*Windows may show SmartScreen warning - click "More info" > "Run anyway"*
-
----
-
-## Features
-
-| Mode | What it does |
-|------|--------------|
-| **Find** | Search for files on your computer |
-| **Fix** | Tech support and troubleshooting |
-| **Research** | Deep research with web search |
-| **Build** | Create projects with Spec Kit |
-
-**Built-in viewers:** Text, Images, PDF, CSV, JSON, HTML
-
-**Everything runs locally.** Your data stays on your machine.
-
-## Privacy Defaults
-
-- Terminal commands are never auto-run. The assistant proposes commands inside `<command>` blocks and you approve each one before it executes.
-- Cloud providers are optional. Fresh installs stay on local models until you explicitly add API keys.
-- Campaign/persona context sharing and system summaries are opt-in. Toggle them in `settings.json` if you want Little Helper to preload those documents.
-
----
-
-## First Launch
-
-The app will ask for your name and let you pick a background image (optional).
-
-Choose your AI mode and start chatting:
-- "Find my tax documents from 2023"
-- "My WiFi is acting up, can you help?"
-- "Research the history of coffee"
+Download `LittleHelper-Windows.zip`, unzip, and run `Install.bat`.
 
 ---
 
 ## Cloud Providers (Optional)
-
 By default, Little Helper uses Ollama (local AI). You can add cloud providers:
-
 ```bash
-# OpenAI
 export OPENAI_API_KEY="your-key"
-
-# Anthropic Claude
 export ANTHROPIC_API_KEY="your-key"
-
-# Google Gemini
 export GEMINI_API_KEY="your-key"
 ```
 
@@ -107,9 +94,8 @@ rm ~/Library/LaunchAgents/com.littlehelper.ollama.plist
 ```
 
 ### Windows
-1. Delete the LittleHelper folder from `%LOCALAPPDATA%\LittleHelper`
+1. Delete `%LOCALAPPDATA%\LittleHelper`
 2. Delete the desktop shortcut
-3. Uninstall Ollama from Add/Remove Programs (optional)
 
 ---
 
@@ -124,7 +110,5 @@ git clone https://github.com/M0nkeyFl0wer/your-little-helper.git
 cd your-little-helper
 cargo build --release -p app
 ```
-
----
 
 MIT License

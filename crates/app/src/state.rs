@@ -11,6 +11,10 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use futures::future::{AbortRegistration, Abortable};
+use agent_host::skills::SkillRegistry;
+use shared::skill::{SkillInput, SkillContext, Mode};
+use std::sync::Arc;
+
 /// Run AI generation in background thread (non-blocking)
 ///
 /// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
@@ -20,7 +24,9 @@ pub fn run_ai_generation(
     settings: shared::settings::ModelProvider,
     allow_terminal: bool,
     allow_web: bool,
+    current_mode: Mode,
     allowed_dirs: Vec<String>,
+    skill_registry: Arc<SkillRegistry>,
     tx: Sender<AiResult>,
     status_tx: Sender<String>,
     abort_reg: AbortRegistration,
@@ -42,7 +48,15 @@ pub fn run_ai_generation(
         }
     };
 
-    let router = ProviderRouter::new(settings);
+    // Fast Mode Logic: Use faster models for Find/Fix or simple queries
+    let mut model_settings = settings.clone();
+    if matches!(current_mode, Mode::Find | Mode::Fix | Mode::Content) {
+         model_settings.openai_model = model_settings.openai_fast_model.clone();
+         model_settings.anthropic_model = model_settings.anthropic_fast_model.clone();
+         model_settings.gemini_model = model_settings.gemini_fast_model.clone();
+    }
+
+    let router = ProviderRouter::new(model_settings);
     let mut session_state = SessionState::new();
 
     // Pre-compile regexes
@@ -50,6 +64,7 @@ pub fn run_ai_generation(
     let cmd_re = regex::Regex::new(r"(?s)<(?:command|request|cmd|run)>(.*?)</(?:command|request|cmd|run)>").unwrap();
     // Also catch markdown code blocks as commands (AI keeps outputting these instead of tags)
     let md_cmd_re = regex::Regex::new(r"(?s)```(?:bash|sh|shell|zsh)?\n(.*?)```").unwrap();
+    let skill_re = regex::Regex::new(r"(?s)<skill id=[\x22'](.*?)[\x22']>(.*?)</skill>").unwrap();
 
     let result = rt.block_on(Abortable::new(async {
         let mut msgs = messages;
@@ -94,8 +109,17 @@ pub fn run_ai_generation(
                 .collect();
             commands.extend(md_commands);
 
+            // Parse skills
+            let mut skill_calls = Vec::new();
+            for cap in skill_re.captures_iter(&response) {
+                let id = cap[1].trim().to_string();
+                let params_str = cap[2].trim();
+                let params: Option<serde_json::Value> = serde_json::from_str(params_str).ok();
+                skill_calls.push((id, params.unwrap_or(serde_json::Value::Null)));
+            }
+
             // If no actions needed, return the response
-            if searches.is_empty() && commands.is_empty() {
+            if searches.is_empty() && commands.is_empty() && skill_calls.is_empty() {
                 return Ok::<
                     (
                         String,
@@ -111,6 +135,8 @@ pub fn run_ai_generation(
                     pending_commands,
                 ));
             }
+
+
 
             // Add assistant response to conversation
             msgs.push(ApiChatMessage {
@@ -218,7 +244,36 @@ pub fn run_ai_generation(
                 }
             }
 
-            if !searches.is_empty() || !commands.is_empty() {
+            // Execute skills
+            for (id, params) in skill_calls {
+                let _ = status_tx.send(format!("Running skill: {}", id));
+                let mut input = SkillInput::from_query("");
+                if let serde_json::Value::Object(map) = params {
+                    for (k, v) in map {
+                        input = input.with_param(k, v);
+                    }
+                }
+
+                let ctx = SkillContext::new(current_mode, PathBuf::from("."));
+                
+                match skill_registry.invoke(&id, input, &ctx).await {
+                    Ok(execution) => {
+                        match execution.output {
+                            Some(output) => {
+                                 results.push(format!("[Skill {} completed]\n{:?}", id, output));
+                            }
+                            None => {
+                                results.push(format!("[Skill {} completed (no output)]", id));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        results.push(format!("[Skill {} failed]: {}", id, e));
+                    }
+                }
+            }
+
+            if !searches.is_empty() || !commands.is_empty() || !results.is_empty() {
                 // response cleared
             }
 

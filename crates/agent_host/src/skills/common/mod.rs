@@ -6,6 +6,9 @@
 //! - VersionHistory: View file version history
 //! - VersionRestore: Restore files to previous versions
 
+mod git_helper;
+pub use git_helper::GitHelper;
+
 pub mod audit;
 pub mod safe_file_ops;
 pub mod version_history;
@@ -51,4 +54,5 @@ pub fn register_common_skills(registry: &mut SkillRegistry, infra: &std::sync::A
     registry.register(std::sync::Arc::new(VersionHistory::new()));
     registry.register(std::sync::Arc::new(VersionRestore::new()));
     registry.register(std::sync::Arc::new(WriteFileSkill::new(infra.clone())));
+    registry.register(std::sync::Arc::new(GitHelper));
 }

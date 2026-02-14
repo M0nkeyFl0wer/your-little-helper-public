@@ -53,6 +53,9 @@ pub struct NodeData {
     /// Last accessed timestamp (Unix seconds)
     #[serde(default = "default_timestamp")]
     pub last_accessed: u64,
+    /// Vector embedding for semantic search
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<Vec<f32>>,
 }
 
 fn default_timestamp() -> u64 {
@@ -75,7 +78,7 @@ pub struct EdgeData {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GraphStore {
     /// Underlying graph: Nodes are entities, Edges are relationships
-    graph: DiGraph<NodeData, EdgeData>,
+    pub graph: DiGraph<NodeData, EdgeData>,
     /// Lookup map for quick node access by label
     node_map: HashMap<String, NodeIndex>,
 }
@@ -91,8 +94,14 @@ impl GraphStore {
 
     /// Add a node (entity) to the graph. Returns the NodeIndex.
     /// Idempotent: if node exists, returns existing index.
-    pub fn add_node(&mut self, label: &str, category: Option<String>, source_id: &str, mode: Mode) -> NodeIndex {
+    pub fn add_node(&mut self, label: &str, category: Option<String>, source_id: &str, mode: Mode, embedding: Option<Vec<f32>>) -> NodeIndex {
         if let Some(&idx) = self.node_map.get(label) {
+            // Update embedding if missing and provided
+            if let Some(node) = self.graph.node_weight_mut(idx) {
+                if node.embedding.is_none() && embedding.is_some() {
+                    node.embedding = embedding;
+                }
+            }
             return idx;
         }
 
@@ -104,11 +113,22 @@ impl GraphStore {
             usage_count: 0,
             feedback_score: 0.0,
             last_accessed: default_timestamp(),
+            embedding,
         };
 
         let idx = self.graph.add_node(node);
         self.node_map.insert(label.to_string(), idx);
         idx
+    }
+
+    /// Check if a node exists and has an embedding
+    pub fn has_embedding(&self, label: &str) -> bool {
+        if let Some(&idx) = self.node_map.get(label) {
+            if let Some(node) = self.graph.node_weight(idx) {
+                return node.embedding.is_some();
+            }
+        }
+        false
     }
 
     /// Add a directed edge (relationship) between two nodes
@@ -362,6 +382,37 @@ impl GraphStore {
         let store: Self = serde_json::from_str(&json)?;
         Ok(store)
     }
+    /// Perform a vector search for similar nodes
+    pub fn vector_search(&self, query_vec: &[f32], limit: usize, min_score: f32) -> Vec<(NodeIndex, f32)> {
+        let mut results = Vec::new();
+
+        for idx in self.graph.node_indices() {
+             if let Some(embedding) = &self.graph[idx].embedding {
+                let score = cosine_similarity(query_vec, embedding);
+                if score >= min_score {
+                    results.push((idx, score));
+                }
+             }
+        }
+
+        // Sort by score descending
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        if results.len() > limit {
+            results.truncate(limit);
+        }
+        results
+    }
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot_product: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot_product / (norm_a * norm_b)
+    }
 }
 
 #[cfg(test)]
@@ -373,11 +424,11 @@ mod tests {
         let mut store = GraphStore::new();
         
         // Add "Apple" and "apple " (fuzzy match)
-        let n1 = store.add_node("Apple", None, "test", Mode::General);
-        let n2 = store.add_node("apple ", None, "test", Mode::General);
+        let n1 = store.add_node("Apple", None, "test", Mode::General, None);
+        let n2 = store.add_node("apple ", None, "test", Mode::General, None);
         
         // Add distinct node
-        let n3 = store.add_node("Banana", None, "test", Mode::General);
+        let n3 = store.add_node("Banana", None, "test", Mode::General, None);
 
         // Usage stats to influence merge
         store.graph[n1].usage_count = 10;
@@ -398,22 +449,53 @@ mod tests {
     fn test_prune_nodes() {
         let mut store = GraphStore::new();
         
-        let n1 = store.add_node("GoodNode", None, "test", Mode::General);
+        let n1 = store.add_node("GoodNode", None, "test", Mode::General, None);
         store.graph[n1].feedback_score = 0.5;
         store.graph[n1].last_accessed = default_timestamp(); // Just now
         
-        let n2 = store.add_node("BadNode", None, "test", Mode::General);
+        let n2 = store.add_node("BadNode", None, "test", Mode::General, None);
         store.graph[n2].feedback_score = -0.9; // Hated
         
-        let n3 = store.add_node("OldNode", None, "test", Mode::General);
+        let n3 = store.add_node("OldNode", None, "test", Mode::General, None);
         store.graph[n3].usage_count = 0;
         store.graph[n3].last_accessed = default_timestamp() - (40 * 24 * 3600); // 40 days old
         
+        // Prune
         let removed = store.prune_nodes(-0.5, 30);
         
         assert_eq!(removed, 2);
         assert!(store.node_map.contains_key("GoodNode"));
         assert!(!store.node_map.contains_key("BadNode"));
         assert!(!store.node_map.contains_key("OldNode"));
+    }
+    
+    #[test]
+    fn test_vector_search() {
+        let mut store = GraphStore::new();
+        
+        // A simple test with dummy vectors
+        // [1.0, 0.0] vs [0.0, 1.0] -> 0.0 similarity
+        // [1.0, 0.0] vs [0.9, 0.1] -> high similarity
+        
+        // Node 1: "X-Axis"
+        let v1 = vec![1.0, 0.0];
+        let n1 = store.add_node("X-Axis", None, "math", Mode::General, Some(v1));
+        
+        // Node 2: "Y-Axis"
+        let v2 = vec![0.0, 1.0];
+        let n2 = store.add_node("Y-Axis", None, "math", Mode::General, Some(v2));
+        
+        // Node 3: "Near X"
+        let v3 = vec![0.9, 0.1];
+        let n3 = store.add_node("Near X", None, "math", Mode::General, Some(v3));
+
+        // Search for something close to X-Axis
+        let query = vec![1.0, 0.0];
+        let results = store.vector_search(&query, 5, 0.5);
+        
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, n1); // Exact match first
+        assert_eq!(results[1].0, n3); // Near match second
+        // Y-Axis should be excluded (sim 0.0 < 0.5)
     }
 }
