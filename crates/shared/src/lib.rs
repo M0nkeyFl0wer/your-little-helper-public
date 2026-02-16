@@ -171,6 +171,27 @@ pub mod agent_api {
         pub role: String, // "system" | "user" | "assistant"
         pub content: String,
     }
+
+    /// Chunk types emitted during streaming AI generation.
+    #[derive(Debug, Clone)]
+    pub enum StreamChunk {
+        /// Incremental text delta from the model.
+        Text(String),
+        /// A native tool_use block has started (Anthropic only).
+        ToolUseStart { id: String, name: String },
+        /// Partial JSON input for the current tool_use block.
+        ToolInputDelta(String),
+        /// A complete tool call ready for execution.
+        ToolUseComplete {
+            id: String,
+            name: String,
+            input: serde_json::Value,
+        },
+        /// Stream finished.
+        Done { stop_reason: Option<String> },
+        /// Error encountered mid-stream.
+        Error(String),
+    }
 }
 
 pub mod search_types {

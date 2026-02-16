@@ -16,3 +16,4 @@ url = { workspace = true }
 tiny_http = { workspace = true }
 open = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }

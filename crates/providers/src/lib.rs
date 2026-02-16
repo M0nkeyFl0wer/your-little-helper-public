@@ -5,3 +5,4 @@ pub mod oauth_helper;
 pub mod ollama;
 pub mod openai;
 pub mod router;
+pub mod sse;

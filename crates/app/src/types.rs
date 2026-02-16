@@ -9,7 +9,7 @@ use agent_host::{classify_command, AgentHost, CommandResult, DangerLevel};
 use agent_host::execute_with_sudo;
 use eframe::egui;
 use services::web_preview::WebPreviewService;
-use shared::agent_api::ChatMessage as ApiChatMessage;
+use shared::agent_api::{ChatMessage as ApiChatMessage, StreamChunk};
 use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
 use shared::settings::AppSettings;
 use std::collections::HashMap;
@@ -273,6 +273,11 @@ pub struct AppState {
 
     // Live status updates from the AI pipeline (e.g. "Searching…", "Running command…")
     pub ai_status_rx: Option<Receiver<String>>,
+
+    // Streaming AI response channel — UI polls this per frame
+    pub ai_stream_rx: Option<Receiver<StreamChunk>>,
+    /// Accumulated streaming text per mode (displayed as partial assistant message)
+    pub streaming_partial: HashMap<ChatMode, String>,
 
     // Background OAuth flow channel
     pub oauth_result_rx: Option<Receiver<OAuthResult>>,
@@ -543,6 +548,8 @@ impl Default for AppState {
             cpu_nudge_dismissed: false,
             ollama_setup_rx: Some(ollama_rx),
             ai_status_rx: None,
+            ai_stream_rx: None,
+            streaming_partial: HashMap::new(),
             oauth_result_rx: None,
             oauth_in_progress: false,
         }
@@ -1038,6 +1045,47 @@ impl AppState {
         }
     }
 
+    /// Poll for streaming text chunks from the AI pipeline. Call once per frame.
+    /// Drains all available chunks and appends text to `streaming_partial[mode]`.
+    pub fn poll_ai_stream(&mut self) {
+        if let Some(rx) = &self.ai_stream_rx {
+            let mode = self.thinking_mode.unwrap_or(self.current_mode);
+            loop {
+                match rx.try_recv() {
+                    Ok(chunk) => match chunk {
+                        StreamChunk::Text(t) => {
+                            self.streaming_partial
+                                .entry(mode)
+                                .or_default()
+                                .push_str(&t);
+                        }
+                        StreamChunk::Done { stop_reason } => {
+                            // If this is an iteration reset (between agent loop turns),
+                            // clear the partial text so the next iteration starts fresh.
+                            if stop_reason.as_deref() == Some("iteration_reset") {
+                                self.streaming_partial.remove(&mode);
+                                // Don't break — keep draining for the next iteration's chunks
+                                continue;
+                            }
+                            // Otherwise it's the real end — stop polling
+                            break;
+                        }
+                        StreamChunk::Error(_) => {
+                            break;
+                        }
+                        // ToolUseStart/ToolInputDelta/ToolUseComplete are handled inside
+                        // run_ai_generation; they don't reach the UI stream channel as text.
+                        _ => {}
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn poll_ai_response(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
             // Non-blocking check for result
@@ -1054,6 +1102,11 @@ impl AppState {
                 }
                 self.thinking_mode = None;
                 self.ai_status_rx = None;
+                self.ai_stream_rx = None;
+                // Clear streaming partial for the mode that finished
+                if let Some(mode) = response_mode {
+                    self.streaming_partial.remove(&mode);
+                }
                 self.show_model_hint = false;
                 self.model_hint_started_at = None;
                 self.ai_result_rx = None;
@@ -1906,7 +1959,13 @@ WORKFLOW:
         let (status_tx, status_rx) = channel::<String>();
         self.ai_status_rx = Some(status_rx);
 
+        // Streaming channel: UI polls this per frame for incremental text
+        let (stream_tx, stream_rx) = channel::<StreamChunk>();
+        self.ai_stream_rx = Some(stream_rx);
+
         let mode = self.thinking_mode.unwrap_or(self.current_mode);
+        // Clear any leftover streaming partial for this mode
+        self.streaming_partial.remove(&mode);
 
         let (abort_handle, abort_reg) = futures::future::AbortHandle::new_pair();
         self.ai_abort_handles.insert(mode, abort_handle);
@@ -1943,6 +2002,7 @@ WORKFLOW:
                     allowed_dirs,
                     tx,
                     status_tx,
+                    stream_tx,
                     abort_reg,
                 );
             }));

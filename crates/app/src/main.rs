@@ -257,7 +257,8 @@ impl eframe::App for LittleHelperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
 
-        // Poll for AI response and live status updates (non-blocking)
+        // Poll for AI response and live status/stream updates (non-blocking)
+        s.poll_ai_stream();
         s.poll_ai_status();
         s.poll_ai_response();
         s.poll_command_result();
@@ -1573,9 +1574,10 @@ impl eframe::App for LittleHelperApp {
                     .unwrap_or_default();
                 let allowed_dirs = s.settings.allowed_dirs.clone();
                 // Only show thinking if current mode matches the thinking mode
-                let is_thinking = s.thinking_mode == Some(current_mode) && 
+                let is_thinking = s.thinking_mode == Some(current_mode) &&
                     s.is_thinking.get(&current_mode).copied().unwrap_or(false);
                 let thinking_status = s.thinking_status.get(&current_mode).cloned().unwrap_or_default();
+                let streaming_text = s.streaming_partial.get(&current_mode).cloned().unwrap_or_default();
 
                 egui::ScrollArea::vertical()
                     .max_height(chat_height)
@@ -1594,42 +1596,70 @@ impl eframe::App for LittleHelperApp {
 
                         if is_thinking {
                             ui.add_space(6.0);
-                            egui::Frame::none()
-                                .fill(if dark {
-                                    egui::Color32::from_rgb(50, 50, 58)
+                            if !streaming_text.is_empty() {
+                                // Render streaming partial response as a live assistant message
+                                let text_color = if dark {
+                                    egui::Color32::from_rgb(220, 220, 230)
                                 } else {
-                                    egui::Color32::from_rgb(230, 230, 235)
-                                })
-                                .rounding(egui::Rounding::same(12.0))
-                                .inner_margin(egui::Margin::same(12.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        // Animated spinner dots
+                                    egui::Color32::from_rgb(30, 30, 40)
+                                };
+                                egui::Frame::none()
+                                    .fill(if dark {
+                                        egui::Color32::from_rgb(50, 50, 58)
+                                    } else {
+                                        egui::Color32::from_rgb(230, 230, 235)
+                                    })
+                                    .rounding(egui::Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(12.0))
+                                    .show(ui, |ui| {
+                                        // Show the streamed text with a blinking cursor
                                         let time = ui.input(|i| i.time);
-                                        let dots = match ((time * 2.0) as i32) % 4 {
-                                            0 => "   ",
-                                            1 => ".  ",
-                                            2 => ".. ",
-                                            _ => "...",
-                                        };
-
-                                        let status = if thinking_status.is_empty() {
-                                            "Thinking".to_string()
+                                        let cursor = if ((time * 2.0) as i32) % 2 == 0 {
+                                            "\u{258C}" // left half block as blinking cursor
                                         } else {
-                                            thinking_status.clone()
+                                            " "
                                         };
-
-                                        ui.label(
-                                            egui::RichText::new(format!("{}{}", status, dots))
-                                                .color(if dark {
-                                                    egui::Color32::from_rgb(160, 160, 180)
-                                                } else {
-                                                    egui::Color32::from_rgb(60, 60, 70)
-                                                })
-                                                .italics(),
-                                        );
+                                        let display_text = format!("{}{}", streaming_text, cursor);
+                                        crate::simple_md::render_markdown(ui, &display_text, text_color);
                                     });
-                                });
+                            } else {
+                                // Show animated thinking dots
+                                egui::Frame::none()
+                                    .fill(if dark {
+                                        egui::Color32::from_rgb(50, 50, 58)
+                                    } else {
+                                        egui::Color32::from_rgb(230, 230, 235)
+                                    })
+                                    .rounding(egui::Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(12.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let time = ui.input(|i| i.time);
+                                            let dots = match ((time * 2.0) as i32) % 4 {
+                                                0 => "   ",
+                                                1 => ".  ",
+                                                2 => ".. ",
+                                                _ => "...",
+                                            };
+
+                                            let status = if thinking_status.is_empty() {
+                                                "Thinking".to_string()
+                                            } else {
+                                                thinking_status.clone()
+                                            };
+
+                                            ui.label(
+                                                egui::RichText::new(format!("{}{}", status, dots))
+                                                    .color(if dark {
+                                                        egui::Color32::from_rgb(160, 160, 180)
+                                                    } else {
+                                                        egui::Color32::from_rgb(60, 60, 70)
+                                                    })
+                                                    .italics(),
+                                            );
+                                        });
+                                    });
+                            }
                             // Request repaint to animate
                             ctx.request_repaint();
                         }

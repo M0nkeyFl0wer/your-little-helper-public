@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use shared::agent_api::ChatMessage;
+use shared::agent_api::{ChatMessage, StreamChunk};
 use shared::settings::ProviderAuth;
 use std::env;
 use std::sync::LazyLock;
 use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Shared HTTP client — keeps TCP/TLS connections alive across requests.
 static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
@@ -226,5 +228,133 @@ impl GeminiClient {
             body
         };
         Err(anyhow!("gemini error: {}\n{}", last_status, body))
+    }
+
+    /// Helper to build normalized contents + system_instruction from ChatMessages.
+    fn build_gemini_request(messages: &[ChatMessage]) -> Result<GeminiRequest> {
+        let mut system_parts: Vec<GeminiPart> = Vec::new();
+        let mut raw_contents: Vec<GeminiContent> = Vec::new();
+
+        for m in messages {
+            if m.role == "system" {
+                system_parts.push(GeminiPart {
+                    text: m.content.clone(),
+                });
+            } else {
+                let role = match m.role.as_str() {
+                    "assistant" => "model",
+                    "user" => "user",
+                    _ => "user",
+                };
+                if let Some(last) = raw_contents.last_mut() {
+                    if last.role == role {
+                        last.parts.push(GeminiPart {
+                            text: m.content.clone(),
+                        });
+                        continue;
+                    }
+                }
+                raw_contents.push(GeminiContent {
+                    role: role.to_string(),
+                    parts: vec![GeminiPart {
+                        text: m.content.clone(),
+                    }],
+                });
+            }
+        }
+
+        if raw_contents.first().map(|c| c.role.as_str()) == Some("model") {
+            raw_contents.remove(0);
+        }
+        if raw_contents.last().map(|c| c.role.as_str()) == Some("model") {
+            raw_contents.push(GeminiContent {
+                role: "user".to_string(),
+                parts: vec![GeminiPart {
+                    text: "Continue.".to_string(),
+                }],
+            });
+        }
+        if raw_contents.is_empty() {
+            return Err(anyhow!("No user messages to send to Gemini"));
+        }
+
+        let system_instruction = if system_parts.is_empty() {
+            None
+        } else {
+            Some(GeminiSystemInstruction {
+                parts: system_parts,
+            })
+        };
+
+        Ok(GeminiRequest {
+            contents: raw_contents,
+            system_instruction,
+        })
+    }
+
+    pub async fn generate_stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        tx: UnboundedSender<StreamChunk>,
+    ) -> Result<()> {
+        let url = if self.use_oauth {
+            format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse",
+                self.model
+            )
+        } else {
+            format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+                self.model, self.auth_token
+            )
+        };
+
+        let req = Self::build_gemini_request(&messages)?;
+
+        let mut request = self.http.post(&url).json(&req);
+        if self.use_oauth {
+            request = request.header("Authorization", format!("Bearer {}", self.auth_token));
+        }
+        let resp = request.send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let detail: String = body.chars().take(800).collect();
+            if detail.trim().is_empty() {
+                return Err(anyhow!("gemini error: {}", status));
+            }
+            return Err(anyhow!("gemini error: {}\n{}", status, detail));
+        }
+
+        let mut parser = crate::sse::SseParser::new();
+        let mut stream = resp.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| anyhow!("stream read error: {}", e))?;
+            for event in parser.feed(&bytes) {
+                match serde_json::from_str::<GeminiResponse>(&event.data) {
+                    Ok(resp) => {
+                        if let Some(text) = resp
+                            .candidates
+                            .first()
+                            .and_then(|c| c.content.as_ref())
+                            .and_then(|c| c.parts.first())
+                            .map(|p| &p.text)
+                        {
+                            if !text.is_empty() {
+                                let _ = tx.send(StreamChunk::Text(text.clone()));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Skip unparseable chunks
+                    }
+                }
+            }
+        }
+
+        let _ = tx.send(StreamChunk::Done { stop_reason: None });
+        Ok(())
     }
 }
