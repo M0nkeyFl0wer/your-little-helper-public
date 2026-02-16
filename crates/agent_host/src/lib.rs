@@ -81,6 +81,7 @@ impl AgentHost {
             ChatMessage {
                 role: "system".to_string(),
                 content: system_prompt,
+                content_parts: None,
             },
         );
 
@@ -115,6 +116,7 @@ impl AgentHost {
                     all_messages.push(ChatMessage {
                         role: "assistant".to_string(),
                         content: response.clone(),
+                        content_parts: None,
                     });
                     all_messages.push(ChatMessage {
                         role: "user".to_string(),
@@ -122,6 +124,7 @@ impl AgentHost {
                             "[Command Output]\n$ {}\n{}\nExit code: {}",
                             cmd, result.output, result.exit_code
                         ),
+                        content_parts: None,
                     });
 
                     tool_results.push(ToolResult {
@@ -134,6 +137,7 @@ impl AgentHost {
                     all_messages.push(ChatMessage {
                         role: "assistant".to_string(),
                         content: response.clone(),
+                        content_parts: None,
                     });
                     all_messages.push(ChatMessage {
                         role: "user".to_string(),
@@ -141,6 +145,7 @@ impl AgentHost {
                             "[Command Blocked]\n$ {}\nThis command is blocked for safety reasons.",
                             cmd
                         ),
+                        content_parts: None,
                     });
                     executed_any = true;
                 }

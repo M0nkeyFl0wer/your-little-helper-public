@@ -131,17 +131,17 @@ pub mod settings {
                 allowed_dirs: vec![],
                 model: ModelProvider {
                     local_model: "llama3.2:3b".into(),
-                    // Default to cloud providers for better results; fall back to local
+                    // Default to OpenRouter (many models, one API key); fall back to others
                     provider_preference: vec![
-                        "openai".into(),  // Moonshot/Kimi via OpenAI compatibility
+                        "openai".into(),  // OpenRouter via OpenAI compatibility
                         "anthropic".into(),
                         "gemini".into(),
                         "local".into(),
                     ],
-                    openai_model: "kimi-k2-5".into(),
+                    openai_model: "google/gemini-2.5-flash".into(),
                     anthropic_model: "claude-sonnet-4-20250514".into(),
                     gemini_model: "gemini-2.5-flash".into(),
-                    openai_base_url: None,
+                    openai_base_url: Some("https://openrouter.ai/api".into()),
                     openai_auth: ProviderAuth::default(),
                     anthropic_auth: ProviderAuth::default(),
                     gemini_auth: ProviderAuth::default(),
@@ -170,6 +170,11 @@ pub mod agent_api {
     pub struct ChatMessage {
         pub role: String, // "system" | "user" | "assistant"
         pub content: String,
+        /// Structured content parts for providers that support it (e.g., Anthropic tool_use/tool_result).
+        /// When present, providers that support structured content use this instead of `content`.
+        /// Skipped during serialization — only used in the ephemeral agent loop.
+        #[serde(skip)]
+        pub content_parts: Option<Vec<serde_json::Value>>,
     }
 
     /// Chunk types emitted during streaming AI generation.

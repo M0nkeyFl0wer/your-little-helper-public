@@ -30,10 +30,12 @@ struct AnthropicRequest {
     tools: Option<Vec<AnthropicTool>>,
 }
 
+/// Anthropic message — `content` is `serde_json::Value` so it can be either a plain
+/// string (for simple text) or an array of content blocks (for tool_use / tool_result).
 #[derive(Debug, Serialize, Deserialize)]
 struct AnthropicMessage {
     role: String,
-    content: String,
+    content: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -140,9 +142,14 @@ impl AnthropicClient {
                 }
                 system_prompt.push_str(&m.content);
             } else {
+                let content = if let Some(parts) = &m.content_parts {
+                    serde_json::Value::Array(parts.clone())
+                } else {
+                    serde_json::Value::String(m.content.clone())
+                };
                 anthropic_messages.push(AnthropicMessage {
-                    role: m.role,
-                    content: m.content,
+                    role: m.role.clone(),
+                    content,
                 });
             }
         }
@@ -207,9 +214,14 @@ impl AnthropicClient {
                 }
                 system_prompt.push_str(&m.content);
             } else {
+                let content = if let Some(parts) = &m.content_parts {
+                    serde_json::Value::Array(parts.clone())
+                } else {
+                    serde_json::Value::String(m.content.clone())
+                };
                 anthropic_messages.push(AnthropicMessage {
                     role: m.role.clone(),
-                    content: m.content.clone(),
+                    content,
                 });
             }
         }

@@ -744,6 +744,7 @@ impl AppState {
         let mut msgs: Vec<ApiChatMessage> = vec![ApiChatMessage {
             role: "system".to_string(),
             content: system_prompt,
+            content_parts: None,
         }];
 
         let mut used = Self::estimate_tokens(&msgs[0].content);
@@ -764,6 +765,7 @@ impl AppState {
             kept_rev.push(ApiChatMessage {
                 role: msg.role.clone(),
                 content: msg.content.clone(),
+                content_parts: None,
             });
         }
 
@@ -1707,7 +1709,49 @@ What to do next:\n\
         // Core capabilities the agent should know about (terminal access controlled by permission)
         let terminal_enabled = self.settings.user_profile.terminal_permission_granted;
 
-        let capabilities = if terminal_enabled {
+        // Detect if active provider is Anthropic (uses native tools instead of XML tags)
+        let is_anthropic_provider = self
+            .settings
+            .model
+            .provider_preference
+            .first()
+            .map(|s| s.as_str())
+            == Some("anthropic");
+
+        let capabilities = if is_anthropic_provider {
+            // Anthropic: native tool_use — no XML tags needed
+            if terminal_enabled {
+                format!(
+                    "
+YOU HAVE TOOLS AVAILABLE. Use them directly when needed — do not describe steps, take action.
+
+TOOLS:
+- web_search: Search the web for current information.
+- bash_execute: Execute a terminal command and return the output. Safe commands run automatically; dangerous ones are queued for approval.
+- file_preview: Open a file in the preview panel for the user to see. Supported: text, images, CSV, JSON, HTML, Markdown.
+
+When the user asks for an action, use the appropriate tool. Do not use XML tags.
+
+{}
+",
+                    get_campaign_summary(&self.settings)
+                )
+            } else {
+                format!(
+                    "
+TOOLS (Limited Mode - Terminal Disabled):
+- web_search: Search the web for current information.
+- file_preview: Open a file in the preview panel. Supported: text, images, CSV, JSON, HTML, Markdown.
+
+NOTE: Terminal command execution is disabled. The bash_execute tool is not available.
+Instead, provide instructions the user can run manually.
+
+{}
+",
+                    get_campaign_summary(&self.settings)
+                )
+            }
+        } else if terminal_enabled {
             format!("
 YOU HAVE TERMINAL ACCESS. Propose concrete commands with <command> tags so I can review and approve them.
 Do not merely describe steps—share the exact commands you want to run.
@@ -1740,7 +1784,27 @@ Instead, provide instructions the user can run manually.
         };
 
         // Platform-specific Find mode hints
-        let find_hint = if is_windows {
+        // Anthropic uses native tool_use so commands are shown without XML tags
+        let find_hint = if is_anthropic_provider {
+            if is_windows {
+                r#"Platform: Windows. Common dirs: Documents, Desktop, Downloads.
+SEARCH TECHNIQUES — always use wildcards for partial/fuzzy matching:
+- By name: `dir /s /b "C:\Users\%USERNAME%\*keyword*"`
+- By extension: `dir /s /b "C:\Users\%USERNAME%\Documents\*.pdf"`
+- By content: `findstr /s /i "keyword" "C:\Users\%USERNAME%\Documents\*.*"`
+IMPORTANT: Always use *wildcards* around search terms (e.g. *tax* not tax). Search multiple common folders.
+Use bash_execute to run these commands."#
+            } else {
+                r#"Platform: Unix/Mac. Common dirs: ~/Documents, ~/Desktop, ~/Downloads.
+SEARCH TECHNIQUES — always use wildcards and -iname for case-insensitive partial matching:
+- By name: `find ~ -iname "*keyword*" -type f 2>/dev/null | head -30`
+- By extension: `find ~/Documents -iname "*.pdf" 2>/dev/null | head -30`
+- By content: `grep -ril "keyword" ~/Documents 2>/dev/null | head -20`
+- Recent files: `find ~ -iname "*keyword*" -mtime -30 -type f 2>/dev/null | head -20`
+IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not tax). Search broadly first, then narrow down.
+Use bash_execute to run these commands."#
+            }
+        } else if is_windows {
             r#"Platform: Windows. Common dirs: Documents, Desktop, Downloads.
 SEARCH TECHNIQUES — always use wildcards for partial/fuzzy matching:
 - By name: <command>dir /s /b "C:\Users\%USERNAME%\*keyword*"</command>
@@ -1765,44 +1829,74 @@ IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not
         };
 
         let system_prompt = match self.current_mode {
-            ChatMode::Find => format!(
-                r#"You are Little Helper in FIND mode, helping {user_name}.
-YOUR JOB: Locate files and content. Use <command>cmd</command> to search. Use <preview>path</preview> to show files.
+            ChatMode::Find => {
+                let tool_refs = if is_anthropic_provider {
+                    "Use bash_execute to search. Use file_preview to show files."
+                } else {
+                    "Use <command>cmd</command> to search. Use <preview>path</preview> to show files."
+                };
+                format!(
+                    r#"You are Little Helper in FIND mode, helping {user_name}.
+YOUR JOB: Locate files and content. {tool_refs}
 Keep commands read-only and single-step. {find_hint}
 RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what was found (e.g. "I found 3 files matching 'mandate':" followed by a clean list). Never show raw terminal commands to the user. The user is non-technical.
 {capabilities}"#
-            ),
-            ChatMode::Fix => format!(
-                r#"You are Little Helper in FIX mode, helping {user_name}.
+                )
+            },
+            ChatMode::Fix => {
+                let workflow = if is_anthropic_provider {
+                    "Workflow: run diagnostics → web_search for solutions if needed → explain → fix. Use file_preview to show files."
+                } else {
+                    "Workflow: run diagnostics → <search>search solutions</search> if needed → explain → fix. Use <preview>path</preview> to show files."
+                };
+                format!(
+                    r#"You are Little Helper in FIX mode, helping {user_name}.
 YOUR JOB: Tech support — diagnose, find files, fix issues. Run commands, don't just explain.
 {find_hint}
 {fix_hint}
-Workflow: run diagnostics → <search>search solutions</search> if needed → explain → fix. Use <preview>path</preview> to show files.
+{workflow}
 RESPONSE STYLE: After commands run, always reply with a friendly plain-language summary of what you found and what you recommend. Never show raw terminal commands to the user. The user is non-technical.
 {capabilities}"#
-            ),
+                )
+            },
             ChatMode::Research => {
-                format!(
-                    r#"You are Little Helper in DEEP RESEARCH mode, helping {user_name}.
-YOUR ROLE: Thorough researcher. Search multiple angles, cross-reference sources, cite everything.
+                let tools_section = if is_anthropic_provider {
+                    "ALWAYS use web_search to search the web — do NOT suggest websites, search for the user.
+Use bash_execute to run scripts (python3, curl, jq available) and to save reports to files.
+Use file_preview to show documents in the preview panel.
 
-TOOLS:
+IMPORTANT: When the user asks you to research something, you MUST actually search using web_search. Never just list websites.
+When asked to write a report, save it using bash_execute, then show it with file_preview."
+                } else {
+                    "TOOLS:
 - <search>query</search> — ALWAYS use this to search the web. Do NOT suggest websites — search for the user.
 - <command>cmd</command> — Run scripts (python3, curl, jq available). Use to save reports to files.
 - <preview>path</preview> — Show documents in the preview panel.
 
 IMPORTANT: When the user asks you to research something, you MUST use <search> tags to actually search. Never just list websites.
-When asked to write a report or create a document, save it using <command>cat > ~/Documents/report-title.md << 'ENDREPORT' ... ENDREPORT</command> then <preview> the file.
+When asked to write a report or create a document, save it using <command>cat > ~/Documents/report-title.md << 'ENDREPORT' ... ENDREPORT</command> then <preview> the file."
+                };
+                format!(
+                    r#"You are Little Helper in DEEP RESEARCH mode, helping {user_name}.
+YOUR ROLE: Thorough researcher. Search multiple angles, cross-reference sources, cite everything.
+
+{tools_section}
 
 Distinguish facts from speculation. Cite your sources with URLs.
 RESPONSE STYLE: Explain findings in plain language. The user is non-technical.
 {capabilities}"#
                 )
             },
-            ChatMode::Data => format!(
-                "You are Little Helper, a data assistant helping {}. Help work with CSV files, JSON data, and databases. Use <command></command> to examine files. ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{}",
-                user_name, capabilities
-            ),
+            ChatMode::Data => {
+                let cmd_ref = if is_anthropic_provider {
+                    "Use bash_execute to examine files."
+                } else {
+                    "Use <command></command> to examine files."
+                };
+                format!(
+                    "You are Little Helper, a data assistant helping {user_name}. Help work with CSV files, JSON data, and databases. {cmd_ref} ALWAYS open data files in the preview panel so the user can see what you're working with. Walk them through the data visually.\n{capabilities}"
+                )
+            },
             ChatMode::Content => {
                 // Load full campaign context + personas + DDD workflow for Content mode
                 let campaign_docs = if self.settings.enable_campaign_context {
@@ -1872,10 +1966,15 @@ ALWAYS:
 
                 let spec_kit_section = if spec_kit_available {
                     let sk = spec_kit_path.to_string_lossy();
+                    let run_instruction = if is_anthropic_provider {
+                        format!(r#"Run it with bash_execute: `cd "{folder}" && node "{sk}" SUBCOMMAND`"#)
+                    } else {
+                        format!(r#"Run it with: <command>cd "{folder}" && node "{sk}" SUBCOMMAND</command>"#)
+                    };
                     let mut section = format!(
                         r#"SPEC KIT ASSISTANT:
 Spec Kit is available at: {sk}
-Run it with: <command>cd "{folder}" && node "{sk}" SUBCOMMAND</command>
+{run_instruction}
 
 Available subcommands (run them in order):
   init PROJECTNAME  — Create a new project with constitution
@@ -1895,7 +1994,24 @@ Available subcommands (run them in order):
                     }
                     section
                 } else {
-                    "SPEC KIT: Not found. Help the user set it up in Settings, or scaffold the project manually with <command> tags.\n".to_string()
+                    let fallback = if is_anthropic_provider {
+                        "SPEC KIT: Not found. Help the user set it up in Settings, or scaffold the project manually using bash_execute.\n"
+                    } else {
+                        "SPEC KIT: Not found. Help the user set it up in Settings, or scaffold the project manually with <command> tags.\n"
+                    };
+                    fallback.to_string()
+                };
+
+                let (cmd_rule, workflow_step) = if is_anthropic_provider {
+                    (
+                        "- When you run spec-kit commands, use bash_execute — safe commands execute automatically",
+                        "3. Run spec-kit commands via bash_execute to scaffold and build",
+                    )
+                } else {
+                    (
+                        "- When you run spec-kit commands, use <command> tags — they will execute automatically if safe",
+                        "3. Run spec-kit commands via <command> tags to scaffold and build",
+                    )
                 };
 
                 format!(
@@ -1906,7 +2022,7 @@ YOUR ROLE: Practical builder who creates projects and runs spec-driven workflows
 RULES:
 - Always say "folder" (never "directory")
 - Offer simple steps and buttons; avoid terminal jargon
-- When you run spec-kit commands, use <command> tags — they will execute automatically if safe
+{cmd_rule}
 - If the user hasn't set a project folder or name yet, ask for them before running spec-kit
 
 {spec_kit_section}
@@ -1914,7 +2030,7 @@ RULES:
 WORKFLOW:
 1. Ask what they want to build (if not already clear)
 2. Confirm the folder and project name shown above (or ask if missing)
-3. Run spec-kit commands via <command> tags to scaffold and build
+{workflow_step}
 4. Summarize progress clearly after each step
 
 {capabilities}

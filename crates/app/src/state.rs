@@ -213,79 +213,109 @@ pub fn run_ai_generation(
                     ));
                 }
 
-                // Add assistant response to conversation
-                msgs.push(ApiChatMessage {
-                    role: "assistant".to_string(),
-                    content: response.clone(),
-                });
+                // Add assistant response to conversation.
+                // For Anthropic with tool_use, include structured content blocks.
+                if enable_tools && !tool_uses.is_empty() {
+                    let mut parts: Vec<serde_json::Value> = Vec::new();
+                    if !response.is_empty() {
+                        parts.push(serde_json::json!({
+                            "type": "text",
+                            "text": response
+                        }));
+                    }
+                    for (id, name, input) in &tool_uses {
+                        parts.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": id,
+                            "name": name,
+                            "input": input
+                        }));
+                    }
+                    msgs.push(ApiChatMessage {
+                        role: "assistant".to_string(),
+                        content: response.clone(),
+                        content_parts: Some(parts),
+                    });
+                } else {
+                    msgs.push(ApiChatMessage {
+                        role: "assistant".to_string(),
+                        content: response.clone(),
+                        content_parts: None,
+                    });
+                }
 
-                let mut results = Vec::new();
+                // --- Execute tools and collect results ---
+                // For Anthropic native tool_use, we track results per tool_use ID.
+                // For XML tag providers, we collect plain text results.
+                let mut tool_result_parts: Vec<serde_json::Value> = Vec::new();
+                let mut plain_results: Vec<String> = Vec::new();
 
-                // Execute searches
-                for query in &searches {
-                    let _ = status_tx.send(format!("Searching: {}", query));
+                // Helper: execute a search query
+                async fn do_search(
+                    query: &str,
+                    allow_web: bool,
+                ) -> String {
                     if !allow_web {
-                        results.push(format!(
+                        return format!(
                             "[Search blocked: Internet access disabled]\nQuery: {}",
                             query
-                        ));
-                        continue;
+                        );
                     }
                     match web_search(query).await {
                         Ok(result) => {
-                            results.push(format!(
-                                "[Search Results for '{}']\n{}",
-                                query, result.output
-                            ));
+                            format!("[Search Results for '{}']\n{}", query, result.output)
                         }
                         Err(e) => {
-                            results.push(format!("[Search failed for '{}']: {}", query, e));
+                            format!("[Search failed for '{}']: {}", query, e)
                         }
                     }
                 }
 
-                // Run safe commands automatically; queue the rest for approval.
-                for cmd in &commands {
+                // Helper: execute a command
+                async fn do_command(
+                    cmd: &str,
+                    allow_terminal: bool,
+                    allowed_dirs: &[String],
+                    all_executed: &mut Vec<(String, String, bool)>,
+                    pending: &mut Vec<String>,
+                    status_tx: &Sender<String>,
+                ) -> String {
                     if !allow_terminal {
-                        all_executed_commands.push((
-                            cmd.clone(),
+                        all_executed.push((
+                            cmd.to_string(),
                             "Terminal access disabled in settings".to_string(),
                             false,
                         ));
-                        results.push(format!(
+                        return format!(
                             "[Command blocked: terminal access disabled]\n$ {}",
                             cmd
-                        ));
-                        continue;
+                        );
                     }
-
-                    // Apply folder and safety policy before showing to user.
-                    if let Err(reason) = validate_command_against_allowed(cmd, &allowed_dirs) {
-                        results.push(format!("[Command blocked: {}]\n$ {}", reason, cmd));
-                        continue;
+                    if let Err(reason) =
+                        validate_command_against_allowed(cmd, allowed_dirs)
+                    {
+                        return format!("[Command blocked: {}]\n$ {}", reason, cmd);
                     }
                     let danger = classify_command(cmd);
                     if danger == DangerLevel::Blocked {
-                        all_executed_commands.push((
-                            cmd.clone(),
+                        all_executed.push((
+                            cmd.to_string(),
                             "Blocked for safety".to_string(),
                             false,
                         ));
-                        results.push(format!("[Command blocked for safety: {}]", cmd));
-                        continue;
+                        return format!("[Command blocked for safety: {}]", cmd);
                     }
-
                     if danger == DangerLevel::Safe {
-                        let _ =
-                            status_tx.send(format!("Running: {}", truncate_for_status(cmd)));
+                        let _ = status_tx
+                            .send(format!("Running: {}", truncate_for_status(cmd)));
                         match agent_host::execute_command(cmd, 60).await {
                             Ok(r) => {
-                                all_executed_commands.push((
-                                    cmd.clone(),
+                                all_executed.push((
+                                    cmd.to_string(),
                                     r.output.clone(),
                                     r.success,
                                 ));
-                                results.push(format!(
+                                format!(
                                     "[Command output]\n$ {}\n{}",
                                     cmd,
                                     if r.output.trim().is_empty() {
@@ -293,29 +323,104 @@ pub fn run_ai_generation(
                                     } else {
                                         r.output
                                     }
-                                ));
+                                )
                             }
                             Err(e) => {
-                                all_executed_commands
-                                    .push((cmd.clone(), e.to_string(), false));
-                                results.push(format!("[Command failed]\n$ {}\n{}", cmd, e));
+                                all_executed
+                                    .push((cmd.to_string(), e.to_string(), false));
+                                format!("[Command failed]\n$ {}\n{}", cmd, e)
                             }
                         }
                     } else {
-                        let _ = status_tx.send("Waiting for your approval".to_string());
-                        results
-                            .push(format!("[Command '{}' queued for user approval]", cmd));
-                        if !pending_commands.iter().any(|c| c == cmd) {
-                            pending_commands.push(cmd.clone());
+                        let _ =
+                            status_tx.send("Waiting for your approval".to_string());
+                        if !pending.iter().any(|c| c == cmd) {
+                            pending.push(cmd.to_string());
                         }
+                        format!("[Command '{}' queued for user approval]", cmd)
+                    }
+                }
+
+                if enable_tools && !tool_uses.is_empty() {
+                    // Anthropic native tool_use: execute each tool and build
+                    // tool_result content blocks keyed by tool_use_id.
+                    for (id, name, input) in &tool_uses {
+                        let result_text = match name.as_str() {
+                            "web_search" => {
+                                let q = input
+                                    .get("query")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let _ =
+                                    status_tx.send(format!("Searching: {}", q));
+                                do_search(q, allow_web).await
+                            }
+                            "bash_execute" => {
+                                let c = input
+                                    .get("command")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                do_command(
+                                    c,
+                                    allow_terminal,
+                                    &allowed_dirs,
+                                    &mut all_executed_commands,
+                                    &mut pending_commands,
+                                    &status_tx,
+                                )
+                                .await
+                            }
+                            "file_preview" => {
+                                // file_preview was already handled above
+                                "File opened in preview panel.".to_string()
+                            }
+                            _ => format!("Unknown tool: {}", name),
+                        };
+                        tool_result_parts.push(serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": result_text
+                        }));
+                    }
+                } else {
+                    // XML tag path: execute searches and commands as plain text
+                    for query in &searches {
+                        let _ = status_tx.send(format!("Searching: {}", query));
+                        plain_results.push(do_search(query, allow_web).await);
+                    }
+                    for cmd in &commands {
+                        plain_results.push(
+                            do_command(
+                                cmd,
+                                allow_terminal,
+                                &allowed_dirs,
+                                &mut all_executed_commands,
+                                &mut pending_commands,
+                                &status_tx,
+                            )
+                            .await,
+                        );
                     }
                 }
 
                 // Add results back to conversation
-                if !results.is_empty() {
+                if !tool_result_parts.is_empty() {
+                    // Anthropic: structured tool_result content blocks
+                    let content_text = tool_result_parts
+                        .iter()
+                        .filter_map(|p| p.get("content").and_then(|c| c.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
                     msgs.push(ApiChatMessage {
                         role: "user".to_string(),
-                        content: results.join("\n\n"),
+                        content: content_text,
+                        content_parts: Some(tool_result_parts),
+                    });
+                } else if !plain_results.is_empty() {
+                    msgs.push(ApiChatMessage {
+                        role: "user".to_string(),
+                        content: plain_results.join("\n\n"),
+                        content_parts: None,
                     });
                 }
             }
@@ -327,6 +432,7 @@ pub fn run_ai_generation(
                 content:
                     "Summarize what you found so far in plain language. Don't include any command tags."
                         .to_string(),
+                content_parts: None,
             });
 
             // Final summary call — also streamed
