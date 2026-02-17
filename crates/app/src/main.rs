@@ -808,6 +808,29 @@ impl eframe::App for LittleHelperApp {
                             model_btn
                                 .on_hover_text(format!("Provider: {} (click to change)", provider));
 
+                            // Session token counter
+                            let total_tokens =
+                                s.session_input_tokens_est + s.session_output_tokens_est;
+                            if total_tokens > 0 {
+                                let display = if total_tokens >= 1_000_000 {
+                                    format!(
+                                        "~{:.1}M tokens",
+                                        total_tokens as f64 / 1_000_000.0
+                                    )
+                                } else if total_tokens >= 1_000 {
+                                    format!("~{:.1}k tokens", total_tokens as f64 / 1_000.0)
+                                } else {
+                                    format!("~{} tokens", total_tokens)
+                                };
+                                ui.label(
+                                    egui::RichText::new(display).size(9.0).color(if dark {
+                                        egui::Color32::from_rgb(120, 120, 140)
+                                    } else {
+                                        egui::Color32::from_rgb(140, 140, 160)
+                                    }),
+                                );
+                            }
+
                             if show_hint && blink {
                                 ui.label(
                                     egui::RichText::new("v")
@@ -1971,7 +1994,7 @@ impl eframe::App for LittleHelperApp {
 
                         let providers = [
                             ("local", "Local (Ollama) — free, private"),
-                            ("openai", "OpenAI (GPT-4)"),
+                            ("openai", "OpenRouter / OpenAI"),
                             ("anthropic", "Anthropic (Claude)"),
                             ("gemini", "Google (Gemini)"),
                         ];
@@ -2033,6 +2056,28 @@ impl eframe::App for LittleHelperApp {
                                     .color(egui::Color32::from_rgb(0, 180, 0))
                                     .size(12.0),
                             );
+
+                            // Model name field (local/Ollama)
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new("Model")
+                                    .size(12.0)
+                                    .color(subtle),
+                            );
+                            let local_resp = ui.add(
+                                egui::TextEdit::singleline(&mut s.local_model_input)
+                                    .hint_text("llama3.2:3b")
+                                    .desired_width(200.0),
+                            );
+                            if local_resp.lost_focus() && !s.local_model_input.trim().is_empty() {
+                                let new_model = s.local_model_input.trim().to_string();
+                                if new_model != s.settings.model.local_model {
+                                    s.settings.model.local_model = new_model;
+                                    save_settings(&s.settings);
+                                    s.settings_status = Some("Model saved".to_string());
+                                    s.settings_status_is_error = false;
+                                }
+                            }
                         } else {
                             // Cloud provider — explain what that means
                             ui.label(
@@ -2079,7 +2124,7 @@ impl eframe::App for LittleHelperApp {
                             // ── Keys (visible, right after provider picker) ──
                             ui.add_space(8.0);
                             let key_name = match current_provider.as_str() {
-                                "openai" => "OpenAI",
+                                "openai" => "OpenRouter",
                                 "anthropic" => "Anthropic",
                                 "gemini" => "Gemini",
                                 _ => "",
@@ -2127,6 +2172,74 @@ impl eframe::App for LittleHelperApp {
                                     s.settings_status_is_error = false;
                                 }
                             });
+
+                            // ── Base URL (OpenRouter / OpenAI only) ──
+                            if current_provider == "openai" {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("API endpoint")
+                                        .size(12.0)
+                                        .color(subtle),
+                                );
+                                let url_resp = ui.add(
+                                    egui::TextEdit::singleline(&mut s.openai_base_url_input)
+                                        .hint_text("https://openrouter.ai/api")
+                                        .desired_width(260.0),
+                                );
+                                if url_resp.lost_focus() {
+                                    let trimmed = s.openai_base_url_input.trim().to_string();
+                                    let new_url = if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed)
+                                    };
+                                    if new_url != s.settings.model.openai_base_url {
+                                        s.settings.model.openai_base_url = new_url;
+                                        save_settings(&s.settings);
+                                        s.settings_status = Some("API endpoint saved".to_string());
+                                        s.settings_status_is_error = false;
+                                    }
+                                }
+                            }
+
+                            // ── Model name (all cloud providers) ──
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("Model")
+                                    .size(12.0)
+                                    .color(subtle),
+                            );
+                            let (model_changed, new_model_value) = {
+                                let (input_field, hint) = match current_provider.as_str() {
+                                    "openai" => (&mut s.openai_model_input, "google/gemini-2.5-flash"),
+                                    "anthropic" => (&mut s.anthropic_model_input, "claude-sonnet-4-20250514"),
+                                    _ => (&mut s.gemini_model_input, "gemini-2.5-flash"),
+                                };
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(input_field)
+                                        .hint_text(hint)
+                                        .desired_width(260.0),
+                                );
+                                if resp.lost_focus() && !input_field.trim().is_empty() {
+                                    (true, input_field.trim().to_string())
+                                } else {
+                                    (false, String::new())
+                                }
+                            };
+                            if model_changed {
+                                let target = match current_provider.as_str() {
+                                    "openai" => &mut s.settings.model.openai_model,
+                                    "anthropic" => &mut s.settings.model.anthropic_model,
+                                    _ => &mut s.settings.model.gemini_model,
+                                };
+                                if *target != new_model_value {
+                                    *target = new_model_value;
+                                    save_settings(&s.settings);
+                                    s.settings_status = Some("Model saved".to_string());
+                                    s.settings_status_is_error = false;
+                                }
+                            }
+
                             // ── Google Sign-In (Gemini only, requires client ID) ──
                             let google_creds = crate::secrets::google_oauth_credentials();
                             if current_provider == "gemini" && google_creds.is_some() {

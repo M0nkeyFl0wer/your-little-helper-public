@@ -246,6 +246,13 @@ pub struct AppState {
     pub anthropic_api_key_input: String,
     pub gemini_api_key_input: String,
 
+    // Model name + base URL input buffers for settings dialog
+    pub openai_model_input: String,
+    pub openai_base_url_input: String,
+    pub anthropic_model_input: String,
+    pub gemini_model_input: String,
+    pub local_model_input: String,
+
     // Build mode inputs and status
     pub spec_kit_path_input: String,
     pub build_folder_input: String,
@@ -521,6 +528,15 @@ impl Default for AppState {
             openai_api_key_input: String::new(),
             anthropic_api_key_input: String::new(),
             gemini_api_key_input: String::new(),
+            openai_model_input: settings.model.openai_model.clone(),
+            openai_base_url_input: settings
+                .model
+                .openai_base_url
+                .clone()
+                .unwrap_or_default(),
+            anthropic_model_input: settings.model.anthropic_model.clone(),
+            gemini_model_input: settings.model.gemini_model.clone(),
+            local_model_input: settings.model.local_model.clone(),
             spec_kit_path_input: settings
                 .build
                 .spec_kit_path
