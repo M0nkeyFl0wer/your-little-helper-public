@@ -136,7 +136,7 @@ impl OpenAIClient {
         let body: OpenAIResponse = resp.json().await?;
         let text = body
             .choices
-            .get(0)
+            .first()
             .map(|c| c.message.content.clone())
             .unwrap_or_default();
         Ok(text)

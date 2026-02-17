@@ -192,7 +192,7 @@ impl AnthropicClient {
         let body: AnthropicResponse = resp.json().await?;
         let text = body
             .content
-            .get(0)
+            .first()
             .map(|c| c.text.clone())
             .unwrap_or_default();
         Ok(text)

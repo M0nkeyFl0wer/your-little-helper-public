@@ -1,5 +1,9 @@
+pub mod embedding_client;
+pub mod entropy_bot;
+pub mod entropy_scorers;
 pub mod file_index;
 pub mod file_search;
+pub mod graph_analyzers;
 pub mod mini_swarm;
 pub mod organizer;
 pub mod slack;

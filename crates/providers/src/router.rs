@@ -153,7 +153,9 @@ impl ProviderRouter {
             };
 
             match result {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    return Ok(());
+                }
                 Err(e) => {
                     last_error = Some(e);
                     continue;

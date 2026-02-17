@@ -1,6 +1,6 @@
-/// Shared SSE (Server-Sent Events) parser for streaming AI provider responses.
-///
-/// SSE format: events separated by `\n\n`, each containing optional `event:` and `data:` lines.
+//! Shared SSE (Server-Sent Events) parser for streaming AI provider responses.
+//!
+//! SSE format: events separated by `\n\n`, each containing optional `event:` and `data:` lines.
 
 /// A single parsed SSE event.
 #[derive(Debug, Clone)]
@@ -12,20 +12,21 @@ pub struct SseEvent {
 }
 
 /// Incremental SSE parser that buffers incomplete lines across chunk boundaries.
+#[derive(Default)]
 pub struct SseParser {
     buffer: String,
 }
 
 impl SseParser {
     pub fn new() -> Self {
-        Self {
-            buffer: String::new(),
-        }
+        Self::default()
     }
 
     /// Feed raw bytes from the HTTP response. Returns any complete SSE events found.
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         let text = String::from_utf8_lossy(chunk);
+        // Normalize \r\n to \n (some providers like Gemini use \r\n)
+        let text = text.replace("\r\n", "\n");
         self.buffer.push_str(&text);
 
         let mut events = Vec::new();
@@ -79,6 +80,15 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event.as_deref(), Some("message_start"));
         assert_eq!(events[0].data, "{\"type\":\"message\"}");
+    }
+
+    #[test]
+    fn test_crlf_boundaries() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(b"data: hello\r\n\r\ndata: world\r\n\r\n");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].data, "hello");
+        assert_eq!(events[1].data, "world");
     }
 
     #[test]
