@@ -8,6 +8,7 @@ use agent_host::{classify_command, AgentHost, CommandResult, DangerLevel};
 #[cfg(not(windows))]
 use agent_host::execute_with_sudo;
 use eframe::egui;
+use services::file_index::FileIndexService;
 use services::web_preview::WebPreviewService;
 use shared::agent_api::{ChatMessage as ApiChatMessage, StreamChunk};
 use shared::preview_types::{parse_preview_tags, strip_preview_tags, PreviewContent};
@@ -31,6 +32,32 @@ use crate::utils::{
     clean_ai_response, is_path_in_allowed_dirs, run_user_command,
     validate_command_against_allowed,
 };
+
+/// Progress update from background file indexing / embedding generation.
+#[derive(Debug, Clone)]
+pub struct IndexingStatus {
+    /// Phase: "idle", "indexing", "embedding", "done"
+    pub phase: String,
+    /// Total files in the index
+    pub total_files: usize,
+    /// Files scanned in current pass
+    pub files_scanned: usize,
+    /// Embedding coverage: (files with embeddings, total files)
+    pub embeddings_done: usize,
+    pub embeddings_total: usize,
+}
+
+impl Default for IndexingStatus {
+    fn default() -> Self {
+        Self {
+            phase: "idle".to_string(),
+            total_files: 0,
+            files_scanned: 0,
+            embeddings_done: 0,
+            embeddings_total: 0,
+        }
+    }
+}
 
 /// Result from background AI generation
 #[derive(Debug)]
@@ -290,6 +317,13 @@ pub struct AppState {
     pub oauth_result_rx: Option<Receiver<OAuthResult>>,
     /// True while an OAuth browser flow is in progress
     pub oauth_in_progress: bool,
+
+    // File index + background indexing/embedding status
+    pub file_index: Arc<FileIndexService>,
+    /// Receiver for background indexing progress updates
+    pub index_status_rx: Option<Receiver<IndexingStatus>>,
+    /// Current indexing state displayed in UI
+    pub indexing_status: IndexingStatus,
 }
 
 impl Default for AppState {
@@ -305,6 +339,15 @@ impl Default for AppState {
                 settings.user_profile.name = crate::secrets::PRELOAD_USER_NAME.to_string();
             }
         }
+
+        // ── Initialize file index + register skills ──
+        let data_dir = dirs::config_dir()
+            .map(|p| p.join("little_helper"))
+            .unwrap_or_else(|| PathBuf::from("./data"));
+        let file_index = Arc::new(
+            FileIndexService::new(&data_dir)
+                .expect("Failed to initialize file index"),
+        );
 
         // ── Start Ollama in the background (don't block the UI) ──
         // Quick check: is Ollama already listening? (fast, non-blocking)
@@ -503,7 +546,7 @@ impl Default for AppState {
                     std::path::PathBuf::from("./context")
                 ).expect("Failed to create context manager")
             }),
-            skill_registry: agent_host::skills::init_empty_registry(),
+            skill_registry: agent_host::skills::init_registry(file_index.clone()),
             preview_panel,
             show_preview: true,
             active_viewer: ActiveViewer::Panel,
@@ -568,11 +611,158 @@ impl Default for AppState {
             streaming_partial: HashMap::new(),
             oauth_result_rx: None,
             oauth_in_progress: false,
+
+            file_index: file_index.clone(),
+            index_status_rx: {
+                let (tx, rx) = std::sync::mpsc::channel::<IndexingStatus>();
+                let fi = file_index.clone();
+                let allowed = settings.allowed_dirs.clone();
+                std::thread::spawn(move || {
+                    run_background_indexing(fi, allowed, tx);
+                });
+                Some(rx)
+            },
+            indexing_status: IndexingStatus::default(),
         }
     }
 }
 
+/// Run background file indexing + embedding generation.
+/// Scans allowed_dirs, then attempts to generate embeddings if Ollama is available.
+fn run_background_indexing(
+    file_index: Arc<FileIndexService>,
+    allowed_dirs: Vec<String>,
+    tx: std::sync::mpsc::Sender<IndexingStatus>,
+) {
+    // Phase 1: Index allowed directories
+    let _ = tx.send(IndexingStatus {
+        phase: "indexing".to_string(),
+        ..Default::default()
+    });
+
+    let mut total_scanned = 0usize;
+    for dir in &allowed_dirs {
+        let path = std::path::Path::new(dir);
+        if !path.is_dir() {
+            continue;
+        }
+        let drive_id = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| dir.clone());
+        if let Ok(stats) = file_index.scan_drive(path, &drive_id) {
+            total_scanned += stats.indexed;
+            let total = file_index.file_count().unwrap_or(0);
+            let _ = tx.send(IndexingStatus {
+                phase: "indexing".to_string(),
+                total_files: total,
+                files_scanned: total_scanned,
+                ..Default::default()
+            });
+        }
+    }
+
+    let total_files = file_index.file_count().unwrap_or(0);
+
+    // Phase 2: Generate embeddings (if Ollama is available)
+    let embed_client = services::embedding_client::EmbeddingClient::default_ollama();
+
+    // Check if Ollama is up (blocking check)
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(_) => {
+            let _ = tx.send(IndexingStatus {
+                phase: "done".to_string(),
+                total_files,
+                files_scanned: total_scanned,
+                ..Default::default()
+            });
+            return;
+        }
+    };
+
+    let ollama_available = rt.block_on(embed_client.is_available());
+    if !ollama_available {
+        let _ = tx.send(IndexingStatus {
+            phase: "done".to_string(),
+            total_files,
+            files_scanned: total_scanned,
+            ..Default::default()
+        });
+        return;
+    }
+
+    let _ = tx.send(IndexingStatus {
+        phase: "embedding".to_string(),
+        total_files,
+        files_scanned: total_scanned,
+        ..Default::default()
+    });
+
+    // Process files without embeddings in batches
+    let batch_size = 32;
+    loop {
+        let files = match file_index.files_without_embeddings(batch_size) {
+            Ok(f) => f,
+            Err(_) => break,
+        };
+        if files.is_empty() {
+            break;
+        }
+
+        for entry in &files {
+            let text = services::file_index::build_embedding_text(entry);
+            match rt.block_on(embed_client.embed_single(&text)) {
+                Ok(embedding) => {
+                    let _ = file_index.store_embedding(
+                        entry.id,
+                        &embedding,
+                        embed_client.model_name(),
+                        None,
+                    );
+                }
+                Err(_) => {
+                    // Embedding failed (model not pulled, etc.) — skip and continue
+                    continue;
+                }
+            }
+        }
+
+        // Report progress
+        let (done, total) = file_index.embedding_coverage().unwrap_or((0, 0));
+        let _ = tx.send(IndexingStatus {
+            phase: "embedding".to_string(),
+            total_files: total,
+            files_scanned: total_scanned,
+            embeddings_done: done,
+            embeddings_total: total,
+        });
+    }
+
+    let (done, total) = file_index.embedding_coverage().unwrap_or((0, 0));
+    let _ = tx.send(IndexingStatus {
+        phase: "done".to_string(),
+        total_files,
+        files_scanned: total_scanned,
+        embeddings_done: done,
+        embeddings_total: total,
+    });
+}
+
 impl AppState {
+    /// Poll for background indexing/embedding status. Call once per frame.
+    pub fn poll_index_status(&mut self) {
+        if let Some(rx) = &self.index_status_rx {
+            // Drain all pending updates (keep latest)
+            while let Ok(status) = rx.try_recv() {
+                self.indexing_status = status;
+            }
+            if self.indexing_status.phase == "done" {
+                self.index_status_rx = None;
+            }
+        }
+    }
+
     /// Poll for background Ollama setup completion. Call once per frame.
     /// When the setup thread finishes, applies provider fallback and posts
     /// a status message into the chat history.

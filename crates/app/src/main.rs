@@ -490,6 +490,9 @@ impl eframe::App for LittleHelperApp {
         // Poll for background Ollama setup completion
         s.poll_ollama_setup();
 
+        // Poll for background indexing/embedding status
+        s.poll_index_status();
+
         // Poll for background OAuth flow completion
         s.poll_oauth_result();
 
@@ -829,6 +832,46 @@ impl eframe::App for LittleHelperApp {
                                         egui::Color32::from_rgb(140, 140, 160)
                                     }),
                                 );
+                            }
+
+                            // Indexing / embedding status indicator
+                            {
+                                let idx = &s.indexing_status;
+                                let idx_color = if dark {
+                                    egui::Color32::from_rgb(100, 130, 100)
+                                } else {
+                                    egui::Color32::from_rgb(80, 120, 80)
+                                };
+                                let label_text = match idx.phase.as_str() {
+                                    "indexing" => {
+                                        if idx.total_files > 0 {
+                                            Some(format!("Indexing: {} files", idx.total_files))
+                                        } else {
+                                            Some("Indexing...".to_string())
+                                        }
+                                    }
+                                    "embedding" => {
+                                        if idx.embeddings_total > 0 {
+                                            Some(format!(
+                                                "Embeddings: {}/{}",
+                                                idx.embeddings_done, idx.embeddings_total
+                                            ))
+                                        } else {
+                                            Some("Embedding...".to_string())
+                                        }
+                                    }
+                                    "done" if idx.total_files > 0 => {
+                                        Some(format!("{} files indexed", idx.total_files))
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(text) = label_text {
+                                    ui.label(
+                                        egui::RichText::new(text)
+                                            .size(9.0)
+                                            .color(idx_color),
+                                    );
+                                }
                             }
 
                             if show_hint && blink {

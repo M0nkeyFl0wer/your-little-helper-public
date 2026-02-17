@@ -86,8 +86,9 @@ impl Skill for FuzzyFileSearch {
             .and_then(|v| v.as_u64())
             .unwrap_or(20) as usize;
 
-        // Perform fuzzy search
-        let results = self.file_index.fuzzy_search(query, limit)?;
+        // Perform hybrid search (FTS5 + Jaro-Winkler + embeddings if available)
+        // Falls back to FTS5 + Jaro-Winkler when no embeddings exist
+        let results = self.file_index.semantic_search(query, None, limit)?;
 
         // Format output
         let text = self.format_results(&results, query);
