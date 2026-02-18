@@ -415,6 +415,25 @@ impl AnthropicClient {
                     "required": ["path"]
                 }),
             },
+            AnthropicTool {
+                name: "file_search".to_string(),
+                description: "Search the user's indexed files by name, path, or semantic meaning. Returns matching files with paths and relevance scores. Use this when the user asks to find, locate, or search for files.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query — can be a filename, path fragment, or natural language description"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum results to return (default 20)",
+                            "default": 20
+                        }
+                    },
+                    "required": ["query"]
+                }),
+            },
         ]
     }
 }

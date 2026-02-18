@@ -26,6 +26,7 @@ pub fn run_ai_generation(
     status_tx: Sender<String>,
     stream_tx: Sender<StreamChunk>,
     abort_reg: AbortRegistration,
+    file_index: Option<std::sync::Arc<services::file_index::FileIndexService>>,
 ) {
     use agent_host::{classify_command, web_search, DangerLevel};
     use providers::router::ProviderRouter;
@@ -155,6 +156,8 @@ pub fn run_ai_generation(
                 let mut searches: Vec<String> = Vec::new();
                 let mut commands: Vec<String> = Vec::new();
 
+                let mut file_searches: Vec<(String, usize)> = Vec::new();
+
                 if !tool_uses.is_empty() {
                     // Native tool_use path (Anthropic)
                     for (_id, name, input) in &tool_uses {
@@ -179,6 +182,12 @@ pub fn run_ai_generation(
                                     }
                                 }
                             }
+                            "file_search" => {
+                                if let Some(q) = input.get("query").and_then(|v| v.as_str()) {
+                                    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+                                    file_searches.push((q.to_string(), limit));
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -196,7 +205,7 @@ pub fn run_ai_generation(
                 }
 
                 // If no actions needed, return the response
-                if searches.is_empty() && commands.is_empty() {
+                if searches.is_empty() && commands.is_empty() && file_searches.is_empty() {
                     return Ok::<
                         (
                             String,
@@ -373,6 +382,38 @@ pub fn run_ai_generation(
                             "file_preview" => {
                                 // file_preview was already handled above
                                 "File opened in preview panel.".to_string()
+                            }
+                            "file_search" => {
+                                let q = input
+                                    .get("query")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let limit = input
+                                    .get("limit")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(20) as usize;
+                                let _ = status_tx.send(format!("Searching files: {}", q));
+                                if let Some(ref fi) = file_index {
+                                    match fi.semantic_search(q, None, limit) {
+                                        Ok(results) if !results.is_empty() => {
+                                            let mut out = format!("[File search results for '{}']\n", q);
+                                            for (i, r) in results.iter().enumerate() {
+                                                out.push_str(&format!(
+                                                    "{}. {} ({:.0}%)\n   {}\n",
+                                                    i + 1,
+                                                    r.name,
+                                                    r.score * 100.0,
+                                                    r.path.display()
+                                                ));
+                                            }
+                                            out
+                                        }
+                                        Ok(_) => format!("[No files found matching '{}']\nThe file index may still be building. Try again shortly.", q),
+                                        Err(e) => format!("[File search error]: {}", e),
+                                    }
+                                } else {
+                                    format!("[File search unavailable — index not initialized]\nQuery: {}", q)
+                                }
                             }
                             _ => format!("Unknown tool: {}", name),
                         };

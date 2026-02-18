@@ -628,37 +628,51 @@ impl Default for AppState {
 }
 
 /// Run background file indexing + embedding generation.
-/// Scans allowed_dirs, then attempts to generate embeddings if Ollama is available.
+/// Skips scanning if the index already has files (previous session).
+/// Always attempts embedding backfill if Ollama is available.
 fn run_background_indexing(
     file_index: Arc<FileIndexService>,
     allowed_dirs: Vec<String>,
     tx: std::sync::mpsc::Sender<IndexingStatus>,
 ) {
-    // Phase 1: Index allowed directories
-    let _ = tx.send(IndexingStatus {
-        phase: "indexing".to_string(),
-        ..Default::default()
-    });
+    // Check if the index already has files from a previous session
+    let existing_count = file_index.file_count().unwrap_or(0);
 
     let mut total_scanned = 0usize;
-    for dir in &allowed_dirs {
-        let path = std::path::Path::new(dir);
-        if !path.is_dir() {
-            continue;
-        }
-        let drive_id = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| dir.clone());
-        if let Ok(stats) = file_index.scan_drive(path, &drive_id) {
-            total_scanned += stats.indexed;
-            let total = file_index.file_count().unwrap_or(0);
-            let _ = tx.send(IndexingStatus {
-                phase: "indexing".to_string(),
-                total_files: total,
-                files_scanned: total_scanned,
-                ..Default::default()
-            });
+    if existing_count > 0 {
+        // Index is already populated — skip the full scan
+        let _ = tx.send(IndexingStatus {
+            phase: "done".to_string(),
+            total_files: existing_count,
+            files_scanned: existing_count,
+            ..Default::default()
+        });
+    } else {
+        // First run: scan allowed directories
+        let _ = tx.send(IndexingStatus {
+            phase: "indexing".to_string(),
+            ..Default::default()
+        });
+
+        for dir in &allowed_dirs {
+            let path = std::path::Path::new(dir);
+            if !path.is_dir() {
+                continue;
+            }
+            let drive_id = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.clone());
+            if let Ok(stats) = file_index.scan_drive(path, &drive_id) {
+                total_scanned += stats.indexed;
+                let total = file_index.file_count().unwrap_or(0);
+                let _ = tx.send(IndexingStatus {
+                    phase: "indexing".to_string(),
+                    total_files: total,
+                    files_scanned: total_scanned,
+                    ..Default::default()
+                });
+            }
         }
     }
 
@@ -2311,6 +2325,7 @@ WORKFLOW:
 
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
+        let file_index = self.file_index.clone();
 
         // Spawn background thread for AI work
         std::thread::spawn(move || {
@@ -2326,6 +2341,7 @@ WORKFLOW:
                     status_tx,
                     stream_tx,
                     abort_reg,
+                    Some(file_index),
                 );
             }));
             if res.is_err() {
