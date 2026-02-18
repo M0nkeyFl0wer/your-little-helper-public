@@ -72,9 +72,15 @@ pub struct FileIndexEntry {
 }
 
 /// Service for indexing and searching files across drives
+/// Max entries in the query embedding cache.
+const QUERY_EMBED_CACHE_SIZE: usize = 64;
+
 pub struct FileIndexService {
     conn: Arc<Mutex<Connection>>,
     db_path: PathBuf,
+    /// LRU-ish cache: query string → embedding vector.
+    /// Evicts oldest entries when full.
+    query_embed_cache: Mutex<Vec<(String, Vec<f32>)>>,
 }
 
 impl FileIndexService {
@@ -95,6 +101,7 @@ impl FileIndexService {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path,
+            query_embed_cache: Mutex::new(Vec::new()),
         })
     }
 
@@ -429,6 +436,34 @@ impl FileIndexService {
     /// Get the shared database connection for external modules (graph analyzers, entropy bot).
     pub fn connection(&self) -> Arc<Mutex<Connection>> {
         self.conn.clone()
+    }
+
+    // ── Query Embedding Cache ──────────────────────────────────────────
+
+    /// Look up a cached query embedding. Returns `None` on cache miss.
+    pub fn get_cached_query_embedding(&self, query: &str) -> Option<Vec<f32>> {
+        let mut cache = self.query_embed_cache.lock().unwrap();
+        // Move matched entry to the end (most recently used)
+        if let Some(pos) = cache.iter().position(|(q, _)| q == query) {
+            let entry = cache.remove(pos);
+            let embedding = entry.1.clone();
+            cache.push(entry);
+            Some(embedding)
+        } else {
+            None
+        }
+    }
+
+    /// Store a query embedding in the cache. Evicts oldest if full.
+    pub fn cache_query_embedding(&self, query: &str, embedding: Vec<f32>) {
+        let mut cache = self.query_embed_cache.lock().unwrap();
+        // Remove existing entry if present (will be re-added at end)
+        cache.retain(|(q, _)| q != query);
+        // Evict oldest if at capacity
+        if cache.len() >= QUERY_EMBED_CACHE_SIZE {
+            cache.remove(0);
+        }
+        cache.push((query.to_string(), embedding));
     }
 
     // ── Embedding Methods ──────────────────────────────────────────────

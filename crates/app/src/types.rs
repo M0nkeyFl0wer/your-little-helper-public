@@ -142,13 +142,12 @@ impl ChatMode {
 }
 
 /// A chat message
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub role: String, // "user" or "assistant"
     pub content: String,
     /// Optional low-level details (e.g. provider errors). Kept out of the main message UI.
     pub details: Option<String>,
-    #[allow(dead_code)] // Will be used for chat history display
     pub timestamp: String,
 }
 
@@ -217,8 +216,8 @@ pub struct AppState {
     pub agent_host: agent_host::AgentHost,
     /// Context manager for documents and personas
     pub context_manager: agent_host::context_manager::ContextManager,
-    /// Skill registry for available tools
-    pub skill_registry: agent_host::skills::SkillRegistry,
+    /// Skill registry for available tools (Arc for sharing with background AI thread)
+    pub skill_registry: Arc<agent_host::skills::SkillRegistry>,
 
     // Preview panel (new interactive preview companion)
     pub preview_panel: crate::preview_panel::PreviewPanel,
@@ -324,6 +323,12 @@ pub struct AppState {
     pub index_status_rx: Option<Receiver<IndexingStatus>>,
     /// Current indexing state displayed in UI
     pub indexing_status: IndexingStatus,
+
+    // Entropy bot
+    /// Shared "last user interaction" timestamp for idle detection
+    pub last_interaction: Arc<std::sync::Mutex<Instant>>,
+    /// Cancel flag for entropy bot (set on app exit)
+    pub entropy_cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for AppState {
@@ -469,6 +474,27 @@ impl Default for AppState {
         // Fix mode gets its own Doc intro on first switch — no generic welcome needed
         let fix_history = Vec::new();
 
+        // Entropy bot: shared state
+        let last_interaction = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let entropy_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let fi_conn = file_index.connection();
+            let cancel = entropy_cancel.clone();
+            let interaction = last_interaction.clone();
+            std::thread::spawn(move || {
+                let bot = services::entropy_bot::EntropyBot::new(
+                    fi_conn,
+                    services::entropy_bot::EntropyBotConfig::default(),
+                    cancel,
+                );
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(_) => return,
+                };
+                rt.block_on(bot.start(interaction));
+            });
+        }
+
         // Show onboarding for first-run users
         let initial_screen = if settings.user_profile.onboarding_complete {
             AppScreen::Chat
@@ -488,24 +514,57 @@ impl Default for AppState {
             input_text: String::new(),
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
-                let mut h = HashMap::new();
-                h.insert(ChatMode::Find, find_history);
-                h.insert(ChatMode::Fix, fix_history);
-                h.insert(ChatMode::Research, vec![ChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!(
-                        "Hi {}! I'm Scholar — your research assistant.\n\n\
-                        I can search the web, dig into topics, cross-reference sources, and put together reports.\n\n\
-                        Try asking me to research something, or say **\"write a report on...\"** and I'll create a document for you.",
-                        user_name
-                    ),
-                    details: None,
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                }]);
-                h.insert(ChatMode::Data, Vec::new());
-                h.insert(ChatMode::Content, Vec::new());
-                h.insert(ChatMode::Build, Vec::new());
-                h
+                // Try to restore from saved session first
+                if let Some(saved) = crate::utils::load_session() {
+                    // Only use saved session if it has meaningful content
+                    let has_content = saved.values().any(|msgs| msgs.len() > 1);
+                    if has_content {
+                        // Ensure all modes exist (fill in missing ones)
+                        let mut h = saved;
+                        for mode in &[ChatMode::Find, ChatMode::Fix, ChatMode::Research, ChatMode::Data, ChatMode::Content, ChatMode::Build] {
+                            h.entry(*mode).or_insert_with(Vec::new);
+                        }
+                        h
+                    } else {
+                        let mut h = HashMap::new();
+                        h.insert(ChatMode::Find, find_history);
+                        h.insert(ChatMode::Fix, fix_history);
+                        h.insert(ChatMode::Research, vec![ChatMessage {
+                            role: "assistant".to_string(),
+                            content: format!(
+                                "Hi {}! I'm Scholar — your research assistant.\n\n\
+                                I can search the web, dig into topics, cross-reference sources, and put together reports.\n\n\
+                                Try asking me to research something, or say **\"write a report on...\"** and I'll create a document for you.",
+                                user_name
+                            ),
+                            details: None,
+                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                        }]);
+                        h.insert(ChatMode::Data, Vec::new());
+                        h.insert(ChatMode::Content, Vec::new());
+                        h.insert(ChatMode::Build, Vec::new());
+                        h
+                    }
+                } else {
+                    let mut h = HashMap::new();
+                    h.insert(ChatMode::Find, find_history);
+                    h.insert(ChatMode::Fix, fix_history);
+                    h.insert(ChatMode::Research, vec![ChatMessage {
+                        role: "assistant".to_string(),
+                        content: format!(
+                            "Hi {}! I'm Scholar — your research assistant.\n\n\
+                            I can search the web, dig into topics, cross-reference sources, and put together reports.\n\n\
+                            Try asking me to research something, or say **\"write a report on...\"** and I'll create a document for you.",
+                            user_name
+                        ),
+                        details: None,
+                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    }]);
+                    h.insert(ChatMode::Data, Vec::new());
+                    h.insert(ChatMode::Content, Vec::new());
+                    h.insert(ChatMode::Build, Vec::new());
+                    h
+                }
             },
             unread_modes: HashSet::new(),
             thread_history: crate::thread_history::ThreadHistory::load_from_disk(),
@@ -546,7 +605,7 @@ impl Default for AppState {
                     std::path::PathBuf::from("./context")
                 ).expect("Failed to create context manager")
             }),
-            skill_registry: agent_host::skills::init_registry(file_index.clone()),
+            skill_registry: Arc::new(agent_host::skills::init_registry(file_index.clone())),
             preview_panel,
             show_preview: true,
             active_viewer: ActiveViewer::Panel,
@@ -623,24 +682,30 @@ impl Default for AppState {
                 Some(rx)
             },
             indexing_status: IndexingStatus::default(),
+
+            last_interaction: last_interaction.clone(),
+            entropy_cancel: entropy_cancel.clone(),
         }
     }
 }
 
-/// Run background file indexing + embedding generation.
+/// Rescan interval for periodic re-indexing (15 minutes).
+const RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Run background file indexing + embedding generation + graph edge computation.
 /// Skips scanning if the index already has files (previous session).
-/// Always attempts embedding backfill if Ollama is available.
+/// After initial work, periodically re-scans for new/modified files.
 fn run_background_indexing(
     file_index: Arc<FileIndexService>,
     allowed_dirs: Vec<String>,
     tx: std::sync::mpsc::Sender<IndexingStatus>,
 ) {
-    // Check if the index already has files from a previous session
+    // --- Phase 1: Initial scan (or skip if already indexed) ---
     let existing_count = file_index.file_count().unwrap_or(0);
 
     let mut total_scanned = 0usize;
     if existing_count > 0 {
-        // Index is already populated — skip the full scan
+        total_scanned = existing_count;
         let _ = tx.send(IndexingStatus {
             phase: "done".to_string(),
             total_files: existing_count,
@@ -648,64 +713,101 @@ fn run_background_indexing(
             ..Default::default()
         });
     } else {
-        // First run: scan allowed directories
         let _ = tx.send(IndexingStatus {
             phase: "indexing".to_string(),
             ..Default::default()
         });
 
-        for dir in &allowed_dirs {
-            let path = std::path::Path::new(dir);
-            if !path.is_dir() {
-                continue;
-            }
-            let drive_id = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| dir.clone());
-            if let Ok(stats) = file_index.scan_drive(path, &drive_id) {
-                total_scanned += stats.indexed;
-                let total = file_index.file_count().unwrap_or(0);
-                let _ = tx.send(IndexingStatus {
-                    phase: "indexing".to_string(),
-                    total_files: total,
-                    files_scanned: total_scanned,
-                    ..Default::default()
-                });
-            }
-        }
+        scan_allowed_dirs(&file_index, &allowed_dirs, &tx, &mut total_scanned);
     }
 
-    let total_files = file_index.file_count().unwrap_or(0);
-
-    // Phase 2: Generate embeddings (if Ollama is available)
-    let embed_client = services::embedding_client::EmbeddingClient::default_ollama();
-
-    // Check if Ollama is up (blocking check)
+    // --- Phase 2: Embeddings (if Ollama available) ---
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(_) => {
-            let _ = tx.send(IndexingStatus {
-                phase: "done".to_string(),
-                total_files,
-                files_scanned: total_scanned,
-                ..Default::default()
-            });
+            report_done(&file_index, total_scanned, &tx);
             return;
         }
     };
+    run_embedding_backfill(&file_index, &rt, total_scanned, &tx);
 
-    let ollama_available = rt.block_on(embed_client.is_available());
-    if !ollama_available {
+    // --- Phase 3: Content hashes + graph edges ---
+    let _ = tx.send(IndexingStatus {
+        phase: "graph".to_string(),
+        total_files: file_index.file_count().unwrap_or(0),
+        files_scanned: total_scanned,
+        ..Default::default()
+    });
+    compute_hashes_and_edges(&file_index);
+    report_done(&file_index, total_scanned, &tx);
+
+    // --- Phase 4: Periodic re-scan loop (every 15 min) ---
+    loop {
+        std::thread::sleep(RESCAN_INTERVAL);
+
+        // Re-scan for new/modified files
         let _ = tx.send(IndexingStatus {
-            phase: "done".to_string(),
-            total_files,
-            files_scanned: total_scanned,
+            phase: "indexing".to_string(),
+            total_files: file_index.file_count().unwrap_or(0),
+            files_scanned: 0,
             ..Default::default()
         });
+        let mut rescan_count = 0usize;
+        scan_allowed_dirs(&file_index, &allowed_dirs, &tx, &mut rescan_count);
+        total_scanned = file_index.file_count().unwrap_or(0);
+
+        // Backfill embeddings for new files
+        run_embedding_backfill(&file_index, &rt, total_scanned, &tx);
+
+        // Recompute graph edges (includes new files)
+        compute_hashes_and_edges(&file_index);
+        report_done(&file_index, total_scanned, &tx);
+    }
+}
+
+/// Scan all allowed directories into the file index.
+fn scan_allowed_dirs(
+    file_index: &FileIndexService,
+    allowed_dirs: &[String],
+    tx: &std::sync::mpsc::Sender<IndexingStatus>,
+    total_scanned: &mut usize,
+) {
+    for dir in allowed_dirs {
+        let path = std::path::Path::new(dir);
+        if !path.is_dir() {
+            continue;
+        }
+        let drive_id = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| dir.clone());
+        if let Ok(stats) = file_index.scan_drive(path, &drive_id) {
+            *total_scanned += stats.indexed;
+            let total = file_index.file_count().unwrap_or(0);
+            let _ = tx.send(IndexingStatus {
+                phase: "indexing".to_string(),
+                total_files: total,
+                files_scanned: *total_scanned,
+                ..Default::default()
+            });
+        }
+    }
+}
+
+/// Generate embeddings for files that don't have them yet.
+fn run_embedding_backfill(
+    file_index: &FileIndexService,
+    rt: &tokio::runtime::Runtime,
+    total_scanned: usize,
+    tx: &std::sync::mpsc::Sender<IndexingStatus>,
+) {
+    let embed_client = services::embedding_client::EmbeddingClient::default_ollama();
+    let ollama_available = rt.block_on(embed_client.is_available());
+    if !ollama_available {
         return;
     }
 
+    let total_files = file_index.file_count().unwrap_or(0);
     let _ = tx.send(IndexingStatus {
         phase: "embedding".to_string(),
         total_files,
@@ -713,7 +815,6 @@ fn run_background_indexing(
         ..Default::default()
     });
 
-    // Process files without embeddings in batches
     let batch_size = 32;
     loop {
         let files = match file_index.files_without_embeddings(batch_size) {
@@ -735,14 +836,10 @@ fn run_background_indexing(
                         None,
                     );
                 }
-                Err(_) => {
-                    // Embedding failed (model not pulled, etc.) — skip and continue
-                    continue;
-                }
+                Err(_) => continue,
             }
         }
 
-        // Report progress
         let (done, total) = file_index.embedding_coverage().unwrap_or((0, 0));
         let _ = tx.send(IndexingStatus {
             phase: "embedding".to_string(),
@@ -752,7 +849,50 @@ fn run_background_indexing(
             embeddings_total: total,
         });
     }
+}
 
+/// Compute content hashes for files that don't have them, then run graph edge analyzers.
+fn compute_hashes_and_edges(file_index: &FileIndexService) {
+    // Compute SHA-256 hashes for files without them (max 10MB per file)
+    let files_needing_hashes: Vec<(i64, String)> = {
+        if let Ok(conn_guard) = file_index.connection().lock() {
+            conn_guard
+                .prepare(
+                    "SELECT f.id, f.path FROM files f
+                     LEFT JOIN file_content_hashes h ON f.id = h.file_id
+                     WHERE h.file_id IS NULL LIMIT 500",
+                )
+                .ok()
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                        .ok()
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    };
+
+    // Compute hashes outside the lock (I/O intensive)
+    for (id, path_str) in files_needing_hashes {
+        let path = std::path::Path::new(&path_str);
+        if let Ok(Some(hash)) = services::graph_analyzers::compute_content_hash(path) {
+            let _ = file_index.store_content_hash(id, &hash);
+        }
+    }
+
+    // Run graph edge analyzers (siblings, duplicates, references)
+    let _ = file_index.compute_graph_edges();
+}
+
+/// Send a "done" status update.
+fn report_done(
+    file_index: &FileIndexService,
+    total_scanned: usize,
+    tx: &std::sync::mpsc::Sender<IndexingStatus>,
+) {
+    let total_files = file_index.file_count().unwrap_or(0);
     let (done, total) = file_index.embedding_coverage().unwrap_or((0, 0));
     let _ = tx.send(IndexingStatus {
         phase: "done".to_string(),
@@ -765,14 +905,13 @@ fn run_background_indexing(
 
 impl AppState {
     /// Poll for background indexing/embedding status. Call once per frame.
+    /// The background thread runs continuously (periodic re-scan), so the
+    /// receiver is kept alive.
     pub fn poll_index_status(&mut self) {
         if let Some(rx) = &self.index_status_rx {
             // Drain all pending updates (keep latest)
             while let Ok(status) = rx.try_recv() {
                 self.indexing_status = status;
-            }
-            if self.indexing_status.phase == "done" {
-                self.index_status_rx = None;
             }
         }
     }
@@ -1128,12 +1267,19 @@ impl AppState {
             .unwrap()
     }
 
-    /// Push a message to current mode's chat history
+    /// Push a message to current mode's chat history (auto-saves to disk)
     pub fn push_chat(&mut self, msg: ChatMessage) {
+        if msg.role == "user" {
+            // Update last interaction for entropy bot idle detection
+            if let Ok(mut ts) = self.last_interaction.lock() {
+                *ts = Instant::now();
+            }
+        }
         self.mode_chat_histories
             .get_mut(&self.current_mode)
             .unwrap()
             .push(msg);
+        crate::utils::save_session(&self.mode_chat_histories);
     }
 
     pub fn push_chat_to(&mut self, mode: ChatMode, msg: ChatMessage) {
@@ -1143,6 +1289,7 @@ impl AppState {
         if let Some(history) = self.mode_chat_histories.get_mut(&mode) {
             history.push(msg);
         }
+        crate::utils::save_session(&self.mode_chat_histories);
     }
 
     /// Sync the current chat into thread_history and save to disk.
@@ -2326,6 +2473,8 @@ WORKFLOW:
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
         let file_index = self.file_index.clone();
+        let skill_registry = self.skill_registry.clone();
+        let mode_str = self.current_mode.as_str().to_string();
 
         // Spawn background thread for AI work
         std::thread::spawn(move || {
@@ -2342,6 +2491,8 @@ WORKFLOW:
                     stream_tx,
                     abort_reg,
                     Some(file_index),
+                    skill_registry,
+                    mode_str,
                 );
             }));
             if res.is_err() {

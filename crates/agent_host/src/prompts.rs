@@ -132,6 +132,14 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
         capabilities.push("- You CAN search the web using <search>...</search> tags".to_string());
     }
 
+    // File search and preview are always available
+    capabilities.push(
+        "- You CAN search the user's files using <file_search>query</file_search> tags".to_string(),
+    );
+    capabilities.push(
+        "- You CAN show files in preview using <preview type=\"file\" path=\"/path/to/file\">caption</preview> tags".to_string(),
+    );
+
     if !permissions.file_access_dirs.is_empty() {
         let dirs: Vec<String> = permissions
             .file_access_dirs
@@ -141,11 +149,11 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
         capabilities.push(format!("- You CAN access files in: {}", dirs.join(", ")));
     }
 
-    // Mode-specific tools
+    // Mode-specific tools description
     let mode_tools = get_mode_tools(mode);
     if !mode_tools.is_empty() {
         capabilities.push(String::new()); // blank line
-        capabilities.push("### Mode-Specific Tools".to_string());
+        capabilities.push("### Mode-Specific Capabilities".to_string());
         for tool in mode_tools {
             capabilities.push(format!("- {}", tool));
         }
@@ -154,72 +162,66 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
     format!("## Your Capabilities\n{}", capabilities.join("\n"))
 }
 
-/// Get tools available for a specific mode (platform-aware for fix/secure)
+/// Get tool descriptions for a specific mode.
+/// These must match ACTUAL tool capabilities — skills registered in the SkillRegistry.
 fn get_mode_tools(mode: &str) -> Vec<String> {
     match mode.to_lowercase().as_str() {
-        "research" => vec![
-            "**Web Search**: <search>query</search> - Search the internet for information".into(),
-            "**Article Reader**: Ask me to read/summarize any URL".into(),
-            "**Source Evaluator**: I'll assess credibility and cite sources properly".into(),
-        ],
-        "data" => vec![
-            "**CSV Analyzer**: Share a CSV file path and I'll analyze it".into(),
-            "**Chart Recommender**: I'll suggest the best visualization for your data".into(),
-            "**Statistics**: I can calculate summaries, trends, and patterns".into(),
+        "find" => vec![
+            "**File Search**: Search indexed files by name, path, or description".into(),
+            "**File Preview**: Show file contents and metadata in the preview panel".into(),
+            "**Drive Index**: Scan and index new directories".into(),
+            "**File Organizer**: Suggest organization for messy folders (archive/move — NO deletion)".into(),
         ],
         "fix" => get_fix_tools(),
-        "content" => vec![
-            "**Text Polisher**: I can improve grammar, tone, and clarity".into(),
-            "**Rewriter**: I can adjust formality, length, or style".into(),
-            "**Brainstormer**: Give me a topic and I'll generate ideas".into(),
+        "research" => vec![
+            "**Web Search**: Automatically search the internet for current information".into(),
+            "**Article Reader**: Fetch and summarize any URL".into(),
+            "**Source Evaluator**: Assess credibility of sources".into(),
         ],
-        "find" => vec![
-            "**Fuzzy Search**: Describe what you're looking for, I'll find it".into(),
-            "**File Preview**: I can show file contents in the preview panel".into(),
-            "**File Organizer**: I can suggest organization for messy folders (NO deletion)".into(),
+        "data" => vec![
+            "**CSV Analyzer**: Parse CSV files and compute statistics (mean, unique values, distributions)".into(),
+            "**Chart Recommender**: Suggest the best visualization for your data".into(),
+            "**Context Browser**: Search and browse your document library".into(),
+        ],
+        "content" => vec![
+            "**Text Polisher**: Analyze and improve grammar, tone, and clarity".into(),
         ],
         "build" => vec![
-            "**Project Scaffold**: I can create new project structures".into(),
-            "**Spec Kit**: I can help plan features with spec-driven development".into(),
-            "**Code Generator**: I can create scripts and config files".into(),
+            "**Project Scaffold**: Create new project directory structures and boilerplate".into(),
+            "**Spec Init**: Initialize a spec-kit project with constitution and spec files".into(),
+            "**Spec Check**: Validate spec completeness and find gaps".into(),
         ],
         _ => vec![],
     }
 }
 
 /// Get platform-specific fix/security tools - HUMAN FRIENDLY, NO JARGON
+/// These match the 7 actual Fix mode skills: system_diagnostics, process_monitor,
+/// error_explainer, startup_optimizer, privacy_auditor, device_capability, storage_cleaner
 fn get_fix_tools() -> Vec<String> {
     let mut tools = vec![
-        "**Health Check**: \"Is my computer running well?\" - I'll check speed, storage, and memory".into(),
-        "**Error Translator**: Paste any confusing error and I'll explain what it actually means".into(),
-        "**Cleanup Helper**: Find stuff slowing you down and offer to remove it (with your OK)".into(),
+        "**Health Check**: \"Is my computer running well?\" - I'll check CPU, memory, and disk".into(),
+        "**Process Monitor**: \"What's using all my resources?\" - I'll find resource hogs".into(),
+        "**Error Translator**: Paste any confusing error and I'll explain what it means".into(),
+        "**Cleanup Helper**: Find unused files and suggest archiving (with your OK)".into(),
+        "**Device Check**: \"Can my computer handle this?\" - I'll check your hardware capabilities".into(),
     ];
 
-    // Platform-specific security tools - HUMAN LANGUAGE
+    // Platform-specific tools
     if cfg!(target_os = "macos") {
         tools.extend(vec![
-            "**Privacy Check**: \"Can apps spy on me?\" - I'll show what can access your camera, mic, and files".into(),
-            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious activity".into(),
-            "**Update Check**: \"Am I protected?\" - I'll make sure your Mac has the latest safety updates".into(),
-            "**Startup Audit**: \"What runs when I turn on my Mac?\" - I'll show hidden programs that auto-start".into(),
-            "**Connection Check**: \"Is anyone connecting to my computer?\" - I'll look for unexpected access".into(),
+            "**Privacy Check**: I'll show what apps can access your camera, mic, and files".into(),
+            "**Startup Audit**: I'll show hidden programs that auto-start on your Mac".into(),
         ]);
     } else if cfg!(target_os = "windows") {
         tools.extend(vec![
-            "**Privacy Check**: \"Can apps spy on me?\" - I'll show what can access your camera, mic, and files".into(),
-            "**Defender Check**: \"Is my antivirus working?\" - I'll verify Windows is protecting you".into(),
-            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious programs".into(),
-            "**Update Check**: \"Am I protected?\" - I'll make sure Windows has the latest safety updates".into(),
-            "**Startup Audit**: \"What runs when I turn on my PC?\" - I'll show programs that auto-start".into(),
+            "**Privacy Check**: I'll show what apps can access your camera, mic, and files".into(),
+            "**Startup Audit**: I'll show programs that auto-start on your PC".into(),
         ]);
     } else {
-        // Linux
         tools.extend(vec![
-            "**Privacy Check**: \"Can apps spy on me?\" - I'll review what has access to your stuff".into(),
-            "**Snoop Detector**: \"Is anything sketchy running?\" - I'll look for suspicious processes".into(),
-            "**Update Check**: \"Am I protected?\" - I'll check for security updates you should install".into(),
-            "**Connection Check**: \"Is anyone connecting to my computer?\" - I'll look for unexpected access".into(),
-            "**Login Monitor**: \"Has anyone tried to break in?\" - I'll check for failed access attempts".into(),
+            "**Privacy Check**: I'll review what has access to your stuff".into(),
+            "**Startup Audit**: I'll check what services auto-start on your system".into(),
         ]);
     }
 

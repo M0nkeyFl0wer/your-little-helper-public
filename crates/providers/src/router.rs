@@ -1,4 +1,4 @@
-use crate::anthropic::AnthropicClient;
+use crate::anthropic::{AnthropicClient, AnthropicTool};
 use crate::gemini::GeminiClient;
 use crate::ollama::OllamaClient;
 use crate::openai::OpenAIClient;
@@ -85,11 +85,15 @@ impl ProviderRouter {
     /// Contract: if the HTTP connection fails *before* any chunks are sent,
     /// returns `Err(...)` (allows router fallback). Once streaming starts,
     /// errors go through `StreamChunk::Error` and the method returns `Ok(())`.
+    /// Streaming generation with provider fallback.
+    ///
+    /// When `tools` is `Some(...)` and the active provider is Anthropic,
+    /// native tool definitions are included in the request.
     pub async fn generate_stream(
         &self,
         messages: Vec<ChatMessage>,
         tx: UnboundedSender<StreamChunk>,
-        enable_tools: bool,
+        tools: Option<Vec<AnthropicTool>>,
     ) -> Result<()> {
         let mut last_error = None;
 
@@ -117,12 +121,11 @@ impl ProviderRouter {
                         &self.config.anthropic_auth,
                     ) {
                         Ok(client) => {
-                            if enable_tools {
-                                let tools = AnthropicClient::build_tool_definitions();
+                            if let Some(ref t) = tools {
                                 client
                                     .generate_stream_with_tools(
                                         messages.clone(),
-                                        tools,
+                                        t.clone(),
                                         tx.clone(),
                                     )
                                     .await

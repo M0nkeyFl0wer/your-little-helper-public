@@ -401,6 +401,34 @@ pub fn save_settings(settings: &AppSettings) {
     }
 }
 
+/// Path to the session file for auto-saving chat histories.
+fn session_path() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|mut p| {
+        p.push("little_helper");
+        p.push("session.json");
+        p
+    })
+}
+
+/// Save chat histories for all modes to disk (auto-save).
+pub fn save_session(histories: &std::collections::HashMap<crate::types::ChatMode, Vec<crate::types::ChatMessage>>) {
+    if let Some(path) = session_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string(histories) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+}
+
+/// Load saved chat histories from disk. Returns None if no session file exists.
+pub fn load_session() -> Option<std::collections::HashMap<crate::types::ChatMode, Vec<crate::types::ChatMessage>>> {
+    let path = session_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
 /// Migrate retired/outdated model names to current best equivalents.
 /// Returns true if any migration was applied.
 fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
