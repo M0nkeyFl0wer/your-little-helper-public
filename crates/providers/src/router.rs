@@ -110,7 +110,17 @@ impl ProviderRouter {
                         self.config.openai_base_url.as_deref(),
                     ) {
                         Ok(client) => {
-                            client.generate_stream(messages.clone(), tx.clone()).await
+                            if let Some(ref t) = tools {
+                                client
+                                    .generate_stream_with_tools(
+                                        messages.clone(),
+                                        t.clone(),
+                                        tx.clone(),
+                                    )
+                                    .await
+                            } else {
+                                client.generate_stream(messages.clone(), tx.clone()).await
+                            }
                         }
                         Err(e) => Err(e),
                     }

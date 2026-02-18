@@ -135,6 +135,27 @@ async fn execute_skill(
     }
 }
 
+/// Get or compute a query embedding, using the LRU cache on FileIndexService.
+/// Returns None if Ollama is unavailable or the embedding fails (graceful fallback).
+async fn get_query_embedding(
+    fi: &services::file_index::FileIndexService,
+    query: &str,
+) -> Option<Vec<f32>> {
+    // Check cache first
+    if let Some(cached) = fi.get_cached_query_embedding(query) {
+        return Some(cached);
+    }
+    // Compute via Ollama
+    let client = services::embedding_client::EmbeddingClient::default_ollama();
+    match client.embed_single(query).await {
+        Ok(embedding) => {
+            fi.cache_query_embedding(query, embedding.clone());
+            Some(embedding)
+        }
+        Err(_) => None,
+    }
+}
+
 /// Run AI generation in background thread with streaming.
 ///
 /// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
@@ -173,17 +194,18 @@ pub fn run_ai_generation(
 
     let router = ProviderRouter::new(settings);
 
-    // Check if the active provider is Anthropic (for native tool_use)
-    let is_anthropic = router.active_provider() == Some("anthropic");
+    // Check if the active provider supports native tool_use
+    let active_provider = router.active_provider().unwrap_or("").to_string();
+    let supports_tools = matches!(active_provider.as_str(), "anthropic" | "openai");
 
     // Build tool definitions dynamically: core tools + mode-specific skills
-    let anthropic_tools = if is_anthropic {
+    let anthropic_tools = if supports_tools {
         Some(build_tool_definitions(&skill_registry, &mode))
     } else {
         None
     };
 
-    // Pre-compile regexes for XML tag parsing (non-Anthropic providers)
+    // Pre-compile regexes for XML tag parsing (non-tool-calling providers)
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
     let cmd_re = regex::Regex::new(
         r"(?s)<(?:command|request|cmd|run)>(.*?)</(?:command|request|cmd|run)>",
@@ -193,6 +215,9 @@ pub fn run_ai_generation(
         regex::Regex::new(r#"(?s)<file_search(?:\s[^>]*)?>([^<]*)</file_search>"#).unwrap();
     let preview_re =
         regex::Regex::new(r#"<preview\s+type="file"\s+path="([^"]+)"[^>]*>"#).unwrap();
+    // Generic skill tag: <tool name="skill_id">query</tool>
+    let skill_tag_re =
+        regex::Regex::new(r#"(?s)<tool\s+name="([^"]+)"[^>]*>(.*?)</tool>"#).unwrap();
 
     let result = rt.block_on(Abortable::new(
         async {
@@ -290,10 +315,12 @@ pub fn run_ai_generation(
                 let mut searches: Vec<String> = Vec::new();
                 let mut commands: Vec<String> = Vec::new();
                 let mut file_searches: Vec<(String, usize)> = Vec::new();
+                // Skill invocations from XML tags: (skill_id, query)
+                let mut xml_skill_invocations: Vec<(String, String)> = Vec::new();
                 let has_tool_uses = !tool_uses.is_empty();
 
                 if has_tool_uses {
-                    // Native tool_use path (Anthropic) — categorize core tools;
+                    // Native tool_use path — categorize core tools;
                     // skill tools will be dispatched in the execution phase.
                     for (_id, name, input) in &tool_uses {
                         match name.as_str() {
@@ -329,7 +356,7 @@ pub fn run_ai_generation(
                         }
                     }
                 } else {
-                    // XML tag parsing path (all other providers)
+                    // XML tag parsing path (providers without native tool calling)
                     searches = search_re
                         .captures_iter(&response)
                         .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
@@ -361,12 +388,26 @@ pub fn run_ai_generation(
                             }
                         }
                     }
+
+                    // <tool name="skill_id">query</tool> — generic skill invocation
+                    for cap in skill_tag_re.captures_iter(&response) {
+                        if let (Some(name), Some(query)) = (cap.get(1), cap.get(2)) {
+                            let skill_id = name.as_str().trim().to_string();
+                            let query_text = query.as_str().trim().to_string();
+                            if !skill_id.is_empty()
+                                && !CORE_TOOL_IDS.contains(&skill_id.as_str())
+                                && skill_registry.get(&skill_id).is_some()
+                            {
+                                xml_skill_invocations.push((skill_id, query_text));
+                            }
+                        }
+                    }
                 }
 
-                // Check if any non-core skill tools were invoked
+                // Check if any non-core skill tools were invoked (native or XML)
                 let has_skill_tools = tool_uses.iter().any(|(_, name, _)| {
                     !CORE_TOOL_IDS.contains(&name.as_str())
-                });
+                }) || !xml_skill_invocations.is_empty();
 
                 // If no actions needed, return the response
                 if searches.is_empty()
@@ -391,8 +432,8 @@ pub fn run_ai_generation(
                 }
 
                 // Add assistant response to conversation.
-                // For Anthropic with tool_use, include structured content blocks.
-                if is_anthropic && has_tool_uses {
+                // For providers with native tool_use, include structured content blocks.
+                if has_tool_uses {
                     let mut parts: Vec<serde_json::Value> = Vec::new();
                     if !response.is_empty() {
                         parts.push(serde_json::json!({
@@ -516,7 +557,7 @@ pub fn run_ai_generation(
                     }
                 }
 
-                if is_anthropic && has_tool_uses {
+                if has_tool_uses {
                     // Anthropic native tool_use: execute each tool and build
                     // tool_result content blocks keyed by tool_use_id.
                     for (id, name, input) in &tool_uses {
@@ -560,7 +601,8 @@ pub fn run_ai_generation(
                                     .unwrap_or(20) as usize;
                                 let _ = status_tx.send(format!("Searching files: {}", q));
                                 if let Some(ref fi) = file_index {
-                                    match fi.semantic_search(q, None, limit) {
+                                    let qe = get_query_embedding(fi, q).await;
+                                    match fi.semantic_search(q, qe.as_deref(), limit) {
                                         Ok(results) if !results.is_empty() => {
                                             let mut out = format!("[File search results for '{}']\n", q);
                                             for (i, r) in results.iter().enumerate() {
@@ -622,7 +664,8 @@ pub fn run_ai_generation(
                     for (query, limit) in &file_searches {
                         let _ = status_tx.send(format!("Searching files: {}", query));
                         if let Some(ref fi) = file_index {
-                            match fi.semantic_search(query, None, *limit) {
+                            let qe = get_query_embedding(fi, query).await;
+                            match fi.semantic_search(query, qe.as_deref(), *limit) {
                                 Ok(results) if !results.is_empty() => {
                                     let mut out =
                                         format!("[File search results for '{}']\n", query);
@@ -650,22 +693,82 @@ pub fn run_ai_generation(
                             }
                         }
                     }
+                    // Execute XML skill invocations
+                    for (skill_id, query_text) in &xml_skill_invocations {
+                        let _ = status_tx.send(format!("Running {}", skill_id));
+                        let input = serde_json::json!({"query": query_text});
+                        let result = execute_skill(
+                            &skill_registry,
+                            skill_id,
+                            &input,
+                            &mode,
+                            &status_tx,
+                        )
+                        .await;
+                        plain_results.push(result);
+                    }
                 }
 
                 // Add results back to conversation
                 if !tool_result_parts.is_empty() {
-                    // Anthropic: structured tool_result content blocks
+                    // Structured tool_result content blocks
                     let content_text = tool_result_parts
                         .iter()
                         .filter_map(|p| p.get("content").and_then(|c| c.as_str()))
                         .collect::<Vec<_>>()
                         .join("\n\n");
+
+                    // Show tool activity in the streaming partial so the user sees what happened
+                    let mut activity = String::from("\n\n---\n");
+                    for (_id, name, input) in &tool_uses {
+                        let summary = match name.as_str() {
+                            "web_search" => {
+                                let q = input.get("query").and_then(|v| v.as_str()).unwrap_or("?");
+                                format!("**Searched web:** {}", q)
+                            }
+                            "file_search" => {
+                                let q = input.get("query").and_then(|v| v.as_str()).unwrap_or("?");
+                                format!("**Searched files:** {}", q)
+                            }
+                            "bash_execute" => {
+                                let c = input.get("command").and_then(|v| v.as_str()).unwrap_or("?");
+                                format!("**Ran command:** `{}`", c)
+                            }
+                            "file_preview" => {
+                                let p = input.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                format!("**Opened file:** {}", p)
+                            }
+                            other => {
+                                let q = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                                format!("**{}:** {}", other, q)
+                            }
+                        };
+                        activity.push_str(&format!("{}\n", summary));
+                    }
+                    let _ = stream_tx.send(StreamChunk::Text(activity));
+
                     msgs.push(ApiChatMessage {
                         role: "user".to_string(),
                         content: content_text,
                         content_parts: Some(tool_result_parts),
                     });
                 } else if !plain_results.is_empty() {
+                    // Show XML tag tool activity
+                    let mut activity = String::from("\n\n---\n");
+                    for query in &searches {
+                        activity.push_str(&format!("**Searched web:** {}\n", query));
+                    }
+                    for cmd in &commands {
+                        activity.push_str(&format!("**Ran command:** `{}`\n", cmd));
+                    }
+                    for (query, _) in &file_searches {
+                        activity.push_str(&format!("**Searched files:** {}\n", query));
+                    }
+                    for (skill_id, query) in &xml_skill_invocations {
+                        activity.push_str(&format!("**{}:** {}\n", skill_id, query));
+                    }
+                    let _ = stream_tx.send(StreamChunk::Text(activity));
+
                     msgs.push(ApiChatMessage {
                         role: "user".to_string(),
                         content: plain_results.join("\n\n"),

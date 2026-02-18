@@ -154,6 +154,7 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
     if !mode_tools.is_empty() {
         capabilities.push(String::new()); // blank line
         capabilities.push("### Mode-Specific Capabilities".to_string());
+        capabilities.push("To invoke these tools, use: `<tool name=\"skill_id\">your query</tool>`".to_string());
         for tool in mode_tools {
             capabilities.push(format!("- {}", tool));
         }
