@@ -226,7 +226,13 @@ pub struct SkillInfo {
 
 use services::file_index::FileIndexService;
 
-/// Initialize the skill registry with all available skills
+/// Initialize the skill registry with all available skills.
+///
+/// Registers built-in skills first, then loads user-defined SKILL.md
+/// extensions from the global and project-specific directories.
+/// Extension skills are indistinguishable from built-in skills once
+/// registered — they appear in tool definitions and can be invoked
+/// by the AI agent.
 pub fn init_registry(file_index: Arc<FileIndexService>) -> SkillRegistry {
     let mut registry = SkillRegistry::new();
 
@@ -236,7 +242,7 @@ pub fn init_registry(file_index: Arc<FileIndexService>) -> SkillRegistry {
     // Register Find mode skills
     find::register_skills(&mut registry, file_index);
 
-    // Register Fix mode skills
+    // Register Fix mode skills (currently empty — uses bash_execute directly)
     fix::register_skills(&mut registry);
 
     // Register Research mode skills
@@ -245,11 +251,25 @@ pub fn init_registry(file_index: Arc<FileIndexService>) -> SkillRegistry {
     // Register Data mode skills
     data::register_skills(&mut registry);
 
-    // Register Content mode skills
+    // Register Content mode skills (currently empty — model handles natively)
     content::register_skills(&mut registry);
 
     // Register Build mode skills (spec-kit integration)
     build::register_build_skills(&mut registry);
+
+    // --- Load user-defined SKILL.md extensions ---
+    // These follow the Agent Skills standard (https://agentskills.io),
+    // compatible with Pi, Claude Code, Cursor, and 30+ other agent tools.
+
+    // Global extensions: ~/.config/little_helper/skills/
+    let global_errors = crate::extensions::load_global_extensions(&mut registry);
+    for err in &global_errors {
+        tracing::warn!(
+            "Extension load error in {}: {}",
+            err.path.display(),
+            err.message
+        );
+    }
 
     registry
 }

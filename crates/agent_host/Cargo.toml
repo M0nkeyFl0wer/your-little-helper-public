@@ -23,6 +23,7 @@ dirs = "5"
 reqwest = { workspace = true }
 html2text = { workspace = true }
 walkdir = "2.4"
+serde_yaml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
