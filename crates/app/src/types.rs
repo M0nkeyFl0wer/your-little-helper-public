@@ -2242,7 +2242,7 @@ IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not
             "Diagnostics: uname -a, df -h, free -h, ip addr, ping, ps aux, systemctl, journalctl, lsof."
         };
 
-        let system_prompt = match self.current_mode {
+        let mut system_prompt = match self.current_mode {
             ChatMode::Find => {
                 let tool_refs = if is_anthropic_provider {
                     "Use bash_execute to search. Use file_preview to show files."
@@ -2451,6 +2451,16 @@ WORKFLOW:
 "#)
             },
         };
+
+        // Append hierarchical context (HELPER.md / AGENTS.md / CLAUDE.md) if present.
+        let hier_ctx = agent_host::hierarchical_context::load_hierarchical_context(
+            &self.settings.allowed_dirs,
+            None,
+        );
+        if !hier_ctx.is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&hier_ctx);
+        }
 
         let (api_messages, prompt_tokens_est, dropped) =
             self.build_api_messages_with_budget(system_prompt);
