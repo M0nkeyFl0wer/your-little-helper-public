@@ -1,19 +1,14 @@
 //! Content mode skills for writing and editing.
 //!
-//! Provides:
-//! - Text analysis and polishing
-//! - Grammar and style suggestions
-//! - Content formatting (future)
-//! - Brainstorming helpers (future)
-
-pub mod text_polisher;
-
-pub use text_polisher::TextPolisher;
+//! Content mode relies on the model's native writing capabilities.
+//! The model handles text analysis, grammar suggestions, and content
+//! formatting directly without dedicated skills.
 
 use crate::skills::SkillRegistry;
-use std::sync::Arc;
 
-/// Register all Content mode skills with the registry
-pub fn register_skills(registry: &mut SkillRegistry) {
-    registry.register(Arc::new(TextPolisher::new()));
+/// Register Content mode skills with the registry.
+/// Currently empty — the model handles content tasks natively.
+pub fn register_skills(_registry: &mut SkillRegistry) {
+    // Intentionally empty: the model handles writing, editing,
+    // and text analysis natively.
 }

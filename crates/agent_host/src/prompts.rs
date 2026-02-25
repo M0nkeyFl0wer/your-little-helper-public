@@ -173,19 +173,21 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
             "**Drive Index**: Scan and index new directories".into(),
             "**File Organizer**: Suggest organization for messy folders (archive/move — NO deletion)".into(),
         ],
-        "fix" => get_fix_tools(),
+        "fix" => vec![
+            // Fix mode uses bash_execute + web_search directly — no dedicated skills.
+            // The model handles diagnostics, process monitoring, error explanation,
+            // and troubleshooting natively via shell commands.
+        ],
         "research" => vec![
             "**Web Search**: Automatically search the internet for current information".into(),
             "**Article Reader**: Fetch and summarize any URL".into(),
-            "**Source Evaluator**: Assess credibility of sources".into(),
         ],
         "data" => vec![
             "**CSV Analyzer**: Parse CSV files and compute statistics (mean, unique values, distributions)".into(),
-            "**Chart Recommender**: Suggest the best visualization for your data".into(),
             "**Context Browser**: Search and browse your document library".into(),
         ],
         "content" => vec![
-            "**Text Polisher**: Analyze and improve grammar, tone, and clarity".into(),
+            // Content mode uses the model's native writing capabilities directly.
         ],
         "build" => vec![
             "**Project Scaffold**: Create new project directory structures and boilerplate".into(),
@@ -194,39 +196,6 @@ fn get_mode_tools(mode: &str) -> Vec<String> {
         ],
         _ => vec![],
     }
-}
-
-/// Get platform-specific fix/security tools - HUMAN FRIENDLY, NO JARGON
-/// These match the 7 actual Fix mode skills: system_diagnostics, process_monitor,
-/// error_explainer, startup_optimizer, privacy_auditor, device_capability, storage_cleaner
-fn get_fix_tools() -> Vec<String> {
-    let mut tools = vec![
-        "**Health Check**: \"Is my computer running well?\" - I'll check CPU, memory, and disk".into(),
-        "**Process Monitor**: \"What's using all my resources?\" - I'll find resource hogs".into(),
-        "**Error Translator**: Paste any confusing error and I'll explain what it means".into(),
-        "**Cleanup Helper**: Find unused files and suggest archiving (with your OK)".into(),
-        "**Device Check**: \"Can my computer handle this?\" - I'll check your hardware capabilities".into(),
-    ];
-
-    // Platform-specific tools
-    if cfg!(target_os = "macos") {
-        tools.extend(vec![
-            "**Privacy Check**: I'll show what apps can access your camera, mic, and files".into(),
-            "**Startup Audit**: I'll show hidden programs that auto-start on your Mac".into(),
-        ]);
-    } else if cfg!(target_os = "windows") {
-        tools.extend(vec![
-            "**Privacy Check**: I'll show what apps can access your camera, mic, and files".into(),
-            "**Startup Audit**: I'll show programs that auto-start on your PC".into(),
-        ]);
-    } else {
-        tools.extend(vec![
-            "**Privacy Check**: I'll review what has access to your stuff".into(),
-            "**Startup Audit**: I'll check what services auto-start on your system".into(),
-        ]);
-    }
-
-    tools
 }
 
 fn get_preview_instructions() -> &'static str {
