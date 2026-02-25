@@ -1107,6 +1107,8 @@ impl AppState {
     }
 
     fn build_api_messages_with_budget(&self, system_prompt: String) -> (Vec<ApiChatMessage>, u32, usize) {
+        use agent_host::compactor::{Compactor, CompactionConfig};
+
         // Budget: keep prompts small and fast even on cloud models.
         const COMFORT_TOTAL_TOKENS: u32 = 8_000;
         const RESERVED_FOR_REPLY: u32 = 2_000;
@@ -1117,33 +1119,37 @@ impl AppState {
             content: system_prompt,
             content_parts: None,
         }];
+        let system_tokens = Self::estimate_tokens(&msgs[0].content);
 
-        let mut used = Self::estimate_tokens(&msgs[0].content);
-
-        // Add recent messages from newest backwards until we hit budget.
         let history = self.chat_history();
-        let mut kept_rev: Vec<ApiChatMessage> = Vec::new();
-        let mut dropped = 0usize;
 
-        for msg in history.iter().rev() {
-            let t = Self::estimate_tokens(&msg.content);
-            if used.saturating_add(t) > budget {
-                // Stop here — don't skip and include older messages
-                dropped = history.len() - kept_rev.len();
-                break;
-            }
-            used = used.saturating_add(t);
-            kept_rev.push(ApiChatMessage {
+        // Use Compactor to determine how many old messages to drop.
+        let remaining_budget = budget.saturating_sub(system_tokens);
+        let compactor = Compactor::new(CompactionConfig {
+            trigger_threshold_tokens: remaining_budget,
+            target_after_compact_tokens: remaining_budget / 2,
+            min_messages_to_compact: 4,
+            ..Default::default()
+        });
+        let pairs: Vec<(String, String)> = history
+            .iter()
+            .map(|m| (m.role.clone(), m.content.clone()))
+            .collect();
+        let drop_count = compactor.messages_to_compact(&pairs);
+
+        // Build from the kept messages.
+        let kept = &history[drop_count..];
+        let mut used = system_tokens;
+        for msg in kept {
+            used = used.saturating_add(Self::estimate_tokens(&msg.content));
+            msgs.push(ApiChatMessage {
                 role: msg.role.clone(),
                 content: msg.content.clone(),
                 content_parts: None,
             });
         }
 
-        kept_rev.reverse();
-        msgs.extend(kept_rev);
-
-        (msgs, used, dropped)
+        (msgs, used, drop_count)
     }
 
     pub fn update_settings_perf(&mut self) {
