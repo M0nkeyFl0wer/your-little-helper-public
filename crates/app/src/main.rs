@@ -261,6 +261,15 @@ impl eframe::App for LittleHelperApp {
         s.poll_ai_stream();
         s.poll_ai_status();
         s.poll_ai_response();
+
+        // Auto-deliver queued follow-ups when generation is idle.
+        if s.thinking_mode.is_none() {
+            if let Some(followup) = s.take_next_followup() {
+                s.input_text = followup;
+                s.send_message();
+            }
+        }
+
         s.poll_command_result();
         s.poll_web_preview();
 
