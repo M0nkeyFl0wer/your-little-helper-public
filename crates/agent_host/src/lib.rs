@@ -12,6 +12,7 @@ pub mod context_manager;
 pub mod context_token_manager;
 pub mod executor;
 pub mod extensions;
+pub mod hierarchical_context;
 pub mod prompts;
 pub mod skill_executor;
 pub mod skills;
