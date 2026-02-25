@@ -8,6 +8,7 @@
 //! - Provide user-friendly summaries of command output
 //! - Invoke skills with permission handling
 
+pub mod compactor;
 pub mod context_manager;
 pub mod context_token_manager;
 pub mod executor;
