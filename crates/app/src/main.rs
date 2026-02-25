@@ -1791,13 +1791,17 @@ impl eframe::App for LittleHelperApp {
                             .copied()
                             .unwrap_or(false);
 
-                    let hint = match s.current_mode {
-                        ChatMode::Find => "What are you trying to find?",
-                        ChatMode::Fix => "What's broken? Need to find a file?",
-                        ChatMode::Research => "What should I research?",
-                        ChatMode::Data => "What data would you like to work with?",
-                        ChatMode::Content => "What content would you like to create?",
-                        ChatMode::Build => "What would you like to build?",
+                    let hint = if is_busy {
+                        "Type to steer the response..."
+                    } else {
+                        match s.current_mode {
+                            ChatMode::Find => "What are you trying to find?",
+                            ChatMode::Fix => "What's broken? Need to find a file?",
+                            ChatMode::Research => "What should I research?",
+                            ChatMode::Data => "What data would you like to work with?",
+                            ChatMode::Content => "What content would you like to create?",
+                            ChatMode::Build => "What would you like to build?",
+                        }
                     };
 
                     // Subtle attention nudge when approvals are waiting
@@ -1832,7 +1836,15 @@ impl eframe::App for LittleHelperApp {
                     }
 
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        s.send_message();
+                        if is_busy {
+                            let text = s.input_text.clone();
+                            if !text.trim().is_empty() {
+                                s.send_steering(text, shared::agent_api::SteeringType::Steer);
+                                s.input_text.clear();
+                            }
+                        } else {
+                            s.send_message();
+                        }
                     }
 
                     let btn = if is_busy {
