@@ -12,3 +12,7 @@ async-trait = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,5 +1,6 @@
 pub mod events;
 pub mod preview_types;
+pub mod session_tree;
 pub mod skill;
 pub mod version;
 
