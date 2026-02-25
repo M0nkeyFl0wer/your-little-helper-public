@@ -5,7 +5,7 @@
 
 use crate::types::*;
 use crate::utils::*;
-use shared::agent_api::{ChatMessage as ApiChatMessage, StreamChunk};
+use shared::agent_api::{ChatMessage as ApiChatMessage, SteeringMessage, SteeringType, StreamChunk};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -160,6 +160,7 @@ async fn get_query_embedding(
 ///
 /// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
 /// `stream_tx` sends incremental StreamChunk::Text to the UI for live rendering.
+/// `steering_rx` receives mid-generation messages from the user (steer / follow-up).
 /// The UI polls these channels each frame.
 pub fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
@@ -174,6 +175,7 @@ pub fn run_ai_generation(
     file_index: Option<std::sync::Arc<services::file_index::FileIndexService>>,
     skill_registry: std::sync::Arc<agent_host::skills::SkillRegistry>,
     mode: String,
+    steering_rx: Option<tokio::sync::mpsc::UnboundedReceiver<SteeringMessage>>,
 ) {
     use agent_host::{classify_command, web_search, DangerLevel};
     use providers::router::ProviderRouter;
@@ -187,6 +189,7 @@ pub fn run_ai_generation(
                 error: Some(format!("Failed to start async runtime: {}", e)),
                 executed_commands: Vec::new(),
                 pending_commands: Vec::new(),
+                queued_followups: Vec::new(),
             });
             return;
         }
@@ -226,8 +229,16 @@ pub fn run_ai_generation(
             let mut all_executed_commands: Vec<(String, String, bool)> = Vec::new();
             let mut pending_commands: Vec<String> = Vec::new();
 
-            // Loop for multi-turn interactions (max 5 iterations)
-            for iteration in 0..5 {
+            // Steering: take ownership of the receiver if provided.
+            // Follow-ups are queued here and returned alongside the final response.
+            let mut steer_rx = steering_rx;
+            let mut queued_followups: Vec<String> = Vec::new();
+
+            // Loop for multi-turn interactions (max 8 iterations — raised from 5
+            // to accommodate steering injections that add extra rounds).
+            let max_iterations = 8;
+            let mut iteration = 0;
+            while iteration < max_iterations {
                 let stage = if iteration == 0 {
                     "Thinking"
                 } else {
@@ -421,6 +432,7 @@ pub fn run_ai_generation(
                             Option<PathBuf>,
                             Vec<(String, String, bool)>,
                             Vec<String>,
+                            Vec<String>,
                         ),
                         anyhow::Error,
                     >((
@@ -428,6 +440,7 @@ pub fn run_ai_generation(
                         file_to_preview,
                         all_executed_commands,
                         pending_commands,
+                        queued_followups,
                     ));
                 }
 
@@ -775,6 +788,41 @@ pub fn run_ai_generation(
                         content_parts: None,
                     });
                 }
+
+                // --- Check for steering messages between iterations ---
+                // This is the natural pause point: tools have executed, results
+                // are in the conversation, and we're about to ask the model again.
+                if let Some(ref mut rx) = steer_rx {
+                    // Drain all pending steering messages (non-blocking)
+                    loop {
+                        match rx.try_recv() {
+                            Ok(steering) => match steering.message_type {
+                                SteeringType::Steer => {
+                                    // Inject the user's guidance into the conversation
+                                    // so the model sees it on the very next iteration.
+                                    let _ = status_tx.send(
+                                        "Incorporating your guidance...".to_string(),
+                                    );
+                                    let _ = stream_tx.send(StreamChunk::Text(
+                                        format!("\n\n> **You:** {}\n\n", steering.content),
+                                    ));
+                                    msgs.push(ApiChatMessage {
+                                        role: "user".to_string(),
+                                        content: steering.content,
+                                        content_parts: None,
+                                    });
+                                }
+                                SteeringType::FollowUp => {
+                                    // Queue for delivery after this generation completes.
+                                    queued_followups.push(steering.content);
+                                }
+                            },
+                            Err(_) => break, // No more pending messages
+                        }
+                    }
+                }
+
+                iteration += 1;
             }
 
             // Ran out of iterations — ask the model to summarize what it found
@@ -826,6 +874,7 @@ pub fn run_ai_generation(
                 file_to_preview,
                 all_executed_commands,
                 pending_commands,
+                queued_followups,
             ))
         },
         abort_reg,
@@ -833,19 +882,23 @@ pub fn run_ai_generation(
 
     // Send result back to UI
     let ai_result = match result {
-        Ok(Ok((response, preview_file, executed_commands, pending_commands))) => AiResult {
-            response,
-            preview_file,
-            error: None,
-            executed_commands,
-            pending_commands,
-        },
+        Ok(Ok((response, preview_file, executed_commands, pending_commands, followups))) => {
+            AiResult {
+                response,
+                preview_file,
+                error: None,
+                executed_commands,
+                pending_commands,
+                queued_followups: followups,
+            }
+        }
         Ok(Err(e)) => AiResult {
             response: String::new(),
             preview_file: None,
             error: Some(e.to_string()),
             executed_commands: Vec::new(),
             pending_commands: Vec::new(),
+            queued_followups: Vec::new(),
         },
         Err(_aborted) => AiResult {
             response: String::new(),
@@ -853,6 +906,7 @@ pub fn run_ai_generation(
             error: Some("Cancelled".to_string()),
             executed_commands: Vec::new(),
             pending_commands: Vec::new(),
+            queued_followups: Vec::new(),
         },
     };
 

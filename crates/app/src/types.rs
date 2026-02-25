@@ -68,6 +68,9 @@ pub struct AiResult {
     /// Commands that were executed (for transparency)
     pub executed_commands: Vec<(String, String, bool)>, // (command, output, success)
     pub pending_commands: Vec<String>,
+    /// Follow-up messages queued by the user during generation.
+    /// The UI auto-delivers these as new user messages after the response completes.
+    pub queued_followups: Vec<String>,
 }
 
 /// Result from background command execution
@@ -311,6 +314,13 @@ pub struct AppState {
     pub ai_stream_rx: Option<Receiver<StreamChunk>>,
     /// Accumulated streaming text per mode (displayed as partial assistant message)
     pub streaming_partial: HashMap<ChatMode, String>,
+
+    /// Sender for steering messages (user input while agent is thinking).
+    /// Created fresh each time `start_ai_generation` is called; the receiver
+    /// goes to the background thread. `None` when no generation is active.
+    pub steering_tx: Option<tokio::sync::mpsc::UnboundedSender<shared::agent_api::SteeringMessage>>,
+    /// Follow-up messages queued during the last generation, pending auto-delivery.
+    pub pending_followups: Vec<String>,
 
     // Background OAuth flow channel
     pub oauth_result_rx: Option<Receiver<OAuthResult>>,
@@ -668,6 +678,8 @@ impl Default for AppState {
             ai_status_rx: None,
             ai_stream_rx: None,
             streaming_partial: HashMap::new(),
+            steering_tx: None,
+            pending_followups: Vec::new(),
             oauth_result_rx: None,
             oauth_in_progress: false,
 
@@ -1292,6 +1304,32 @@ impl AppState {
         crate::utils::save_session(&self.mode_chat_histories);
     }
 
+    /// Send a steering message to the running generation.
+    ///
+    /// Call this when the user types while the agent is thinking. Returns
+    /// `true` if the message was sent, `false` if no generation is active.
+    pub fn send_steering(&self, content: String, steer_type: shared::agent_api::SteeringType) -> bool {
+        if let Some(ref tx) = self.steering_tx {
+            let msg = shared::agent_api::SteeringMessage {
+                content,
+                message_type: steer_type,
+            };
+            tx.send(msg).is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Check if there are pending follow-ups and return the first one.
+    /// The UI calls this after each response to auto-deliver queued follow-ups.
+    pub fn take_next_followup(&mut self) -> Option<String> {
+        if self.pending_followups.is_empty() {
+            None
+        } else {
+            Some(self.pending_followups.remove(0))
+        }
+    }
+
     /// Sync the current chat into thread_history and save to disk.
     /// Call after adding a user or assistant message.
     pub fn sync_thread_history(&mut self, mode: ChatMode) {
@@ -1671,7 +1709,16 @@ What to do next:\n\
                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                         });
                     }
+
+                    // Store any queued follow-ups from steering for auto-delivery.
+                    // The UI will pick these up and send them as new messages.
+                    if !result.queued_followups.is_empty() {
+                        self.pending_followups = result.queued_followups;
+                    }
                 }
+
+                // Clean up steering channel (generation is done)
+                self.steering_tx = None;
             }
         }
     }
@@ -2470,6 +2517,12 @@ WORKFLOW:
             }
         }
 
+        // Steering channel: lets the user send messages mid-generation.
+        // The sender stays in AppState; the receiver goes to the background thread.
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.steering_tx = Some(steer_tx);
+        self.pending_followups.clear();
+
         let settings = self.settings.model.clone();
         let allowed_dirs = self.settings.allowed_dirs.clone();
         let file_index = self.file_index.clone();
@@ -2493,6 +2546,7 @@ WORKFLOW:
                     Some(file_index),
                     skill_registry,
                     mode_str,
+                    Some(steer_rx),
                 );
             }));
             if res.is_err() {
@@ -2504,6 +2558,7 @@ WORKFLOW:
                     ),
                     executed_commands: Vec::new(),
                     pending_commands: Vec::new(),
+                    queued_followups: Vec::new(),
                 });
             }
         });

@@ -198,6 +198,35 @@ pub mod agent_api {
         /// Error encountered mid-stream.
         Error(String),
     }
+
+    /// Classifies how a steering message should be handled.
+    ///
+    /// - **Steer**: Injected immediately into the conversation. The agent
+    ///   incorporates the guidance in its very next iteration.
+    /// - **FollowUp**: Queued and delivered after the current generation
+    ///   completes, triggering a new round of generation automatically.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum SteeringType {
+        /// Inject into the current generation loop immediately.
+        /// Use case: "actually, search for X instead" while agent is mid-run.
+        Steer,
+        /// Queue for delivery after the current response completes.
+        /// Use case: "also check Y" while agent is finishing up.
+        FollowUp,
+    }
+
+    /// A message sent by the user while the agent is already generating.
+    ///
+    /// Steering messages let users course-correct without cancelling and
+    /// re-typing. The generation loop checks for these between iterations
+    /// (between tool execution rounds).
+    #[derive(Debug, Clone)]
+    pub struct SteeringMessage {
+        /// The user's message text.
+        pub content: String,
+        /// How this message should be handled (steer vs follow-up).
+        pub message_type: SteeringType,
+    }
 }
 
 pub mod search_types {
