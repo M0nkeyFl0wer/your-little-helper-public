@@ -176,11 +176,10 @@ impl ProcessMonitor {
             processes.iter().take(15).collect()
         };
 
-        if filtered.is_empty() && filter.is_some() {
-            report.push_str(&format!(
-                "\nNo processes found matching '{}'\n",
-                filter.unwrap()
-            ));
+        if filtered.is_empty() {
+            if let Some(f) = &filter {
+                report.push_str(&format!("\nNo processes found matching '{}'\n", f));
+            }
         } else {
             for proc in filtered {
                 let mem_display = if proc.memory_mb > 1024 {
