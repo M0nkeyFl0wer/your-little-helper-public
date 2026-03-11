@@ -89,11 +89,7 @@ pub fn render_markdown(ui: &mut egui::Ui, text: &str, base_color: egui::Color32)
 
         if is_bullet {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new("  •  ")
-                        .size(14.0)
-                        .color(base_color),
-                );
+                ui.label(egui::RichText::new("  •  ").size(14.0).color(base_color));
                 render_inline_markdown(ui, bullet_text, base_color, link_color, code_bg);
             });
             continue;
@@ -243,9 +239,9 @@ fn render_inline_markdown(
 
 #[derive(Debug)]
 enum MarkerKind {
-    Bold,  // **
-    Code,  // `
-    Link,  // [
+    Bold, // **
+    Code, // `
+    Link, // [
 }
 
 /// Find the next inline marker in the text.

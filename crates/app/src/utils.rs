@@ -224,7 +224,11 @@ pub fn run_user_command(command: &str) -> Result<CommandResult, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     let mut session_state = agent_host::executor::SessionState::new();
     runtime
-        .block_on(agent_host::executor::execute_command(command, 60, &mut session_state))
+        .block_on(agent_host::executor::execute_command(
+            command,
+            60,
+            &mut session_state,
+        ))
         .map_err(|e| e.to_string())
 }
 
@@ -416,7 +420,10 @@ fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
         "gemini-2.0-flash-lite",
         "gemini-2.5-flash-lite", // upgrade to full flash for better quality
     ];
-    if retired_gemini.iter().any(|r| settings.model.gemini_model == *r) {
+    if retired_gemini
+        .iter()
+        .any(|r| settings.model.gemini_model == *r)
+    {
         settings.model.gemini_model = "gemini-2.5-flash".to_string();
         changed = true;
     }
@@ -429,7 +436,10 @@ fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
         "claude-3-haiku-20240307",
         "claude-3-5-haiku-20241022",
     ];
-    if old_anthropic.iter().any(|r| settings.model.anthropic_model == *r) {
+    if old_anthropic
+        .iter()
+        .any(|r| settings.model.anthropic_model == *r)
+    {
         settings.model.anthropic_model = "claude-sonnet-4-20250514".to_string();
         changed = true;
     }

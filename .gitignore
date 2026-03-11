@@ -24,6 +24,10 @@ Thumbs.db
 .opencode/
 **/.opencode/
 
+# ML model caches (large, machine-specific)
+.fastembed_cache/
+**/.fastembed_cache/
+
 # ========================================
 # SECRETS - NEVER COMMIT THESE
 # ========================================

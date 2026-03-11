@@ -20,7 +20,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction};
+use shared::skill::{
+    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -54,8 +56,8 @@ pub enum FileCategory {
     Archives,
     Code,
     Downloads,
-    OldFiles,     // > 1 year old
-    LargeFiles,   // > 100MB
+    OldFiles,   // > 1 year old
+    LargeFiles, // > 100MB
     Duplicates,
     Unknown,
 }
@@ -76,7 +78,7 @@ impl FileCategory {
             FileCategory::Unknown => "❓ Unknown",
         }
     }
-    
+
     pub fn folder_name(&self) -> &'static str {
         match self {
             FileCategory::Documents => "01_Documents",
@@ -153,20 +155,20 @@ impl StorageCleaner {
         let mut total_scanned: u64 = 0;
         let mut total_files: usize = 0;
         let mut all_files: Vec<FileInfo> = Vec::new();
-        
+
         // Walk directory
         for entry in WalkDir::new(path)
             .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file()) {
-            
+            .filter(|e| e.file_type().is_file())
+        {
             let path = entry.path().to_path_buf();
             let metadata = entry.metadata()?;
             let size = metadata.len();
             let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             let category = self.categorize_file(&path, size, modified);
-            
+
             let file_info = FileInfo {
                 path: path.clone(),
                 size_bytes: size,
@@ -175,32 +177,38 @@ impl StorageCleaner {
                 is_duplicate: false,
                 hash: None,
             };
-            
+
             total_scanned += size;
             total_files += 1;
-            
-            files_by_category.entry(category).or_default().push(file_info.clone());
+
+            files_by_category
+                .entry(category)
+                .or_default()
+                .push(file_info.clone());
             all_files.push(file_info);
         }
-        
+
         // Detect duplicates (simplified - by size and name)
         let duplicates = self.find_duplicates(&all_files);
-        
+
         // Find old files (> 1 year)
         let one_year_ago = SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60);
-        let old_files: Vec<FileInfo> = all_files.iter()
+        let old_files: Vec<FileInfo> = all_files
+            .iter()
             .filter(|f| f.modified < one_year_ago)
             .cloned()
             .collect();
-        
+
         // Find large files (> 100MB)
-        let large_files: Vec<FileInfo> = all_files.iter()
+        let large_files: Vec<FileInfo> = all_files
+            .iter()
             .filter(|f| f.size_bytes > 100 * 1024 * 1024)
             .cloned()
             .collect();
-        
+
         // Calculate reclaimable space
-        let reclaimable = duplicates.iter()
+        let reclaimable = duplicates
+            .iter()
             .map(|group| {
                 if group.len() > 1 {
                     // Can archive all but one copy
@@ -211,10 +219,10 @@ impl StorageCleaner {
             })
             .sum::<u64>()
             + old_files.iter().map(|f| f.size_bytes).sum::<u64>();
-        
+
         // Detect mounted drives
         let available_drives = self.detect_mounted_drives();
-        
+
         Ok(StorageAnalysisResult {
             total_scanned_bytes: total_scanned,
             total_files,
@@ -229,42 +237,37 @@ impl StorageCleaner {
 
     /// Categorize a file by type and age
     fn categorize_file(&self, path: &Path, size: u64, modified: SystemTime) -> FileCategory {
-        let extension = path.extension()
+        let extension = path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        
+
         // Check age first
         let one_year_ago = SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60);
         if modified < one_year_ago {
             return FileCategory::OldFiles;
         }
-        
+
         // Check size
         if size > 100 * 1024 * 1024 {
             return FileCategory::LargeFiles;
         }
-        
+
         // Check file type
         match extension.as_str() {
-            "pdf" | "doc" | "docx" | "txt" | "rtf" | "odt" | "xls" | "xlsx" | "ppt" | "pptx" | "csv" => {
-                FileCategory::Documents
-            }
+            "pdf" | "doc" | "docx" | "txt" | "rtf" | "odt" | "xls" | "xlsx" | "ppt" | "pptx"
+            | "csv" => FileCategory::Documents,
             "jpg" | "jpeg" | "png" | "gif" | "bmp" | "tiff" | "webp" | "raw" | "heic" => {
                 FileCategory::Images
             }
             "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg" => {
                 FileCategory::Videos
             }
-            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" => {
-                FileCategory::Audio
-            }
-            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" => {
-                FileCategory::Archives
-            }
-            "rs" | "js" | "ts" | "py" | "java" | "cpp" | "c" | "h" | "go" | "rb" | "php" | "swift" => {
-                FileCategory::Code
-            }
+            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" => FileCategory::Audio,
+            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "tgz" => FileCategory::Archives,
+            "rs" | "js" | "ts" | "py" | "java" | "cpp" | "c" | "h" | "go" | "rb" | "php"
+            | "swift" => FileCategory::Code,
             _ => {
                 // Check if in Downloads folder
                 if path.to_string_lossy().contains("Downloads") {
@@ -279,17 +282,20 @@ impl StorageCleaner {
     /// Find duplicate files (simplified - by size and filename)
     fn find_duplicates(&self, files: &[FileInfo]) -> Vec<Vec<FileInfo>> {
         let mut by_size_and_name: HashMap<(u64, String), Vec<FileInfo>> = HashMap::new();
-        
+
         for file in files {
-            let filename = file.path.file_name()
+            let filename = file
+                .path
+                .file_name()
                 .and_then(|f| f.to_str())
                 .unwrap_or("")
                 .to_string();
             let key = (file.size_bytes, filename);
             by_size_and_name.entry(key).or_default().push(file.clone());
         }
-        
-        by_size_and_name.into_values()
+
+        by_size_and_name
+            .into_values()
             .filter(|group| group.len() > 1)
             .collect()
     }
@@ -297,7 +303,7 @@ impl StorageCleaner {
     /// Detect mounted drives
     fn detect_mounted_drives(&self) -> Vec<MountedDrive> {
         let mut drives = Vec::new();
-        
+
         #[cfg(target_os = "macos")]
         {
             // Check for Google Drive
@@ -309,7 +315,7 @@ impl StorageCleaner {
                         .arg("-h")
                         .arg(path)
                         .output();
-                    
+
                     if let Ok(_output) = output {
                         // Parse df output
                         drives.push(MountedDrive {
@@ -322,13 +328,13 @@ impl StorageCleaner {
                     }
                 }
             }
-            
+
             // Check /Volumes for external drives
             if let Ok(entries) = std::fs::read_dir("/Volumes") {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     let name = entry.file_name().to_string_lossy().to_string();
-                    
+
                     // Skip system volumes
                     if name != "Macintosh HD" && name != "Preboot" && name != "Recovery" {
                         drives.push(MountedDrive {
@@ -342,32 +348,31 @@ impl StorageCleaner {
                 }
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             // Check common mount points
-            let mut mount_points: Vec<PathBuf> = vec![
-                PathBuf::from("/mnt"),
-                PathBuf::from("/media"),
-            ];
-            
+            let mut mount_points: Vec<PathBuf> =
+                vec![PathBuf::from("/mnt"), PathBuf::from("/media")];
+
             if let Some(home) = dirs::home_dir() {
                 mount_points.push(home.join("Google Drive"));
             }
-            
+
             for mount_point in mount_points {
                 if mount_point.exists() {
-                    let name = mount_point.file_name()
+                    let name = mount_point
+                        .file_name()
                         .and_then(|f| f.to_str())
                         .unwrap_or("Unknown")
                         .to_string();
-                    
+
                     let drive_type = if name.contains("Google") || name.contains("Drive") {
                         DriveType::GoogleDrive
                     } else {
                         DriveType::External
                     };
-                    
+
                     drives.push(MountedDrive {
                         name,
                         mount_point,
@@ -378,51 +383,62 @@ impl StorageCleaner {
                 }
             }
         }
-        
+
         drives
     }
 
     /// Format results for user
     fn format_results(&self, result: &StorageAnalysisResult, path: &Path) -> String {
         let mut output = String::new();
-        
+
         output.push_str("## 🗄️  Storage Analysis\n\n");
         output.push_str(&format!("**Scanned:** {}\n", path.display()));
         output.push_str(&format!("**Total files:** {}\n", result.total_files));
-        output.push_str(&format!("**Total size:** {}\n", self.format_bytes(result.total_scanned_bytes)));
+        output.push_str(&format!(
+            "**Total size:** {}\n",
+            self.format_bytes(result.total_scanned_bytes)
+        ));
         output.push('\n');
-        
+
         // Space that can be reclaimed
         if result.reclaimable_bytes > 0 {
             output.push_str(&format!("### 💾 Potential Space Savings\n\n"));
-            output.push_str(&format!("**{}** can be archived to free up space\n\n", 
-                self.format_bytes(result.reclaimable_bytes)));
+            output.push_str(&format!(
+                "**{}** can be archived to free up space\n\n",
+                self.format_bytes(result.reclaimable_bytes)
+            ));
         }
-        
+
         // Files by category
         if !result.by_category.is_empty() {
             output.push_str("### 📁 Files by Category\n\n");
-            
+
             let mut categories: Vec<_> = result.by_category.iter().collect();
             categories.sort_by(|a, b| b.1.len().cmp(&a.1.len())); // Sort by count
-            
+
             for (category, files) in categories {
                 let total_size: u64 = files.iter().map(|f| f.size_bytes).sum();
-                output.push_str(&format!("{} **{} files** ({})", 
+                output.push_str(&format!(
+                    "{} **{} files** ({})",
                     category.display_name(),
                     files.len(),
-                    self.format_bytes(total_size)));
-                
+                    self.format_bytes(total_size)
+                ));
+
                 // Show first 3 files as examples
                 if !files.is_empty() {
                     output.push_str("\n  Examples:");
                     for file in files.iter().take(3) {
-                        let filename = file.path.file_name()
+                        let filename = file
+                            .path
+                            .file_name()
                             .and_then(|f| f.to_str())
                             .unwrap_or("unknown");
-                        output.push_str(&format!("\n    • {} ({})", 
-                            filename, 
-                            self.format_bytes(file.size_bytes)));
+                        output.push_str(&format!(
+                            "\n    • {} ({})",
+                            filename,
+                            self.format_bytes(file.size_bytes)
+                        ));
                     }
                     if files.len() > 3 {
                         output.push_str(&format!("\n    ... and {} more", files.len() - 3));
@@ -431,42 +447,54 @@ impl StorageCleaner {
                 output.push_str("\n\n");
             }
         }
-        
+
         // Duplicates
         if !result.duplicates.is_empty() {
             output.push_str("### 👯 Duplicate Files\n\n");
-            output.push_str(&format!("Found **{} groups** of duplicates\n\n", result.duplicates.len()));
-            
+            output.push_str(&format!(
+                "Found **{} groups** of duplicates\n\n",
+                result.duplicates.len()
+            ));
+
             for (i, group) in result.duplicates.iter().take(5).enumerate() {
                 if let Some(first) = group.first() {
-                    let filename = first.path.file_name()
+                    let filename = first
+                        .path
+                        .file_name()
                         .and_then(|f| f.to_str())
                         .unwrap_or("unknown");
                     let savings = (group.len() as u64 - 1) * first.size_bytes;
-                    
-                    output.push_str(&format!("{}. **{}** ({} copies, save {})\n",
+
+                    output.push_str(&format!(
+                        "{}. **{}** ({} copies, save {})\n",
                         i + 1,
                         filename,
                         group.len(),
-                        self.format_bytes(savings)));
+                        self.format_bytes(savings)
+                    ));
                 }
             }
-            
+
             if result.duplicates.len() > 5 {
-                output.push_str(&format!("\n... and {} more duplicate groups", result.duplicates.len() - 5));
+                output.push_str(&format!(
+                    "\n... and {} more duplicate groups",
+                    result.duplicates.len() - 5
+                ));
             }
             output.push('\n');
         }
-        
+
         // Old files
         if !result.old_files.is_empty() {
             let old_size: u64 = result.old_files.iter().map(|f| f.size_bytes).sum();
             output.push_str(&format!("### 📅 Old Files (> 1 year)\n\n"));
-            output.push_str(&format!("**{} files** taking {}\n\n", 
+            output.push_str(&format!(
+                "**{} files** taking {}\n\n",
                 result.old_files.len(),
-                self.format_bytes(old_size)));
+                self.format_bytes(old_size)
+            ));
         }
-        
+
         // Available drives
         if !result.available_drives.is_empty() {
             output.push_str("### 💾 Available Storage Locations\n\n");
@@ -477,10 +505,12 @@ impl StorageCleaner {
                     DriveType::Network => "🌐",
                     DriveType::Local => "💻",
                 };
-                output.push_str(&format!("{} **{}** at `{}`\n",
+                output.push_str(&format!(
+                    "{} **{}** at `{}`\n",
                     type_icon,
                     drive.name,
-                    drive.mount_point.display()));
+                    drive.mount_point.display()
+                ));
             }
             output.push('\n');
         } else {
@@ -489,11 +519,11 @@ impl StorageCleaner {
             output.push_str("• Mounting Google Drive (see setup instructions below)\n");
             output.push_str("• Connecting an external drive\n\n");
         }
-        
+
         output.push_str("---\n\n");
         output.push_str("✅ **Safety Note:** This tool only organizes and archives files - nothing is ever deleted.\n");
         output.push_str("📦 **Archiving:** Old and duplicate files can be moved to organized folders or cloud storage.\n");
-        
+
         output
     }
 
@@ -502,15 +532,15 @@ impl StorageCleaner {
         const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
         let mut size = bytes as f64;
         let mut unit_index = 0;
-        
+
         while size >= 1024.0 && unit_index < UNITS.len() - 1 {
             size /= 1024.0;
             unit_index += 1;
         }
-        
+
         format!("{:.1} {}", size, UNITS[unit_index])
     }
-    
+
     /// Get Google Drive setup instructions
     fn get_gdrive_setup_instructions(&self) -> String {
         r#"
@@ -542,23 +572,27 @@ impl StorageCleaner {
 - Organize messy folders
 - Free up local disk space
 - Keep backups safely in the cloud
-"#.to_string()
+"#
+        .to_string()
     }
-    
+
     /// Archive files to a destination
     pub fn archive_files(&self, files: &[PathBuf], destination: &Path) -> anyhow::Result<String> {
         std::fs::create_dir_all(destination)?;
-        
+
         let mut moved_count = 0;
         let mut total_size: u64 = 0;
-        
+
         for file in files {
             if let Some(filename) = file.file_name() {
                 let dest_path = destination.join(filename);
-                
+
                 // Check if destination exists, rename if needed
                 let final_dest = if dest_path.exists() {
-                    let stem = dest_path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+                    let stem = dest_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("file");
                     let ext = dest_path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -568,36 +602,45 @@ impl StorageCleaner {
                 } else {
                     dest_path
                 };
-                
+
                 std::fs::rename(file, &final_dest)?;
-                
+
                 if let Ok(metadata) = std::fs::metadata(&final_dest) {
                     total_size += metadata.len();
                 }
                 moved_count += 1;
             }
         }
-        
-        Ok(format!("Archived {} files ({}) to {}", 
+
+        Ok(format!(
+            "Archived {} files ({}) to {}",
             moved_count,
             self.format_bytes(total_size),
-            destination.display()))
+            destination.display()
+        ))
     }
-    
+
     /// Organize files by category
-    pub fn organize_by_category(&self, base_path: &Path, files: &[(PathBuf, FileCategory)]) -> anyhow::Result<String> {
+    pub fn organize_by_category(
+        &self,
+        base_path: &Path,
+        files: &[(PathBuf, FileCategory)],
+    ) -> anyhow::Result<String> {
         let mut organized_count = 0;
-        
+
         for (file_path, category) in files {
             let category_folder = base_path.join(category.folder_name());
             std::fs::create_dir_all(&category_folder)?;
-            
+
             if let Some(filename) = file_path.file_name() {
                 let dest_path = category_folder.join(filename);
-                
+
                 // Handle duplicates
                 let final_dest = if dest_path.exists() {
-                    let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+                    let stem = file_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("file");
                     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -607,13 +650,16 @@ impl StorageCleaner {
                 } else {
                     dest_path
                 };
-                
+
                 std::fs::rename(file_path, final_dest)?;
                 organized_count += 1;
             }
         }
-        
-        Ok(format!("Organized {} files into category folders", organized_count))
+
+        Ok(format!(
+            "Organized {} files into category folders",
+            organized_count
+        ))
     }
 }
 
@@ -622,58 +668,69 @@ impl Skill for StorageCleaner {
     fn id(&self) -> &'static str {
         "storage_cleaner"
     }
-    
+
     fn name(&self) -> &'static str {
         "Storage Cleaner"
     }
-    
+
     fn description(&self) -> &'static str {
         "Analyzes and organizes files - archives to save space, never deletes"
     }
-    
+
     fn modes(&self) -> &'static [Mode] {
         &[Mode::Fix]
     }
-    
+
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Sensitive // Needs approval to move files
     }
-    
+
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> anyhow::Result<SkillOutput> {
         // Get target path from input, default to home directory
-        let path = input.params.get("path")
+        let path = input
+            .params
+            .get("path")
             .and_then(|p| p.as_str())
             .map(PathBuf::from)
             .or_else(|| dirs::home_dir())
             .unwrap_or_else(|| PathBuf::from("/"));
-        
+
         // Analyze storage
         let result = self.analyze_storage(&path)?;
         let formatted_text = self.format_results(&result, &path);
-        
+
         // Build suggested actions
         let mut suggested_actions: Vec<SuggestedAction> = Vec::new();
-        
+
         // Action: Archive old files if found
         if !result.old_files.is_empty() {
             let old_size: u64 = result.old_files.iter().map(|f| f.size_bytes).sum();
             let paths: Vec<_> = result.old_files.iter().map(|f| f.path.clone()).collect();
-            
-            if let Some(gdrive) = result.available_drives.iter().find(|d| matches!(d.drive_type, DriveType::GoogleDrive)) {
+
+            if let Some(gdrive) = result
+                .available_drives
+                .iter()
+                .find(|d| matches!(d.drive_type, DriveType::GoogleDrive))
+            {
                 let mut params = HashMap::new();
                 params.insert("files".to_string(), serde_json::json!(paths));
-                params.insert("destination".to_string(), serde_json::json!(gdrive.mount_point.join("Archive/Old_Files")));
-                
+                params.insert(
+                    "destination".to_string(),
+                    serde_json::json!(gdrive.mount_point.join("Archive/Old_Files")),
+                );
+
                 suggested_actions.push(SuggestedAction {
-                    label: format!("Archive {} old files to Google Drive ({})", 
+                    label: format!(
+                        "Archive {} old files to Google Drive ({})",
                         result.old_files.len(),
-                        self.format_bytes(old_size)),
+                        self.format_bytes(old_size)
+                    ),
                     skill_id: "archive_files".to_string(),
                     params,
                 });
             }
         }
-        
+
         // Action: Organize messy folder by category
         if result.by_category.len() > 3 {
             let mut files_to_organize = Vec::new();
@@ -684,45 +741,65 @@ impl Skill for StorageCleaner {
                     }
                 }
             }
-            
+
             if !files_to_organize.is_empty() {
                 let mut params = HashMap::new();
-                params.insert("base_path".to_string(), serde_json::json!(path.join("Organized")));
+                params.insert(
+                    "base_path".to_string(),
+                    serde_json::json!(path.join("Organized")),
+                );
                 params.insert("files".to_string(), serde_json::json!(files_to_organize));
-                
+
                 suggested_actions.push(SuggestedAction {
-                    label: format!("Organize {} files by type into folders", files_to_organize.len()),
+                    label: format!(
+                        "Organize {} files by type into folders",
+                        files_to_organize.len()
+                    ),
                     skill_id: "organize_by_category".to_string(),
                     params,
                 });
             }
         }
-        
+
         // Action: Setup Google Drive if not available
-        if !result.available_drives.iter().any(|d| matches!(d.drive_type, DriveType::GoogleDrive)) {
+        if !result
+            .available_drives
+            .iter()
+            .any(|d| matches!(d.drive_type, DriveType::GoogleDrive))
+        {
             suggested_actions.push(SuggestedAction {
                 label: "📖 Show Google Drive setup instructions".to_string(),
                 skill_id: "show_gdrive_setup".to_string(),
                 params: HashMap::new(),
             });
         }
-        
+
         // Action: Archive duplicate files
         if !result.duplicates.is_empty() {
             let dup_count: usize = result.duplicates.iter().map(|g| g.len() - 1).sum();
-            let dup_size: u64 = result.duplicates.iter()
-                .map(|g| if g.len() > 1 { (g.len() as u64 - 1) * g[0].size_bytes } else { 0 })
+            let dup_size: u64 = result
+                .duplicates
+                .iter()
+                .map(|g| {
+                    if g.len() > 1 {
+                        (g.len() as u64 - 1) * g[0].size_bytes
+                    } else {
+                        0
+                    }
+                })
                 .sum();
-            
+
             suggested_actions.push(SuggestedAction {
-                label: format!("Archive {} duplicate files (save {})",
+                label: format!(
+                    "Archive {} duplicate files (save {})",
                     dup_count,
-                    self.format_bytes(dup_size)),
+                    self.format_bytes(dup_size)
+                ),
                 skill_id: "archive_duplicates".to_string(),
                 params: HashMap::new(),
             });
         }
-        
+
         Ok(SkillOutput {
             result_type: shared::skill::ResultType::Text,
             text: Some(formatted_text),

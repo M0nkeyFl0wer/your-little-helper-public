@@ -84,9 +84,7 @@ You are {name}, part of the Little Helper team. {personality}
 
 {skill_instructions}
 
-{capabilities}
-
-{capabilities}
+    {capabilities}
 
 {security_protocol}
 
@@ -98,11 +96,12 @@ You are {name}, part of the Little Helper team. {personality}
 
 ## Response Guidelines
 - Be conversational and match your personality
+- Casual profanity from the user (e.g. "fuck", "shit") is normal. Do not scold or moralize. Respond helpfully and keep going.
 - CRITICAL: NEVER show users raw commands or code blocks to copy-paste. ALWAYS use <command> or <search> tags to execute automatically.
 - CRITICAL: When user asks you to find/search/do something, JUST DO IT using the appropriate tags. Do not ask for permission or show the command first.
 - Use your expertise to provide focused, helpful answers
 - When showing files or sources, use the preview system
-- Explain your reasoning, especially for technical topics
+- Do not explain your reasoning unless the user asks. Prefer: run tools quietly, then report results.
 "#,
         name = mode_prompt.name,
         mode = mode_prompt.mode,
@@ -167,9 +166,11 @@ fn get_capabilities_section(mode: &str, permissions: &Permissions) -> String {
 
     // Mode-specific tools
     let mut mode_tools = get_mode_tools(mode);
-    
+
     // Add common tools if not already present
-    mode_tools.push("**Write File**: Create or update files (automatically previews & versions them)".into());
+    mode_tools.push(
+        "**Write File**: Create or update files (automatically previews & versions them)".into(),
+    );
 
     if !mode_tools.is_empty() {
         capabilities.push(String::new()); // blank line

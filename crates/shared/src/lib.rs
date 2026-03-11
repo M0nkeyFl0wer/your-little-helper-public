@@ -30,7 +30,7 @@ pub mod settings {
         pub openai_model: String,             // e.g., "gpt-4o-mini"
         pub anthropic_model: String,          // e.g., "claude-sonnet-4-20250514"
         pub gemini_model: String,             // e.g., "gemini-2.5-flash"
-        
+
         #[serde(default = "default_fast_openai")]
         pub openai_fast_model: String,
         #[serde(default = "default_fast_anthropic")]
@@ -49,9 +49,15 @@ pub mod settings {
         pub gemini_auth: ProviderAuth,
     }
 
-    fn default_fast_openai() -> String { "gpt-4o-mini".to_string() }
-    fn default_fast_anthropic() -> String { "claude-3-haiku-20240307".to_string() }
-    fn default_fast_gemini() -> String { "gemini-1.5-flash".to_string() }
+    fn default_fast_openai() -> String {
+        "gpt-4o-mini".to_string()
+    }
+    fn default_fast_anthropic() -> String {
+        "claude-3-haiku-20240307".to_string()
+    }
+    fn default_fast_gemini() -> String {
+        "gemini-1.5-flash".to_string()
+    }
 
     /// User profile for personalization
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,7 +153,7 @@ pub mod settings {
                     local_model: "llama3.2:3b".into(),
                     // Default to cloud providers for better results; fall back to local
                     provider_preference: vec![
-                        "openai".into(),  // Moonshot/Kimi via OpenAI compatibility
+                        "openai".into(), // Moonshot/Kimi via OpenAI compatibility
                         "anthropic".into(),
                         "gemini".into(),
                         "local".into(),

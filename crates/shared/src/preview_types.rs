@@ -60,6 +60,14 @@ pub struct SearchResultItem {
     pub score: f32,
 }
 
+/// A single web search result
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WebSearchResultItem {
+    pub title: String,
+    pub snippet: String,
+    pub url: String,
+}
+
 /// Content that can be displayed in the preview panel
 #[derive(Clone, Debug)]
 pub enum PreviewContent {
@@ -72,6 +80,14 @@ pub enum PreviewContent {
         screenshot: Option<PathBuf>,
         og_image: Option<String>,
         snippet: Option<String>,
+    },
+
+    /// Web search results (click an item to preview)
+    WebSearchResults {
+        query: String,
+        results: Vec<WebSearchResultItem>,
+        source: String,
+        search_time_ms: u64,
     },
     /// Direct image
     Image { source: ImageSource },

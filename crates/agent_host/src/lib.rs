@@ -10,16 +10,16 @@
 
 pub mod context_manager;
 pub mod context_token_manager;
-pub mod executor;
 pub mod embedding;
+pub mod executor;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
+pub mod daily_log;
 pub mod prompts;
 pub mod security;
 pub mod skill_executor;
 pub mod skills;
 pub mod token_tracker;
-pub mod daily_log;
 
 pub use prompts::{
     get_mode_introduction, get_mode_prompt, get_system_prompt, ModeIntroduction, ModePrompt,
@@ -58,18 +58,16 @@ pub struct AgentHost {
 
 impl AgentHost {
     pub fn new(settings: AppSettings) -> Self {
-        use std::path::PathBuf;
         use security::PathSandbox;
+        use std::path::PathBuf;
 
         // Create restricted sandbox based on allowed_dirs
         let allowed = settings.allowed_dirs.iter().map(PathBuf::from).collect();
         let sandbox = PathSandbox::new(allowed);
 
-        Self { 
+        Self {
             settings,
-            session_state: Arc::new(AsyncMutex::new(
-                SessionState::new().with_sandbox(sandbox)
-            )),
+            session_state: Arc::new(AsyncMutex::new(SessionState::new().with_sandbox(sandbox))),
         }
     }
 

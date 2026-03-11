@@ -50,7 +50,11 @@ pub fn has_gpu_acceleration() -> bool {
 
     // Linux/Windows: check for NVIDIA GPU (CUDA) via nvidia-smi
     if cfg!(target_os = "linux") || cfg!(target_os = "windows") {
-        let nvidia_cmd = if cfg!(windows) { "nvidia-smi.exe" } else { "nvidia-smi" };
+        let nvidia_cmd = if cfg!(windows) {
+            "nvidia-smi.exe"
+        } else {
+            "nvidia-smi"
+        };
         if Command::new(nvidia_cmd)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -133,7 +137,11 @@ pub fn find_bundled_ollama() -> Option<PathBuf> {
     }
 
     // Windows: same dir as exe
-    let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     let candidate = exe_dir.join(name);
     if candidate.is_file() {
         return Some(candidate);
@@ -192,7 +200,11 @@ pub fn ensure_ollama_running() -> OllamaStatus {
 
 /// Try starting a system-installed `ollama serve` (on PATH).
 fn try_start_system_ollama() -> bool {
-    let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     if Command::new(name)
         .arg("serve")
         .stdout(Stdio::null())
@@ -238,16 +250,16 @@ fn wait_for_ollama(timeout_secs: u32) -> bool {
 ///
 /// Runs `ollama list` and checks if the model tag appears.
 pub fn model_available(binary: &str, model: &str) -> bool {
-    let output = Command::new(binary)
-        .arg("list")
-        .output();
+    let output = Command::new(binary).arg("list").output();
     match output {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             // `ollama list` outputs lines like "llama3.2:3b    1.9 GB  ..."
             // Match on the model name prefix (before any whitespace)
             let model_base = model.split(':').next().unwrap_or(model);
-            stdout.lines().any(|line| line.starts_with(model) || line.starts_with(model_base))
+            stdout
+                .lines()
+                .any(|line| line.starts_with(model) || line.starts_with(model_base))
         }
         Err(_) => false,
     }
@@ -275,7 +287,11 @@ pub fn ollama_binary() -> Option<String> {
         return Some(bundled.to_string_lossy().to_string());
     }
     // Fall back to system PATH
-    let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     if Command::new(name).arg("--version").output().is_ok() {
         Some(name.to_string())
     } else {

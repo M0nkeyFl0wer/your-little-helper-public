@@ -41,7 +41,13 @@ impl Skill for WriteFileSkill {
     }
 
     fn modes(&self) -> &'static [Mode] {
-        &[Mode::Build, Mode::Fix, Mode::Content, Mode::Data, Mode::Research]
+        &[
+            Mode::Build,
+            Mode::Fix,
+            Mode::Content,
+            Mode::Data,
+            Mode::Research,
+        ]
     }
 
     async fn execute(&self, input: SkillInput, _ctx: &SkillContext) -> Result<SkillOutput> {
@@ -60,13 +66,12 @@ impl Skill for WriteFileSkill {
         let path = PathBuf::from(path_str);
 
         // Use SafeFileOps to write the file (handles versioning)
-        self.infra.safe_file_ops.write_file(&path, content.as_bytes())?;
+        self.infra
+            .safe_file_ops
+            .write_file(&path, content.as_bytes())?;
 
         // Generate the preview tag
-        let preview_tag = format!(
-            r#"<preview type="file" path="{}" />"#,
-            path.display()
-        );
+        let preview_tag = format!(r#"<preview type="file" path="{}" />"#, path.display());
 
         Ok(SkillOutput::text(format!(
             "File written successfully to {}.\n{}",

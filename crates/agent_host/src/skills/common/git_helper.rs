@@ -35,7 +35,9 @@ impl Skill for GitHelper {
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
-        let action = input.params.get("action")
+        let action = input
+            .params
+            .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("status");
 
@@ -45,65 +47,81 @@ impl Skill for GitHelper {
                     .arg("status")
                     .current_dir(&ctx.working_dir)
                     .output()?;
-                
+
                 let text = String::from_utf8_lossy(&output.stdout);
-                Ok(SkillOutput::text(format!("## Git Status\n```\n{}\n```", text)))
-            },
+                Ok(SkillOutput::text(format!(
+                    "## Git Status\n```\n{}\n```",
+                    text
+                )))
+            }
             "init" => {
-                 let output = Command::new("git")
+                let output = Command::new("git")
                     .arg("init")
                     .current_dir(&ctx.working_dir)
                     .output()?;
-                 let text = String::from_utf8_lossy(&output.stdout);
-                 Ok(SkillOutput::text(format!("## Git Init\n{}", text)))
-            },
+                let text = String::from_utf8_lossy(&output.stdout);
+                Ok(SkillOutput::text(format!("## Git Init\n{}", text)))
+            }
             "add" => {
-                let files = input.params.get("files")
+                let files = input
+                    .params
+                    .get("files")
                     .and_then(|v| v.as_str())
                     .unwrap_or(".");
-                
+
                 let output = Command::new("git")
                     .arg("add")
                     .arg(files)
                     .current_dir(&ctx.working_dir)
                     .output()?;
-                
+
                 if output.status.success() {
                     Ok(SkillOutput::text(format!("Added files: `{}`", files)))
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
                     Ok(SkillOutput::text(format!("Failed to add files:\n{}", err)))
                 }
-            },
+            }
             "commit" => {
-                let message = input.params.get("message")
+                let message = input
+                    .params
+                    .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Update project");
-                
+
                 let output = Command::new("git")
                     .arg("commit")
                     .arg("-m")
                     .arg(message)
                     .current_dir(&ctx.working_dir)
                     .output()?;
-                
+
                 let text = String::from_utf8_lossy(&output.stdout);
                 if output.status.success() {
-                     Ok(SkillOutput::text(format!("## Committed\n```\n{}\n```", text)))
+                    Ok(SkillOutput::text(format!(
+                        "## Committed\n```\n{}\n```",
+                        text
+                    )))
                 } else {
-                     let err = String::from_utf8_lossy(&output.stderr);
-                     Ok(SkillOutput::text(format!("Commit failed:\n{}\n{}", text, err)))
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    Ok(SkillOutput::text(format!(
+                        "Commit failed:\n{}\n{}",
+                        text, err
+                    )))
                 }
-            },
+            }
             "log" => {
-                 let output = Command::new("git")
+                let output = Command::new("git")
                     .args(["log", "--oneline", "-n", "5"])
                     .current_dir(&ctx.working_dir)
                     .output()?;
-                 let text = String::from_utf8_lossy(&output.stdout);
-                 Ok(SkillOutput::text(format!("## Recent Commits\n```\n{}\n```", text)))
-            },
-            _ => Ok(SkillOutput::text(format!("Unknown git action: {}", action)))
+                let text = String::from_utf8_lossy(&output.stdout);
+                Ok(SkillOutput::text(format!(
+                    "## Recent Commits\n```\n{}\n```",
+                    text
+                )))
+            }
+            _ => Ok(SkillOutput::text(format!("Unknown git action: {}", action))),
         }
     }
 }

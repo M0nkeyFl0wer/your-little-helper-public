@@ -29,16 +29,32 @@ use crate::context::{
 use crate::set_primary_provider_preference;
 use crate::state::run_ai_generation;
 use crate::utils::{
-    clean_ai_response, is_path_in_allowed_dirs, run_user_command,
-    validate_command_against_allowed,
+    clean_ai_response, is_path_in_allowed_dirs, run_user_command, validate_command_against_allowed,
 };
+use shared::preview_types::WebSearchResultItem;
 
 /// Result from background AI generation
 #[derive(Debug)]
 pub struct AiResult {
     pub response: String,
     pub preview_file: Option<PathBuf>,
+    /// Optional web URL to show in preview panel (e.g. top search result)
+    pub preview_web_url: Option<String>,
+    pub preview_web_title: Option<String>,
+    pub preview_web_snippet: Option<String>,
+    pub preview_web_query: Option<String>,
+    pub preview_web_source: Option<String>,
+    pub preview_web_search_time_ms: Option<u64>,
+    pub preview_web_results: Option<Vec<WebSearchResultItem>>,
     pub error: Option<String>,
+    /// Provider/model info for the response (helps debug slowness and auth/quota issues)
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    /// Best-effort explanation when the app had to fall back away from configured provider
+    pub fallback: Option<String>,
+    /// Aggregate stats for all LLM calls made during this request (multi-turn loop)
+    pub llm_calls: u32,
+    pub llm_duration_ms: u64,
     /// Commands that were executed (for transparency)
     pub executed_commands: Vec<(String, String, bool)>, // (command, output, success)
     pub pending_commands: Vec<String>,
@@ -152,6 +168,12 @@ pub enum ActiveViewer {
     CommandOutput(String, String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResearchDepth {
+    Quick,
+    Deep,
+}
+
 /// Main application state
 pub struct AppState {
     pub settings: AppSettings,
@@ -168,6 +190,14 @@ pub struct AppState {
     pub show_mode_picker_hint: bool,
     /// Current input text
     pub input_text: String,
+
+    /// Research mode: quick answer vs deeper multi-step loop
+    pub research_depth: ResearchDepth,
+
+    /// Optional file the user attached for summarization/analysis
+    pub attached_file: Option<PathBuf>,
+    /// Best-effort excerpt of the attached file (kept small)
+    pub attached_file_excerpt: Option<String>,
     /// Preserve input per mode
     pub mode_input_drafts: std::collections::HashMap<ChatMode, String>,
     /// Per-mode chat threads
@@ -203,7 +233,8 @@ pub struct AppState {
     #[allow(dead_code)]
     pub agent_host: agent_host::AgentHost,
     /// Context manager for documents and personas (Shared)
-    pub context_manager: std::sync::Arc<parking_lot::Mutex<agent_host::context_manager::ContextManager>>,
+    pub context_manager:
+        std::sync::Arc<parking_lot::Mutex<agent_host::context_manager::ContextManager>>,
     /// Skill registry for available tools
     pub skill_registry: agent_host::skills::SkillRegistry,
 
@@ -217,7 +248,8 @@ pub struct AppState {
     pub pending_preview: Option<PathBuf>,
 
     /// Per-mode preview state: saves (ActiveViewer, PreviewContent) when switching modes
-    pub mode_preview_state: HashMap<ChatMode, (ActiveViewer, Option<shared::preview_types::PreviewContent>)>,
+    pub mode_preview_state:
+        HashMap<ChatMode, (ActiveViewer, Option<shared::preview_types::PreviewContent>)>,
 
     // Re-focus the chat input after AI replies
     pub refocus_input: bool,
@@ -273,6 +305,14 @@ pub struct AppState {
     pub last_prompt_tokens_est: u32,
     pub last_response_tokens_est: u32,
 
+    // Last AI request diagnostics (for UX + debugging)
+    pub last_llm_provider: Option<String>,
+    pub last_llm_model: Option<String>,
+    pub last_llm_calls: u32,
+    pub last_llm_duration_ms: u64,
+    pub last_llm_error_kind: Option<String>,
+    pub last_llm_error: Option<String>,
+
     // Settings stats cache
     pub settings_perf_last_update: Option<Instant>,
     pub settings_cpu_percent: f32,
@@ -321,10 +361,8 @@ impl Default for AppState {
                 use crate::ollama_manager::{self, OllamaStatus};
 
                 let status = ollama_manager::ensure_ollama_running();
-                let ollama_up = matches!(
-                    status,
-                    OllamaStatus::AlreadyRunning | OllamaStatus::Started
-                );
+                let ollama_up =
+                    matches!(status, OllamaStatus::AlreadyRunning | OllamaStatus::Started);
 
                 // Pick model based on RAM
                 let (recommended, recommended_desc) = ollama_manager::recommended_model();
@@ -438,13 +476,15 @@ impl Default for AppState {
         // Initialize Context Manager (Shared)
         let context_manager = std::sync::Arc::new(parking_lot::Mutex::new({
             let mut cm = agent_host::context_manager::ContextManager::new(
-                agent_host::context_manager::ContextManager::default_dir()
-            ).unwrap_or_else(|_| {
-                agent_host::context_manager::ContextManager::new(
-                    std::path::PathBuf::from("./context")
-                ).expect("Failed to create context manager")
+                agent_host::context_manager::ContextManager::default_dir(),
+            )
+            .unwrap_or_else(|_| {
+                agent_host::context_manager::ContextManager::new(std::path::PathBuf::from(
+                    "./context",
+                ))
+                .expect("Failed to create context manager")
             });
-            
+
             // Scan configured external directories
             if !settings.external_context_dirs.is_empty() {
                 let _ = cm.scan_external_dirs(&settings.external_context_dirs);
@@ -459,13 +499,13 @@ impl Default for AppState {
             loop {
                 // Check every minute
                 std::thread::sleep(std::time::Duration::from_secs(60));
-                
+
                 // 1. Reactive Check (New Docs)
                 let needs_opt = {
                     let mut cm = bg_cm.lock();
                     cm.needs_optimization(50) // Threshold: 50 new docs
                 };
-                
+
                 // 2. Periodic Check (Daily)
                 let elapsed = last_prune.elapsed().unwrap_or_default();
                 let daily_prune_due = elapsed.as_secs() > 86400; // 24 hours
@@ -473,24 +513,27 @@ impl Default for AppState {
                 if needs_opt || daily_prune_due {
                     // Re-acquire lock to perform work
                     let mut cm = bg_cm.lock();
-                    
+
                     // Reactive consolidation
                     if needs_opt {
                         let merged = cm.graph.consolidate_nodes(0.9);
                         if merged > 0 {
-                            println!("[MemoryOptimizer] Reactive: Consolidation merged {} nodes.", merged);
+                            println!(
+                                "[MemoryOptimizer] Reactive: Consolidation merged {} nodes.",
+                                merged
+                            );
                         }
                     }
-                    
+
                     // Periodic Pruning (or if reactive triggered it, might as well prune a bit)
                     // If daily, we prune harder (older than 30 days). If reactive, maybe just very low feedback?
                     // For simplicity, let's run the standard prune.
                     let pruned = cm.graph.prune_nodes(-0.5, 30);
-                    
+
                     if pruned > 0 {
-                          println!("[MemoryOptimizer] Pruned {} nodes.", pruned);
+                        println!("[MemoryOptimizer] Pruned {} nodes.", pruned);
                     }
-                    
+
                     if daily_prune_due {
                         last_prune = std::time::SystemTime::now();
                         println!("[MemoryOptimizer] Daily prune complete.");
@@ -503,21 +546,27 @@ impl Default for AppState {
         let skill_registry = {
             let data_dir = agent_host::context_manager::ContextManager::default_dir();
             // Initialize infrastructure (SafeFileOps, Audit, etc.)
-            let infra = Arc::new(agent_host::skills::common::init_common_infrastructure(&data_dir)
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to init common infra: {}", e);
-                    // Fallback to local dir if system dir fails
-                    agent_host::skills::common::init_common_infrastructure(&std::path::PathBuf::from("."))
+            let infra = Arc::new(
+                agent_host::skills::common::init_common_infrastructure(&data_dir).unwrap_or_else(
+                    |e| {
+                        eprintln!("Failed to init common infra: {}", e);
+                        // Fallback to local dir if system dir fails
+                        agent_host::skills::common::init_common_infrastructure(
+                            &std::path::PathBuf::from("."),
+                        )
                         .expect("Failed to init common infra fallback")
-                }));
-            
+                    },
+                ),
+            );
+
             // Initialize File Index
-            let file_index = Arc::new(services::file_index::FileIndexService::new(&data_dir)
-                .unwrap_or_else(|e| {
-                        eprintln!("Failed to init file index: {}", e);
-                        services::file_index::FileIndexService::new(&std::path::PathBuf::from("."))
+            let file_index = Arc::new(
+                services::file_index::FileIndexService::new(&data_dir).unwrap_or_else(|e| {
+                    eprintln!("Failed to init file index: {}", e);
+                    services::file_index::FileIndexService::new(&std::path::PathBuf::from("."))
                         .expect("Failed to init file index fallback")
-                }));
+                }),
+            );
 
             // Initialize full registry with all skills
             agent_host::skills::init_registry(file_index, infra, context_manager.clone())
@@ -526,13 +575,18 @@ impl Default for AppState {
         Self {
             settings: settings.clone(),
             current_screen: initial_screen,
-            current_mode: ChatMode::Find,
+            current_mode: ChatMode::Research,
             previous_mode: None,
             spec_intro_shown: false,
             fix_intro_shown: false,
             // Show mode picker hint for first-time users (not for returning users)
             show_mode_picker_hint: !settings.user_profile.onboarding_complete,
             input_text: String::new(),
+
+            research_depth: ResearchDepth::Quick,
+            attached_file: None,
+            attached_file_excerpt: None,
+
             mode_input_drafts: HashMap::new(),
             mode_chat_histories: {
                 let mut h = HashMap::new();
@@ -612,11 +666,7 @@ impl Default for AppState {
             openai_api_key_input: String::new(),
             anthropic_api_key_input: String::new(),
             gemini_api_key_input: String::new(),
-            spec_kit_path_input: settings
-                .build
-                .spec_kit_path
-                .clone()
-                .unwrap_or_default(),
+            spec_kit_path_input: settings.build.spec_kit_path.clone().unwrap_or_default(),
             build_folder_input: settings
                 .build
                 .default_project_folder
@@ -631,6 +681,14 @@ impl Default for AppState {
             session_output_tokens_est: 0,
             last_prompt_tokens_est: 0,
             last_response_tokens_est: 0,
+
+            last_llm_provider: None,
+            last_llm_model: None,
+            last_llm_calls: 0,
+            last_llm_duration_ms: 0,
+            last_llm_error_kind: None,
+            last_llm_error: None,
+
             settings_perf_last_update: None,
             settings_cpu_percent: 0.0,
             settings_mem_mb: 0,
@@ -668,8 +726,13 @@ impl AppState {
 
         // Provider fallback based on final Ollama state
         if result.ollama_up {
-            let primary = self.settings.model.provider_preference
-                .first().map(|s| s.as_str()).unwrap_or("local");
+            let primary = self
+                .settings
+                .model
+                .provider_preference
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("local");
             let missing_key = match primary {
                 "openai" => !self.settings.model.openai_auth.has_auth(),
                 "anthropic" => !self.settings.model.anthropic_auth.has_auth(),
@@ -678,8 +741,10 @@ impl AppState {
             };
             if primary != "local" && missing_key {
                 self.settings.model.provider_preference = vec![
-                    "local".to_string(), "anthropic".to_string(),
-                    "openai".to_string(), "gemini".to_string(),
+                    "local".to_string(),
+                    "anthropic".to_string(),
+                    "openai".to_string(),
+                    "gemini".to_string(),
                 ];
                 crate::utils::save_settings(&self.settings);
             }
@@ -824,7 +889,10 @@ impl AppState {
         }
     }
 
-    fn build_api_messages_with_budget(&self, system_prompt: String) -> (Vec<ApiChatMessage>, u32, usize) {
+    fn build_api_messages_with_budget(
+        &self,
+        system_prompt: String,
+    ) -> (Vec<ApiChatMessage>, u32, usize) {
         // Budget: keep prompts small and fast even on cloud models.
         const COMFORT_TOTAL_TOKENS: u32 = 8_000;
         const RESERVED_FOR_REPLY: u32 = 2_000;
@@ -914,7 +982,9 @@ impl AppState {
         }
 
         if !self.is_path_permitted(&path) {
-            return Err("That folder is outside your allowed folders. Add it in Settings.".to_string());
+            return Err(
+                "That folder is outside your allowed folders. Add it in Settings.".to_string(),
+            );
         }
 
         Ok(path)
@@ -932,7 +1002,8 @@ impl AppState {
         let spec_kit_path = self.spec_kit_path();
         if !spec_kit_path.exists() {
             self.build_status = Some(
-                "Spec isn’t set up yet. In the Spec tab, click ‘Find Spec Kit Assistant…’.".to_string(),
+                "Spec isn’t set up yet. In the Spec tab, click ‘Find Spec Kit Assistant…’."
+                    .to_string(),
             );
             self.build_status_is_error = true;
             return;
@@ -1060,11 +1131,8 @@ impl AppState {
                 .collect();
         } else {
             // Create new thread
-            let mut thread = crate::thread_history::Thread::new(
-                thread_id.clone(),
-                mode,
-                first_user_msg,
-            );
+            let mut thread =
+                crate::thread_history::Thread::new(thread_id.clone(), mode, first_user_msg);
             thread.message_count = history.len();
             thread.messages = history
                 .iter()
@@ -1074,12 +1142,11 @@ impl AppState {
                 })
                 .collect();
             if let Some(last) = history.last() {
-                thread.last_message_preview =
-                    if last.content.len() > 80 {
-                        format!("{}...", &last.content[..80])
-                    } else {
-                        last.content.clone()
-                    };
+                thread.last_message_preview = if last.content.len() > 80 {
+                    format!("{}...", &last.content[..80])
+                } else {
+                    last.content.clone()
+                };
             }
             self.thread_history.upsert_thread(thread);
         }
@@ -1163,6 +1230,40 @@ impl AppState {
                 if let Some(error) = result.error {
                     self.pending_commands.clear();
 
+                    self.last_llm_provider = result.provider.clone();
+                    self.last_llm_model = result.model.clone();
+                    self.last_llm_calls = result.llm_calls;
+                    self.last_llm_duration_ms = result.llm_duration_ms;
+                    self.last_llm_error = Some(error.clone());
+                    self.last_llm_error_kind = {
+                        let lower = error.to_lowercase();
+                        if lower.contains("401")
+                            || lower.contains("403")
+                            || lower.contains("unauthorized")
+                            || lower.contains("forbidden")
+                            || lower.contains("api key")
+                            || lower.contains("authentication")
+                        {
+                            Some("auth".to_string())
+                        } else if lower.contains("429")
+                            || lower.contains("too many requests")
+                            || lower.contains("rate limit")
+                            || lower.contains("quota")
+                            || lower.contains("billing")
+                            || lower.contains("insufficient")
+                        {
+                            Some("quota".to_string())
+                        } else if lower.contains("timeout")
+                            || lower.contains("dns")
+                            || lower.contains("connection")
+                            || lower.contains("could not resolve")
+                        {
+                            Some("network".to_string())
+                        } else {
+                            None
+                        }
+                    };
+
                     // Friendlier, actionable error messaging (and pop Settings for key/config issues)
                     let lower = error.to_lowercase();
                     let mut open_settings = false;
@@ -1200,11 +1301,9 @@ What to do next:\n\
                             Some(error.clone()),
                         )
                     } else if lower.contains("connection refused")
-                        || lower.contains("error sending request")
-                            && lower.contains("11434")
+                        || lower.contains("error sending request") && lower.contains("11434")
                         || lower.contains("ollama error")
-                        || lower.contains("tcp connect error")
-                            && lower.contains("11434")
+                        || lower.contains("tcp connect error") && lower.contains("11434")
                     {
                         open_settings = true;
                         (
@@ -1213,6 +1312,21 @@ What to do next:\n\
 - If Ollama is installed, make sure it's running\n\
 - If it's not installed, grab it from https://ollama.com\n\
 - Or switch to a cloud provider in Settings and paste an API key"
+                                .to_string(),
+                            Some(error.clone()),
+                        )
+                    } else if lower.contains("402")
+                        || lower.contains("payment required")
+                        || lower.contains("429")
+                        || lower.contains("too many requests")
+                        || lower.contains("rate limit")
+                        || lower.contains("quota")
+                        || lower.contains("billing")
+                        || lower.contains("insufficient")
+                    {
+                        open_settings = true;
+                        (
+                            "The AI provider is rate-limiting you or your quota/billing is exhausted.\n\nWhat to do next:\n- Open Settings and verify your provider/key\n- Try switching providers or using a smaller/faster model\n- If you control billing/quota, increase limits"
                                 .to_string(),
                             Some(error.clone()),
                         )
@@ -1245,9 +1359,25 @@ What to do next:\n\
                 } else {
                     let mode = response_mode.unwrap_or(self.current_mode);
 
+                    self.last_llm_provider = result.provider.clone();
+                    self.last_llm_model = result.model.clone();
+                    self.last_llm_calls = result.llm_calls;
+                    self.last_llm_duration_ms = result.llm_duration_ms;
+                    self.last_llm_error_kind = None;
+                    self.last_llm_error = None;
+
                     // Store file to preview
                     self.pending_preview = result.preview_file;
                     self.pending_commands = result.pending_commands.clone();
+
+                    // If the research loop produced a top URL, preview it (and allow images via OG).
+                    if let Some(url) = result.preview_web_url.clone() {
+                        self.show_preview = true;
+                        if matches!(self.active_viewer, ActiveViewer::Matrix) {
+                            self.active_viewer = ActiveViewer::Panel;
+                        }
+                        self.fetch_web_preview(url, result.preview_web_snippet.clone());
+                    }
 
                     // Show executed commands in preview panel (not in chat — keep it clean)
                     // Also extract real file paths from command output for clickable buttons
@@ -1264,7 +1394,9 @@ What to do next:\n\
                             if *success {
                                 for line in output.lines() {
                                     let trimmed = line.trim();
-                                    if trimmed.starts_with('/') && std::path::Path::new(trimmed).exists() {
+                                    if trimmed.starts_with('/')
+                                        && std::path::Path::new(trimmed).exists()
+                                    {
                                         found_files.push(trimmed.to_string());
                                     }
                                 }
@@ -1315,7 +1447,9 @@ What to do next:\n\
                     let mut clean_response = strip_preview_tags(&clean_response);
 
                     // Append real file paths found from commands so they become clickable
-                    if !found_files.is_empty() && !found_files.iter().any(|f| clean_response.contains(f)) {
+                    if !found_files.is_empty()
+                        && !found_files.iter().any(|f| clean_response.contains(f))
+                    {
                         clean_response.push_str("\n\nFiles found:\n");
                         for f in &found_files {
                             clean_response.push_str(&format!("  {}\n", f));
@@ -1329,7 +1463,32 @@ What to do next:\n\
                         } else {
                             clean_response
                         },
-                        details: None,
+                        details: {
+                            let mut lines: Vec<String> = Vec::new();
+                            if let Some(provider) = &result.provider {
+                                lines.push(format!("Provider: {}", provider));
+                            }
+                            if let Some(model) = &result.model {
+                                lines.push(format!("Model: {}", model));
+                            }
+                            if let Some(fallback) = &result.fallback {
+                                lines.push(format!("Fallback: {}", fallback));
+                            }
+                            if result.llm_calls > 0 {
+                                lines.push(format!("LLM calls: {}", result.llm_calls));
+                            }
+                            if result.llm_duration_ms > 0 {
+                                lines.push(format!(
+                                    "LLM time: {:.2}s",
+                                    (result.llm_duration_ms as f64) / 1000.0
+                                ));
+                            }
+                            if lines.is_empty() {
+                                None
+                            } else {
+                                Some(lines.join("\n"))
+                            }
+                        },
                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                     };
                     self.push_chat_to(mode, assistant_msg);
@@ -1372,9 +1531,11 @@ What to do next:\n\
                             self.push_chat(ChatMessage {
                                 role: "assistant".to_string(),
                                 content: if cmd_result.success {
-                                    "Spec finished. (Open Details to see the full output.)".to_string()
+                                    "Spec finished. (Open Details to see the full output.)"
+                                        .to_string()
                                 } else {
-                                    "Spec hit an error. (Open Details to see the full output.)".to_string()
+                                    "Spec hit an error. (Open Details to see the full output.)"
+                                        .to_string()
                                 },
                                 details: Some(cmd_result.output.clone()),
                                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
@@ -1386,11 +1547,19 @@ What to do next:\n\
                             );
                             self.push_chat(ChatMessage {
                                 role: "assistant".to_string(),
-                                content: format!(
-                                    "Command `{}` completed.\n\n```\n{}\n```",
-                                    result.command, cmd_result.output
-                                ),
-                                details: None,
+                                content: if cmd_result.success {
+                                    format!(
+                                        "Command `{}` finished. Full output is in the Preview panel.",
+                                        result.command
+                                    )
+                                } else {
+                                    format!(
+                                        "Command `{}` hit an error. Full output is in the Preview panel.",
+                                        result.command
+                                    )
+                                },
+                                // Keep the raw output accessible without spamming the chat bubble.
+                                details: Some(cmd_result.output.clone()),
                                 timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                             });
                         }
@@ -1507,13 +1676,17 @@ What to do next:\n\
             self.command_result_rx = None;
             // Clear thinking for current mode
             self.is_thinking.insert(self.current_mode, false);
-            self.thinking_status.insert(self.current_mode, String::new());
+            self.thinking_status
+                .insert(self.current_mode, String::new());
             return;
         }
 
         // Check if command needs sudo
         let danger_level = classify_command(&command);
-        eprintln!("DEBUG: Command '{}' classified as {:?}", command, danger_level);
+        eprintln!(
+            "DEBUG: Command '{}' classified as {:?}",
+            command, danger_level
+        );
         if danger_level == DangerLevel::NeedsSudo {
             eprintln!("DEBUG: Opening password dialog for sudo command");
             #[cfg(windows)]
@@ -1526,7 +1699,8 @@ What to do next:\n\
                 });
                 self.command_result_rx = None;
                 self.is_thinking.insert(self.current_mode, false);
-                self.thinking_status.insert(self.current_mode, String::new());
+                self.thinking_status
+                    .insert(self.current_mode, String::new());
                 return;
             }
 
@@ -1547,7 +1721,8 @@ What to do next:\n\
         // Set thinking for current mode
         self.thinking_mode = Some(self.current_mode);
         self.is_thinking.insert(self.current_mode, true);
-        self.thinking_status.insert(self.current_mode, format!("Running {}", command));
+        self.thinking_status
+            .insert(self.current_mode, format!("Running {}", command));
 
         std::thread::spawn(move || {
             let output = run_user_command(&command);
@@ -1571,31 +1746,36 @@ What to do next:\n\
             });
             self.pending_sudo_command = None;
             self.is_thinking.insert(self.current_mode, false);
-            self.thinking_status.insert(self.current_mode, String::new());
+            self.thinking_status
+                .insert(self.current_mode, String::new());
             return;
         }
 
         #[cfg(not(windows))]
         {
-        let (tx, rx) = channel::<CommandExecResult>();
-        self.command_result_rx = Some(rx);
-        // Set thinking for current mode
-        self.thinking_mode = Some(self.current_mode);
-        self.is_thinking.insert(self.current_mode, true);
-        self.thinking_status.insert(self.current_mode, format!("Running {} (with privileges)", command));
-        self.pending_sudo_command = None;
+            let (tx, rx) = channel::<CommandExecResult>();
+            self.command_result_rx = Some(rx);
+            // Set thinking for current mode
+            self.thinking_mode = Some(self.current_mode);
+            self.is_thinking.insert(self.current_mode, true);
+            self.thinking_status.insert(
+                self.current_mode,
+                format!("Running {} (with privileges)", command),
+            );
+            self.pending_sudo_command = None;
 
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Runtime::new();
-            let output = match runtime {
-                Ok(rt) => rt.block_on(async {
-                    execute_with_sudo(&command, &password, 60).await
-                        .map_err(|e| e.to_string())
-                }),
-                Err(e) => Err(format!("Failed to create runtime: {}", e)),
-            };
-            let _ = tx.send(CommandExecResult { command, output });
-        });
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Runtime::new();
+                let output = match runtime {
+                    Ok(rt) => rt.block_on(async {
+                        execute_with_sudo(&command, &password, 60)
+                            .await
+                            .map_err(|e| e.to_string())
+                    }),
+                    Err(e) => Err(format!("Failed to create runtime: {}", e)),
+                };
+                let _ = tx.send(CommandExecResult { command, output });
+            });
         }
     }
 
@@ -1641,6 +1821,73 @@ What to do next:\n\
         self.load_mascot_texture(ctx);
     }
 
+    pub fn attach_file_for_analysis(&mut self, path: PathBuf) {
+        if !path.exists() {
+            self.push_chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "I can't find that file. Try choosing it again.".to_string(),
+                details: None,
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+            return;
+        }
+
+        if !self.is_path_permitted(&path) {
+            self.push_chat(ChatMessage {
+                role: "assistant".to_string(),
+                content: "I can’t open that file yet — it’s outside your allowed folders. Open Settings → Allowed folders and add the folder it’s in, then try again.".to_string(),
+                details: Some(path.to_string_lossy().to_string()),
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            });
+            self.show_settings_dialog = true;
+            return;
+        }
+
+        let file_type = shared::preview_types::FileType::from_path(&path);
+        let excerpt = match file_type {
+            shared::preview_types::FileType::Text
+            | shared::preview_types::FileType::Markdown
+            | shared::preview_types::FileType::Json
+            | shared::preview_types::FileType::Csv
+            | shared::preview_types::FileType::Html => {
+                std::fs::read_to_string(&path).ok().map(|s| {
+                    let max = 20_000usize;
+                    if s.len() > max {
+                        format!("{}\n\n…(truncated)", &s[..max])
+                    } else {
+                        s
+                    }
+                })
+            }
+            _ => None,
+        };
+
+        self.attached_file = Some(path.clone());
+        self.attached_file_excerpt = excerpt;
+
+        // Show the file in preview.
+        self.pending_preview = Some(path.clone());
+        self.show_preview = true;
+        if matches!(self.active_viewer, ActiveViewer::Matrix) {
+            self.active_viewer = ActiveViewer::Panel;
+        }
+
+        // Populate an intentful prompt.
+        self.input_text = match self.current_mode {
+            ChatMode::Research => {
+                "Summarize this file in plain English. Give me the key points and any action items."
+                    .to_string()
+            }
+            ChatMode::Data => {
+                "Analyze this file and tell me what stands out. Summarize key numbers/patterns."
+                    .to_string()
+            }
+            ChatMode::Content => "Rewrite/simplify this file for a general audience.".to_string(),
+            _ => "Summarize this file for me in plain English.".to_string(),
+        };
+        self.refocus_input = true;
+    }
+
     pub fn send_message(&mut self) {
         if self.input_text.trim().is_empty() {
             return;
@@ -1674,9 +1921,27 @@ What to do next:\n\
         // (No hidden triggers in public builds)
 
         // Add user message to chat
+        let mut content = self.input_text.clone();
+
+        if let Some(path) = self.attached_file.take() {
+            // Attach a small excerpt inline so the model can summarize without requiring terminal access.
+            let excerpt = self.attached_file_excerpt.take().unwrap_or_default();
+            content.push_str(&format!(
+                "\n\n[Attached file]\nPath: {}",
+                path.to_string_lossy()
+            ));
+            if !excerpt.trim().is_empty() {
+                content.push_str("\n\nExcerpt:\n```");
+                content.push_str(&excerpt);
+                content.push_str("\n```\n");
+            } else {
+                content.push_str("\n\n(For now I can only auto-extract text from simple text files. I can still open/preview this file.)\n");
+            }
+        }
+
         let user_msg = ChatMessage {
             role: "user".to_string(),
-            content: self.input_text.clone(),
+            content,
             details: None,
             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
         };
@@ -1813,10 +2078,10 @@ IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not
             let mut cm = self.context_manager.lock();
             // Use query + mode as search terms
             let search_query = format!("{} {}", self.current_mode.as_str(), self.input_text);
-            
+
             // Limit to 3 relevant snippets to keep prompt fast
-            let results = cm.search(&search_query, None); 
-            
+            let results = cm.search(&search_query, None);
+
             if results.is_empty() {
                 String::new()
             } else {
@@ -1825,7 +2090,7 @@ IMPORTANT: Always use -iname (case-insensitive) with *wildcards* (e.g. *tax* not
                     ctx.push_str(&format!("- [{}]", res.document.name));
                     // Use excerpts as the content summary
                     for excerpt in res.excerpts {
-                         ctx.push_str(&format!("\n  > {}\n", excerpt.trim()));
+                        ctx.push_str(&format!("\n  > {}\n", excerpt.trim()));
                     }
                 }
                 ctx
@@ -2014,6 +2279,7 @@ WORKFLOW:
             api_messages,
             terminal_enabled,
             self.settings.enable_internet_research,
+            self.research_depth,
         );
     }
 
@@ -2022,6 +2288,7 @@ WORKFLOW:
         messages: Vec<ApiChatMessage>,
         allow_terminal: bool,
         allow_web: bool,
+        research_depth: ResearchDepth,
     ) {
         let (tx, rx) = channel::<AiResult>();
         self.ai_result_rx = Some(rx);
@@ -2064,6 +2331,7 @@ WORKFLOW:
                     settings,
                     allow_terminal,
                     allow_web,
+                    research_depth,
                     mode.into(),
                     allowed_dirs,
                     Arc::new(skill_registry),
@@ -2076,9 +2344,21 @@ WORKFLOW:
                 let _ = tx_panic.send(AiResult {
                     response: String::new(),
                     preview_file: None,
+                    preview_web_url: None,
+                    preview_web_title: None,
+                    preview_web_snippet: None,
+                    preview_web_query: None,
+                    preview_web_source: None,
+                    preview_web_search_time_ms: None,
+                    preview_web_results: None,
                     error: Some(
                         "Something went wrong while processing that request. Please try again; if it keeps happening, open Settings and re-check your model + keys.".to_string(),
                     ),
+                    provider: None,
+                    model: None,
+                    fallback: None,
+                    llm_calls: 0,
+                    llm_duration_ms: 0,
                     executed_commands: Vec::new(),
                     pending_commands: Vec::new(),
                 });
@@ -2090,8 +2370,7 @@ WORKFLOW:
         if let Some(handle) = self.ai_abort_handles.remove(&mode) {
             handle.abort();
         }
-        self.thinking_status
-            .insert(mode, "Stopping...".to_string());
+        self.thinking_status.insert(mode, "Stopping...".to_string());
     }
 
     /// Open a file in the preview panel

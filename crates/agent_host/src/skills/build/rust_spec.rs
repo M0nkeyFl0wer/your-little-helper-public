@@ -4,14 +4,14 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::json;
 use shared::skill::{
     Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
     SuggestedAction,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
-use serde_json::json;
+use std::path::{Path, PathBuf};
 
 // ASCII Art Constants (embedded to avoid circular deps with app crate)
 const SPEC_DOG: &str = r#"
@@ -67,12 +67,14 @@ impl Skill for SpecScaffoldSkill {
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
-        let name = input.params.get("name")
+        let name = input
+            .params
+            .get("name")
             .and_then(|v| v.as_str())
             .unwrap_or("my-project");
 
         let project_path = ctx.working_dir.join(name);
-        
+
         if project_path.exists() {
             return Ok(SkillOutput::text(format!(
                 "Directory '{}' already exists. Please choose a different name or use `spec_init` in the existing folder.", 
@@ -91,8 +93,11 @@ impl Skill for SpecScaffoldSkill {
         fs::write(project_path.join("README.md"), readme_content)?;
 
         // Create .gitignore
-        fs::write(project_path.join(".gitignore"), "target/\nnode_modules/\n.DS_Store\n")?;
-        
+        fs::write(
+            project_path.join(".gitignore"),
+            "target/\nnode_modules/\n.DS_Store\n",
+        )?;
+
         // Initialize git (Real Git)
         std::process::Command::new("git")
             .arg("init")
@@ -140,11 +145,15 @@ impl Skill for SpecInitSkill {
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
-        let name = input.params.get("name")
+        let name = input
+            .params
+            .get("name")
             .and_then(|v| v.as_str())
             .unwrap_or("01_initial_spec");
-        
-        let path = input.params.get("path")
+
+        let path = input
+            .params
+            .get("path")
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or_else(|| ctx.working_dir.clone());
@@ -152,11 +161,15 @@ impl Skill for SpecInitSkill {
         let specs_dir = path.join("specs");
         fs::create_dir_all(&specs_dir)?;
 
-        let filename = if name.ends_with(".md") { name.to_string() } else { format!("{}.md", name) };
+        let filename = if name.ends_with(".md") {
+            name.to_string()
+        } else {
+            format!("{}.md", name)
+        };
         let spec_path = specs_dir.join(&filename);
 
         if spec_path.exists() {
-             return Ok(SkillOutput::text(format!(
+            return Ok(SkillOutput::text(format!(
                 "Spec file `{}` already exists.",
                 filename
             )));
@@ -219,11 +232,15 @@ impl Skill for SpecImplementSkill {
     }
 
     async fn execute(&self, input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
-        let spec_name = input.params.get("spec")
+        let spec_name = input
+            .params
+            .get("spec")
             .and_then(|v| v.as_str())
             .unwrap_or("01_initial_spec.md");
-        
-        let path = input.params.get("path")
+
+        let path = input
+            .params
+            .get("path")
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or_else(|| ctx.working_dir.clone());
@@ -232,13 +249,13 @@ impl Skill for SpecImplementSkill {
 
         if !spec_path.exists() {
             // Try adding .md extension
-             let spec_path_md = path.join("specs").join(format!("{}.md", spec_name));
-             if !spec_path_md.exists() {
+            let spec_path_md = path.join("specs").join(format!("{}.md", spec_name));
+            if !spec_path_md.exists() {
                 return Ok(SkillOutput::text(format!(
-                    "Spec file not found at `specs/{}` or `specs/{}.md`.", 
+                    "Spec file not found at `specs/{}` or `specs/{}.md`.",
                     spec_name, spec_name
                 )));
-             }
+            }
         }
 
         let spec_content = fs::read_to_string(&spec_path).unwrap_or_default();
@@ -280,15 +297,19 @@ impl Skill for SpecNextTaskSkill {
 
     async fn execute(&self, _input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
         use super::spec_tracker::SpecStatus;
-        
+
         let mut status = match SpecStatus::load(&ctx.working_dir) {
             Ok(s) => s,
-            Err(_) => return Ok(SkillOutput::error("No build plan found. Run `spec_implement` first to create one.")),
+            Err(_) => {
+                return Ok(SkillOutput::error(
+                    "No build plan found. Run `spec_implement` first to create one.",
+                ))
+            }
         };
 
         if let Some(task) = status.next_pending_task() {
-             // Create a prompt for the agent to execute THIS specific task
-             let task_prompt = format!(
+            // Create a prompt for the agent to execute THIS specific task
+            let task_prompt = format!(
                  "**BUILD TASK [{}/{}]**: {}\n\nDescription: {}\n\nExecute this task now. Create/Edit the necessary files. When done, I will automatically mark this task complete and move to the next one.",
                  status.current_task_index + 1,
                  status.tasks.len(),
@@ -296,22 +317,26 @@ impl Skill for SpecNextTaskSkill {
                  task.description
              );
 
-             // Advance the tracker *optimistically* (or we could wait for a confirmation skill, but let's loop)
-             status.complete_current_task();
-             status.save(&ctx.working_dir)?;
+            // Advance the tracker *optimistically* (or we could wait for a confirmation skill, but let's loop)
+            status.complete_current_task();
+            status.save(&ctx.working_dir)?;
 
-             let mut suggestions = Vec::new();
-             if !status.completed {
-                 suggestions.push(SuggestedAction {
+            let mut suggestions = Vec::new();
+            if !status.completed {
+                suggestions.push(SuggestedAction {
                     label: "Next Task".to_string(),
                     skill_id: "spec_next_task".to_string(),
                     params: HashMap::new(),
-                 });
-             }
+                });
+            }
 
-             Ok(SkillOutput::text(task_prompt).with_suggested_action("spec_next_task", HashMap::new()))
+            Ok(SkillOutput::text(task_prompt)
+                .with_suggested_action("spec_next_task", HashMap::new()))
         } else {
-            Ok(SkillOutput::text(format!("{}\n\nAll tasks completed! Build finished successfully. 🏗️✅", SPEC_DOG)))
+            Ok(SkillOutput::text(format!(
+                "{}\n\nAll tasks completed! Build finished successfully. 🏗️✅",
+                SPEC_DOG
+            )))
         }
     }
 }

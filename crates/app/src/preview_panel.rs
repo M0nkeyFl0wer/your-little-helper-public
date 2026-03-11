@@ -54,6 +54,9 @@ pub struct PreviewState {
     pub fullscreen: bool,
     /// Example prompt that was clicked (to populate chat input)
     pub clicked_prompt: Option<String>,
+
+    /// URL that was clicked (to open in preview)
+    pub clicked_url: Option<String>,
 }
 
 impl Default for PreviewState {
@@ -65,6 +68,7 @@ impl Default for PreviewState {
             scroll_offset: egui::Vec2::ZERO,
             fullscreen: false,
             clicked_prompt: None,
+            clicked_url: None,
         }
     }
 }
@@ -275,6 +279,10 @@ impl PreviewPanel {
         self.state.clicked_prompt.take()
     }
 
+    pub fn take_clicked_url(&mut self) -> Option<String> {
+        self.state.clicked_url.take()
+    }
+
     /// Get current content
     pub fn content(&self) -> Option<&PreviewContent> {
         self.state.content.as_ref()
@@ -421,6 +429,9 @@ impl PreviewPanel {
                         .to_string(),
                     PreviewContent::Web { url, title, .. } => {
                         title.clone().unwrap_or_else(|| url.clone())
+                    }
+                    PreviewContent::WebSearchResults { query, results, .. } => {
+                        format!("Search: {} ({} results)", query, results.len())
                     }
                     PreviewContent::ModeIntro { mode } => match mode.to_lowercase().as_str() {
                         "fix" => "Fix Helper".to_string(),
@@ -571,84 +582,123 @@ impl PreviewPanel {
 
                     ui.add_space(20.0);
 
-                    // ── Workflow steps (Build mode) or Capabilities (other modes) ──
+                    // ── Quick start (clickable prompts) ──
+                    ui.heading(egui::RichText::new("Try one of these").size(14.0));
+                    ui.label(
+                        egui::RichText::new("Click to fill the chat box.")
+                            .size(11.0)
+                            .color(subtle_color),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.vertical(|ui| {
+                        for p in intro.example_prompts.iter().take(3) {
+                            let p_str = (*p).to_string();
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(*p)
+                                            .size(12.0)
+                                            .color(text_color),
+                                    )
+                                    .fill(if is_dark_mode {
+                                        egui::Color32::from_rgb(38, 38, 46)
+                                    } else {
+                                        egui::Color32::from_rgb(248, 248, 252)
+                                    })
+                                    .rounding(egui::Rounding::same(10.0)),
+                                )
+                                .clicked()
+                            {
+                                self.state.clicked_prompt = Some(p_str);
+                            }
+                        }
+                    });
+
+                    ui.add_space(14.0);
+
+                    // ── Workflow steps (Build mode) or "What I do" (other modes) ──
                     if let Some(steps) = intro.workflow_steps {
-                        ui.heading(egui::RichText::new("The Workflow").size(14.0));
-                        ui.label(
-                            egui::RichText::new("Each step builds on the last. Click a step to run it.")
-                                .size(11.0)
-                                .color(subtle_color),
-                        );
-                        ui.add_space(8.0);
+                        egui::CollapsingHeader::new("Workflow steps")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "These are optional. Start with the first step, or just describe what you want to build.",
+                                    )
+                                    .size(11.0)
+                                    .color(subtle_color),
+                                );
+                                ui.add_space(8.0);
 
-                        for (i, step) in steps.iter().enumerate() {
-                            // For now all steps start as "pending" — the first is "next"
-                            // (Future: check for actual .speckit files to determine status)
-                            let is_next = i == 0;
+                                for (i, step) in steps.iter().enumerate() {
+                                    // For now all steps start as "pending" — the first is "next"
+                                    let is_next = i == 0;
+                                    let (icon, name_color) = if is_next {
+                                        ("▶", step_next_color)
+                                    } else {
+                                        ("○", step_pending_color)
+                                    };
 
-                            let (icon, name_color) = if is_next {
-                                ("▶", step_next_color)
-                            } else {
-                                ("○", step_pending_color)
-                            };
+                                    let step_prompt = step.prompt.to_string();
+                                    let row = ui
+                                        .horizontal(|ui| {
+                                            ui.add_space(8.0);
+                                            ui.label(
+                                                egui::RichText::new(icon)
+                                                    .size(12.0)
+                                                    .color(name_color),
+                                            );
+                                            let btn = ui.add(
+                                                egui::Button::new(
+                                                    egui::RichText::new(step.name)
+                                                        .size(13.0)
+                                                        .strong()
+                                                        .color(name_color),
+                                                )
+                                                .frame(false),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(step.description)
+                                                    .size(11.0)
+                                                    .color(subtle_color),
+                                            );
+                                            btn
+                                        })
+                                        .inner;
 
-                            let step_prompt = step.prompt.to_string();
-                            let response = ui
-                                .horizontal(|ui| {
-                                    ui.add_space(8.0);
-                                    ui.label(
-                                        egui::RichText::new(icon)
-                                            .size(12.0)
-                                            .color(name_color),
-                                    );
-                                    let btn = ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new(step.name)
-                                                .size(13.0)
-                                                .strong()
-                                                .color(name_color),
-                                        )
-                                        .frame(false),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(format!("— {}", step.description))
-                                            .size(12.0)
-                                            .color(subtle_color),
-                                    );
-                                    btn
-                                })
-                                .inner;
-
-                            if response.clicked() {
-                                self.state.clicked_prompt = Some(step_prompt);
-                            }
-                            if response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-
-                            // Connector line between steps (except last)
-                            if i < steps.len() - 1 {
-                                ui.horizontal(|ui| {
-                                    ui.add_space(14.0);
-                                    ui.label(
-                                        egui::RichText::new("│")
-                                            .size(10.0)
-                                            .color(step_pending_color),
-                                    );
-                                });
-                            }
-                        }
-                    } else {
-                        // Non-workflow modes: show capabilities list
-                        ui.heading(egui::RichText::new("What I can help with:").size(14.0));
-                        ui.add_space(5.0);
-
-                        for capability in intro.capabilities.iter().take(4) {
-                            ui.horizontal(|ui| {
-                                ui.colored_label(accent_color, "•");
-                                ui.label(*capability);
+                                    if row.clicked() {
+                                        self.state.clicked_prompt = Some(step_prompt);
+                                    }
+                                    if row.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                }
                             });
-                        }
+                    } else {
+                        egui::CollapsingHeader::new("What I do")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "A few things I’m good at in this mode (you don’t need to know the technical terms):",
+                                    )
+                                    .size(11.0)
+                                    .color(subtle_color),
+                                );
+                                ui.add_space(6.0);
+
+                                for capability in intro.capabilities.iter().take(4) {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(accent_color, "•");
+                                        ui.label(
+                                            egui::RichText::new(*capability)
+                                                .size(12.0)
+                                                .color(text_color),
+                                        );
+                                    });
+                                }
+                            });
                     }
 
                     // Quick actions are in the sidebar — no need to duplicate here
@@ -844,6 +894,115 @@ impl PreviewPanel {
                             );
                         });
                 });
+            }
+            Some(PreviewContent::WebSearchResults {
+                query,
+                results,
+                source,
+                search_time_ms,
+            }) => {
+                let subtle = if is_dark_mode {
+                    egui::Color32::from_rgb(170, 170, 190)
+                } else {
+                    egui::Color32::from_rgb(90, 90, 110)
+                };
+
+                ui.label(
+                    egui::RichText::new("Search results")
+                        .strong()
+                        .size(14.0)
+                        .color(accent_color),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Query: {}  ·  {} results  ·  {} ({}ms)",
+                        query,
+                        results.len(),
+                        source,
+                        search_time_ms
+                    ))
+                    .size(11.0)
+                    .color(subtle),
+                );
+                ui.add_space(10.0);
+
+                // Lightweight guidance
+                ui.label(
+                    egui::RichText::new(
+                        "Click a result to preview it on the right. Ask me to go deeper if you want more digging.",
+                    )
+                    .size(11.0)
+                    .color(subtle),
+                );
+                ui.add_space(10.0);
+
+                // Result cards
+                for (i, r) in results.iter().enumerate() {
+                    let title = if r.title.trim().is_empty() {
+                        r.url.clone()
+                    } else {
+                        r.title.clone()
+                    };
+                    let domain = r
+                        .url
+                        .split("//")
+                        .nth(1)
+                        .and_then(|s| s.split('/').next())
+                        .unwrap_or("");
+
+                    let clicked = egui::Frame::none()
+                        .fill(if is_dark_mode {
+                            egui::Color32::from_rgb(38, 38, 46)
+                        } else {
+                            egui::Color32::from_rgb(248, 248, 252)
+                        })
+                        .rounding(egui::Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{}.", i + 1))
+                                        .size(12.0)
+                                        .color(subtle),
+                                );
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(title)
+                                            .size(12.5)
+                                            .strong()
+                                            .color(text_color),
+                                    );
+                                    if !domain.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(domain).size(10.5).color(subtle),
+                                        );
+                                    }
+                                    if !r.snippet.trim().is_empty() {
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            egui::RichText::new(r.snippet.clone())
+                                                .size(11.0)
+                                                .color(subtle),
+                                        );
+                                    }
+                                });
+                            });
+                        })
+                        .response
+                        .interact(egui::Sense::click());
+
+                    if clicked.clicked() {
+                        self.state.clicked_url = Some(r.url.clone());
+                    }
+                }
+
+                ui.add_space(12.0);
+                if ui.button("Go deeper on this topic").clicked() {
+                    self.state.clicked_prompt = Some(format!(
+                        "Go deeper on: {}. Use multiple sources and cite them. Keep it concise.",
+                        query
+                    ));
+                }
             }
             Some(PreviewContent::File { path, file_type }) => {
                 self.render_file(&path, &file_type, ui);

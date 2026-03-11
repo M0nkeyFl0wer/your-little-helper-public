@@ -9,14 +9,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::utils::{save_settings, ensure_allowed_dirs};
-
+use crate::utils::{ensure_allowed_dirs, save_settings};
 
 fn try_read_clipboard_text() -> Option<String> {
     let mut clipboard = arboard::Clipboard::new().ok()?;
     let text = clipboard.get_text().ok()?;
     let trimmed = text.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 pub(crate) fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
@@ -36,7 +39,6 @@ pub(crate) fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &
 
     *pref = out;
 }
-
 
 // Default mascot image (boss's dog!)
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
@@ -68,8 +70,8 @@ mod types;
 pub use types::*;
 
 // Utils module - helper functions
-mod utils;
 mod simple_md;
+mod utils;
 
 mod state;
 pub use state::*;
@@ -149,15 +151,12 @@ fn clean_ai_response(response: &str) -> String {
     static RE_SEARCH: OnceLock<regex::Regex> = OnceLock::new();
     static RE_COMMAND: OnceLock<regex::Regex> = OnceLock::new();
 
-    let re_preview = RE_PREVIEW.get_or_init(|| {
-        regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap()
-    });
-    let re_search = RE_SEARCH.get_or_init(|| {
-        regex::Regex::new(r"(?s)<search>.*?</search>").unwrap()
-    });
-    let re_command = RE_COMMAND.get_or_init(|| {
-        regex::Regex::new(r"(?s)<command>.*?</command>").unwrap()
-    });
+    let re_preview =
+        RE_PREVIEW.get_or_init(|| regex::Regex::new(r"(?s)<preview[^>]*>.*?</preview>").unwrap());
+    let re_search =
+        RE_SEARCH.get_or_init(|| regex::Regex::new(r"(?s)<search>.*?</search>").unwrap());
+    let re_command =
+        RE_COMMAND.get_or_init(|| regex::Regex::new(r"(?s)<command>.*?</command>").unwrap());
 
     let cleaned = re_preview.replace_all(response, "");
     let cleaned = re_search.replace_all(&cleaned, "");
@@ -231,7 +230,7 @@ fn format_error_message(error: &str) -> String {
 }
 
 fn main() -> eframe::Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    init_logging();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -248,6 +247,48 @@ fn main() -> eframe::Result<()> {
             })
         }),
     )
+}
+
+fn init_logging() {
+    use std::io::Write;
+
+    // GUI apps often hide stdout/stderr; write logs to a stable file.
+    let log_path = directories::ProjectDirs::from("", "", "little-helper")
+        .map(|p| p.cache_dir().join("logs").join("app.log"));
+
+    if let Some(path) = log_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(_file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let path_for_writer = path.clone();
+            let make_writer = tracing_subscriber::fmt::writer::BoxMakeWriter::new(move || {
+                let w: Box<dyn Write + Send> = match std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path_for_writer)
+                {
+                    Ok(f) => Box::new(f),
+                    Err(_) => Box::new(std::io::stderr()),
+                };
+                w
+            });
+            tracing_subscriber::fmt()
+                .with_env_filter("info")
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .init();
+            tracing::info!(log_file = %path.display(), "logging initialized");
+            return;
+        }
+    }
+
+    // Fallback: standard logging.
+    tracing_subscriber::fmt().with_env_filter("info").init();
 }
 
 struct LittleHelperApp {
@@ -276,12 +317,16 @@ impl eframe::App for LittleHelperApp {
 
             // Show Matrix animation only after 3+ seconds of thinking (avoids flicker on fast responses)
             if let Some(mode) = s.thinking_mode {
-                let elapsed = s.thinking_started_at
+                let elapsed = s
+                    .thinking_started_at
                     .get(&mode)
                     .map(|t| t.elapsed().as_secs())
                     .unwrap_or(0);
                 if elapsed >= 5
-                    && !matches!(s.active_viewer, ActiveViewer::Matrix | ActiveViewer::RickRoll)
+                    && !matches!(
+                        s.active_viewer,
+                        ActiveViewer::Matrix | ActiveViewer::RickRoll
+                    )
                 {
                     s.active_viewer = ActiveViewer::Matrix;
                 }
@@ -303,7 +348,8 @@ impl eframe::App for LittleHelperApp {
                 // Save preview state for the old mode
                 let saved_viewer = s.active_viewer.clone();
                 let saved_content = s.preview_panel.current_content();
-                s.mode_preview_state.insert(prev_mode, (saved_viewer, saved_content));
+                s.mode_preview_state
+                    .insert(prev_mode, (saved_viewer, saved_content));
             }
 
             // Restore input text for the new mode (or clear it)
@@ -370,8 +416,13 @@ impl eframe::App for LittleHelperApp {
                 s.preview_panel.show_mode_intro("build");
 
                 // Auto-switch to a cloud provider for Build mode
-                let primary = s.settings.model.provider_preference
-                    .first().map(|p| p.as_str()).unwrap_or("local");
+                let primary = s
+                    .settings
+                    .model
+                    .provider_preference
+                    .first()
+                    .map(|p| p.as_str())
+                    .unwrap_or("local");
 
                 if primary == "local" {
                     // Try to auto-switch: prefer gemini (free tier) > openai > anthropic
@@ -387,7 +438,8 @@ impl eframe::App for LittleHelperApp {
 
                     if let Some((id, name)) = cloud_pick {
                         set_primary_provider_preference(
-                            &mut s.settings.model.provider_preference, id,
+                            &mut s.settings.model.provider_preference,
+                            id,
                         );
                         save_settings(&s.settings);
                         s.push_chat(ChatMessage {
@@ -434,7 +486,7 @@ impl eframe::App for LittleHelperApp {
                     });
                 }
             }
-            
+
             // Load context documents and skills for the new mode
             let shared_mode = match s.current_mode {
                 ChatMode::Find => shared::skill::Mode::Find,
@@ -444,7 +496,7 @@ impl eframe::App for LittleHelperApp {
                 ChatMode::Content => shared::skill::Mode::Content,
                 ChatMode::Build => shared::skill::Mode::Build,
             };
-            
+
             // Get available skills for this mode and show them in preview
             let skills_info = s.skill_registry.skills_info_for_mode(shared_mode);
             let skill_previews: Vec<shared::preview_types::SkillPreviewInfo> = skills_info
@@ -457,7 +509,7 @@ impl eframe::App for LittleHelperApp {
                     requires_approval: info.user_permission == shared::skill::Permission::Ask,
                 })
                 .collect();
-            
+
             if !skill_previews.is_empty() {
                 s.preview_panel.show_skills(mode_str, skill_previews);
             }
@@ -506,7 +558,11 @@ impl eframe::App for LittleHelperApp {
 
         if let Some(mode) = s.thinking_mode {
             if let Some(started_at) = s.thinking_started_at.get(&mode) {
-                let shown = s.slow_response_hint_shown.get(&mode).copied().unwrap_or(false);
+                let shown = s
+                    .slow_response_hint_shown
+                    .get(&mode)
+                    .copied()
+                    .unwrap_or(false);
                 let is_local = s
                     .settings
                     .model
@@ -561,26 +617,37 @@ impl eframe::App for LittleHelperApp {
                         format!("{}'s Little Helper", s.settings.user_profile.name.trim())
                     };
 
-                    ui.heading(
-                        egui::RichText::new(header_name)
-                            .size(24.0)
-                            .color(if dark {
-                                egui::Color32::from_rgb(220, 220, 230)
-                            } else {
-                                egui::Color32::from_rgb(60, 60, 80)
-                            }),
-                    );
+                    ui.heading(egui::RichText::new(header_name).size(24.0).color(if dark {
+                        egui::Color32::from_rgb(220, 220, 230)
+                    } else {
+                        egui::Color32::from_rgb(60, 60, 80)
+                    }));
 
                     ui.add_space(32.0);
 
                     // Mode buttons - check processing states first to avoid borrow issues
-                    let find_processing = s.is_thinking.get(&ChatMode::Find).copied().unwrap_or(false);
-                    let fix_processing = s.is_thinking.get(&ChatMode::Fix).copied().unwrap_or(false);
-                    let research_processing = s.is_thinking.get(&ChatMode::Research).copied().unwrap_or(false);
-                    let _data_processing = s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
-                    let _content_processing = s.is_thinking.get(&ChatMode::Content).copied().unwrap_or(false);
-                    let build_processing = s.is_thinking.get(&ChatMode::Build).copied().unwrap_or(false);
-                    
+                    let find_processing =
+                        s.is_thinking.get(&ChatMode::Find).copied().unwrap_or(false);
+                    let fix_processing =
+                        s.is_thinking.get(&ChatMode::Fix).copied().unwrap_or(false);
+                    let research_processing = s
+                        .is_thinking
+                        .get(&ChatMode::Research)
+                        .copied()
+                        .unwrap_or(false);
+                    let _data_processing =
+                        s.is_thinking.get(&ChatMode::Data).copied().unwrap_or(false);
+                    let _content_processing = s
+                        .is_thinking
+                        .get(&ChatMode::Content)
+                        .copied()
+                        .unwrap_or(false);
+                    let build_processing = s
+                        .is_thinking
+                        .get(&ChatMode::Build)
+                        .copied()
+                        .unwrap_or(false);
+
                     let find_unread = s.unread_modes.contains(&ChatMode::Find);
                     let fix_unread = s.unread_modes.contains(&ChatMode::Fix);
                     let research_unread = s.unread_modes.contains(&ChatMode::Research);
@@ -599,7 +666,12 @@ impl eframe::App for LittleHelperApp {
                             offset: egui::vec2(0.0, 0.0),
                             blur: 12.0 + p * 8.0,
                             spread: 2.0,
-                            color: egui::Color32::from_rgba_unmultiplied(235, 140, 75, (80.0 + p * 60.0) as u8),
+                            color: egui::Color32::from_rgba_unmultiplied(
+                                235,
+                                140,
+                                75,
+                                (80.0 + p * 60.0) as u8,
+                            ),
                         };
                         (egui::Stroke::new(width, glow_color), shadow)
                     } else {
@@ -608,7 +680,10 @@ impl eframe::App for LittleHelperApp {
                         } else {
                             egui::Color32::from_rgb(210, 215, 225)
                         };
-                        (egui::Stroke::new(1.0, stroke_color), egui::epaint::Shadow::NONE)
+                        (
+                            egui::Stroke::new(1.0, stroke_color),
+                            egui::epaint::Shadow::NONE,
+                        )
                     };
 
                     let picker_response = egui::Frame::none()
@@ -624,6 +699,14 @@ impl eframe::App for LittleHelperApp {
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
 
+                            mode_button(
+                                ui,
+                                "Re(search)",
+                                ChatMode::Research,
+                                &mut s.current_mode,
+                                research_processing,
+                                research_unread,
+                            );
                             mode_button(
                                 ui,
                                 "Find",
@@ -642,14 +725,6 @@ impl eframe::App for LittleHelperApp {
                             );
                             mode_button(
                                 ui,
-                                "Research",
-                                ChatMode::Research,
-                                &mut s.current_mode,
-                                research_processing,
-                                research_unread,
-                            );
-                            mode_button(
-                                ui,
                                 "Build",
                                 ChatMode::Build,
                                 &mut s.current_mode,
@@ -665,7 +740,8 @@ impl eframe::App for LittleHelperApp {
                         let p = ((time * 3.0).sin() + 1.0) as f32 / 2.0;
                         let bounce = p * 4.0; // 0–4px vertical bounce
                         let alpha = (180.0 + p * 75.0) as u8;
-                        let arrow_color = egui::Color32::from_rgba_unmultiplied(235, 140, 75, alpha);
+                        let arrow_color =
+                            egui::Color32::from_rgba_unmultiplied(235, 140, 75, alpha);
 
                         // Arrow triangle pointing up at the mode picker
                         let arrow_center_x = picker_rect.center().x;
@@ -683,10 +759,7 @@ impl eframe::App for LittleHelperApp {
                         ));
 
                         // Label below the arrow
-                        let label_pos = egui::pos2(
-                            arrow_center_x,
-                            arrow_top_y + arrow_size + 4.0,
-                        );
+                        let label_pos = egui::pos2(arrow_center_x, arrow_top_y + arrow_size + 4.0);
                         painter.text(
                             label_pos,
                             egui::Align2::CENTER_TOP,
@@ -762,41 +835,63 @@ impl eframe::App for LittleHelperApp {
 
                         ui.add_space(12.0);
 
-                        // Model indicator - clone provider string to avoid borrow issues
-                        let provider_str: String = s
+                        // Model indicator
+                        // Show what the user selected, but also reflect the *actual* provider/model
+                        // used by the last request (helps catch silent fallbacks).
+                        let configured_provider_str: String = s
                             .settings
                             .model
                             .provider_preference
                             .first()
                             .cloned()
                             .unwrap_or_else(|| "none".to_string());
-                        let provider = provider_str.as_str();
-                        let model_name: String = match provider {
+                        let configured_provider = configured_provider_str.as_str();
+                        let configured_model_name: String = match configured_provider {
                             "openai" => s.settings.model.openai_model.clone(),
                             "anthropic" => s.settings.model.anthropic_model.clone(),
                             "gemini" => s.settings.model.gemini_model.clone(),
                             "local" => s.settings.model.local_model.clone(),
                             _ => "unknown".to_string(),
                         };
+
+                        let last_provider = s.last_llm_provider.clone();
+                        let last_model = s.last_llm_model.clone();
+                        let effective_provider = last_provider
+                            .as_deref()
+                            .unwrap_or(configured_provider)
+                            .to_string();
+                        let effective_model = last_model
+                            .as_deref()
+                            .unwrap_or(configured_model_name.as_str())
+                            .to_string();
+
+                        let fell_back = last_provider
+                            .as_deref()
+                            .is_some_and(|p| p != configured_provider && p != "none")
+                            || last_model
+                                .as_deref()
+                                .is_some_and(|m| m != configured_model_name);
                         let show_hint = s.show_model_hint
-                            && s
-                                .model_hint_started_at
+                            && s.model_hint_started_at
                                 .map(|t| t.elapsed() < Duration::from_secs(10))
                                 .unwrap_or(false);
                         let blink = ((ui.input(|i| i.time) * 2.0) as i32) % 2 == 0;
 
                         // Clickable model indicator
                         ui.vertical(|ui| {
+                            let label = if fell_back {
+                                format!("⚠ {}", effective_model)
+                            } else {
+                                format!("⚡ {}", effective_model)
+                            };
                             let model_btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!("⚡ {}", model_name))
-                                        .size(11.0)
-                                        .color(if dark {
-                                            egui::Color32::from_rgb(140, 180, 140)
-                                        } else {
-                                            egui::Color32::from_rgb(80, 130, 80)
-                                        }),
-                                )
+                                egui::Button::new(egui::RichText::new(label).size(11.0).color(
+                                    if dark {
+                                        egui::Color32::from_rgb(140, 180, 140)
+                                    } else {
+                                        egui::Color32::from_rgb(80, 130, 80)
+                                    },
+                                ))
                                 .frame(false),
                             );
                             if model_btn.hovered() {
@@ -805,19 +900,20 @@ impl eframe::App for LittleHelperApp {
                             if model_btn.clicked() {
                                 s.show_settings_dialog = true;
                             }
-                            model_btn
-                                .on_hover_text(format!("Provider: {} (click to change)", provider));
+                            model_btn.on_hover_text(format!(
+                                "Configured: {} / {}\nLast used: {} / {}\n(click to change)",
+                                configured_provider,
+                                configured_model_name,
+                                effective_provider,
+                                effective_model
+                            ));
 
                             if show_hint && blink {
-                                ui.label(
-                                    egui::RichText::new("v")
-                                        .size(12.0)
-                                        .color(if dark {
-                                            egui::Color32::from_rgb(120, 180, 255)
-                                        } else {
-                                            egui::Color32::from_rgb(50, 100, 200)
-                                        }),
-                                );
+                                ui.label(egui::RichText::new("v").size(12.0).color(if dark {
+                                    egui::Color32::from_rgb(120, 180, 255)
+                                } else {
+                                    egui::Color32::from_rgb(50, 100, 200)
+                                }));
                             }
                         });
 
@@ -863,7 +959,8 @@ impl eframe::App for LittleHelperApp {
                         let title = match &s.active_viewer {
                             ActiveViewer::Panel => "Preview Panel".to_string(),
                             ActiveViewer::CommandOutput(cmd, _) => {
-                                format!("Output: {}", cmd.chars().take(30).collect::<String>())
+                                // Keep this non-technical.
+                                format!("Command: {}", friendly_command_description(cmd))
                             }
                             ActiveViewer::Matrix => {
                                 // Only show "Processing..." if current mode is the one processing
@@ -1098,6 +1195,10 @@ impl eframe::App for LittleHelperApp {
                             if let Some(prompt) = s.preview_panel.take_clicked_prompt() {
                                 s.input_text = prompt;
                             }
+                            if let Some(url) = s.preview_panel.take_clicked_url() {
+                                s.fetch_web_preview(url, None);
+                                s.show_preview = true;
+                            }
                         }
                         ActiveViewer::Matrix => {
                             render_matrix_rain(ui, ctx);
@@ -1106,7 +1207,9 @@ impl eframe::App for LittleHelperApp {
                             render_rick_roll(ui, dark);
                         }
                         ActiveViewer::CommandOutput(cmd, output) => {
-                            render_command_output(ui, dark, cmd, output);
+                            if let Some(prompt) = render_command_output(ui, dark, cmd, output) {
+                                s.input_text = prompt;
+                            }
                         }
                     }
                 });
@@ -1135,11 +1238,7 @@ impl eframe::App for LittleHelperApp {
                 .show(ctx, |ui| {
                     // Header
                     ui.horizontal(|ui| {
-                        ui.heading(
-                            egui::RichText::new("History")
-                                .size(16.0)
-                                .strong(),
-                        );
+                        ui.heading(egui::RichText::new("History").size(16.0).strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("X").clicked() {
                                 s.show_thread_history = false;
@@ -1164,7 +1263,7 @@ impl eframe::App for LittleHelperApp {
                             (None, "All"),
                             (Some(ChatMode::Find), "Find"),
                             (Some(ChatMode::Fix), "Fix"),
-                            (Some(ChatMode::Research), "Research"),
+                            (Some(ChatMode::Research), "Re(search)"),
                             (Some(ChatMode::Data), "Data"),
                             (Some(ChatMode::Content), "Content"),
                             (Some(ChatMode::Build), "Build"),
@@ -1187,11 +1286,18 @@ impl eframe::App for LittleHelperApp {
                         s.thread_history
                             .search(&s.thread_search_query)
                             .into_iter()
-                            .filter(|t| {
-                                s.thread_history_mode_filter
-                                    .map_or(true, |m| t.mode == m)
+                            .filter(|t| s.thread_history_mode_filter.map_or(true, |m| t.mode == m))
+                            .map(|t| {
+                                (
+                                    t.id.clone(),
+                                    t.title.clone(),
+                                    t.mode,
+                                    t.message_count,
+                                    t.is_pinned,
+                                    t.last_activity,
+                                    t.last_message_preview.clone(),
+                                )
                             })
-                            .map(|t| (t.id.clone(), t.title.clone(), t.mode, t.message_count, t.is_pinned, t.last_activity, t.last_message_preview.clone()))
                             .collect()
                     } else {
                         let all = match s.thread_history_mode_filter {
@@ -1199,7 +1305,17 @@ impl eframe::App for LittleHelperApp {
                             None => s.thread_history.get_all_threads(),
                         };
                         all.into_iter()
-                            .map(|t| (t.id.clone(), t.title.clone(), t.mode, t.message_count, t.is_pinned, t.last_activity, t.last_message_preview.clone()))
+                            .map(|t| {
+                                (
+                                    t.id.clone(),
+                                    t.title.clone(),
+                                    t.mode,
+                                    t.message_count,
+                                    t.is_pinned,
+                                    t.last_activity,
+                                    t.last_message_preview.clone(),
+                                )
+                            })
                             .collect()
                     };
 
@@ -1212,9 +1328,11 @@ impl eframe::App for LittleHelperApp {
                                 .weak(),
                         );
                         ui.label(
-                            egui::RichText::new("Start chatting and your threads will appear here.")
-                                .size(11.0)
-                                .weak(),
+                            egui::RichText::new(
+                                "Start chatting and your threads will appear here.",
+                            )
+                            .size(11.0)
+                            .weak(),
                         );
                     } else {
                         let subtle = if dark {
@@ -1232,7 +1350,9 @@ impl eframe::App for LittleHelperApp {
                             let mut thread_to_load: Option<String> = None;
                             let mut thread_to_pin: Option<String> = None;
 
-                            for (id, title, mode, msg_count, pinned, last_activity, preview) in &threads {
+                            for (id, title, mode, msg_count, pinned, last_activity, preview) in
+                                &threads
+                            {
                                 let mode_icon = match mode {
                                     ChatMode::Find => "🔎",
                                     ChatMode::Fix => "🔧",
@@ -1242,7 +1362,8 @@ impl eframe::App for LittleHelperApp {
                                     ChatMode::Build => "🐶",
                                 };
 
-                                let is_current = s.current_thread_id.as_deref() == Some(id.as_str());
+                                let is_current =
+                                    s.current_thread_id.as_deref() == Some(id.as_str());
                                 let bg = if is_current {
                                     if dark {
                                         egui::Color32::from_rgb(45, 45, 60)
@@ -1266,7 +1387,9 @@ impl eframe::App for LittleHelperApp {
                                                 ui.label(egui::RichText::new(mode_icon).size(12.0));
                                                 let title_text = egui::RichText::new(title)
                                                     .size(13.0)
-                                                    .color(if is_current { accent } else if dark {
+                                                    .color(if is_current {
+                                                        accent
+                                                    } else if dark {
                                                         egui::Color32::from_rgb(220, 220, 230)
                                                     } else {
                                                         egui::Color32::from_rgb(30, 30, 40)
@@ -1274,16 +1397,23 @@ impl eframe::App for LittleHelperApp {
                                                 ui.label(title_text);
                                             });
                                             ui.horizontal(|ui| {
-                                                let time_str = crate::thread_history::format_time_ago_pub(*last_activity);
+                                                let time_str =
+                                                    crate::thread_history::format_time_ago_pub(
+                                                        *last_activity,
+                                                    );
                                                 ui.label(
-                                                    egui::RichText::new(format!("{} msgs · {}", msg_count, time_str))
-                                                        .size(11.0)
-                                                        .color(subtle),
+                                                    egui::RichText::new(format!(
+                                                        "{} msgs · {}",
+                                                        msg_count, time_str
+                                                    ))
+                                                    .size(11.0)
+                                                    .color(subtle),
                                                 );
                                             });
                                             // Preview snippet
                                             if !preview.is_empty() {
-                                                let snip: String = preview.chars().take(60).collect();
+                                                let snip: String =
+                                                    preview.chars().take(60).collect();
                                                 ui.label(
                                                     egui::RichText::new(snip)
                                                         .size(10.0)
@@ -1294,12 +1424,20 @@ impl eframe::App for LittleHelperApp {
                                         });
 
                                         // Click to load
-                                        if response.response.interact(egui::Sense::click()).clicked() {
+                                        if response
+                                            .response
+                                            .interact(egui::Sense::click())
+                                            .clicked()
+                                        {
                                             thread_to_load = Some(id.clone());
                                         }
 
                                         // Right-click to pin
-                                        if response.response.interact(egui::Sense::click()).secondary_clicked() {
+                                        if response
+                                            .response
+                                            .interact(egui::Sense::click())
+                                            .secondary_clicked()
+                                        {
                                             thread_to_pin = Some(id.clone());
                                         }
                                     });
@@ -1421,7 +1559,11 @@ impl eframe::App for LittleHelperApp {
                     }
 
                     // History toggle
-                    let history_label = if s.show_thread_history { "Hide History" } else { "History" };
+                    let history_label = if s.show_thread_history {
+                        "Hide History"
+                    } else {
+                        "History"
+                    };
                     if ui
                         .small_button(history_label)
                         .on_hover_text("Browse past conversations")
@@ -1433,7 +1575,10 @@ impl eframe::App for LittleHelperApp {
                     ui.separator();
 
                     // Thread count indicator
-                    let thread_count = s.mode_chat_histories.get(&s.current_mode).map_or(0, |h| h.len());
+                    let thread_count = s
+                        .mode_chat_histories
+                        .get(&s.current_mode)
+                        .map_or(0, |h| h.len());
                     ui.label(
                         egui::RichText::new(format!("{} messages", thread_count))
                             .small()
@@ -1488,14 +1633,18 @@ impl eframe::App for LittleHelperApp {
                                 } else {
                                     egui::Color32::from_rgb(90, 90, 110)
                                 };
-                                ui.label(egui::RichText::new("Folder:").size(11.0).color(label_color));
+                                ui.label(
+                                    egui::RichText::new("Folder:").size(11.0).color(label_color),
+                                );
                                 ui.add_sized(
                                     [ui.available_width() * 0.55, 18.0],
                                     egui::TextEdit::singleline(&mut s.build_folder_input)
                                         .hint_text("~/Projects/my-app")
                                         .font(egui::FontId::new(11.0, egui::FontFamily::Monospace)),
                                 );
-                                ui.label(egui::RichText::new("Name:").size(11.0).color(label_color));
+                                ui.label(
+                                    egui::RichText::new("Name:").size(11.0).color(label_color),
+                                );
                                 ui.add_sized(
                                     [ui.available_width(), 18.0],
                                     egui::TextEdit::singleline(&mut s.build_project_name_input)
@@ -1508,14 +1657,17 @@ impl eframe::App for LittleHelperApp {
                 }
 
                 // Chat messages scroll area
-                let chat_height = ui.available_height() - 100.0;
+                // Clamp to avoid negative heights on small windows / DPI quirks.
+                let chat_height = (ui.available_height() - 100.0).max(180.0);
 
                 let mut clicked_path: Option<PathBuf> = None;
                 // Slack is not included in the public edition
 
                 // Handover notification: show if another mode is processing
                 if let Some(thinking_mode) = s.thinking_mode {
-                    if thinking_mode != s.current_mode && s.is_thinking.get(&thinking_mode).copied().unwrap_or(false) {
+                    if thinking_mode != s.current_mode
+                        && s.is_thinking.get(&thinking_mode).copied().unwrap_or(false)
+                    {
                         let mode_name = match thinking_mode {
                             ChatMode::Find => "Find Helper",
                             ChatMode::Fix => "Fix Helper",
@@ -1534,7 +1686,7 @@ impl eframe::App for LittleHelperApp {
                         } else {
                             format!("{}m {}s", elapsed / 60, elapsed % 60)
                         };
-                        
+
                         egui::Frame::none()
                             .fill(if dark {
                                 egui::Color32::from_rgb(45, 45, 55)
@@ -1546,20 +1698,26 @@ impl eframe::App for LittleHelperApp {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(format!("⏳ {} is still working... ({})", mode_name, time_str))
-                                            .size(13.0)
-                                            .color(if dark {
-                                                egui::Color32::from_rgb(180, 180, 200)
-                                            } else {
-                                                egui::Color32::from_rgb(80, 80, 100)
-                                            }),
+                                        egui::RichText::new(format!(
+                                            "⏳ {} is still working... ({})",
+                                            mode_name, time_str
+                                        ))
+                                        .size(13.0)
+                                        .color(if dark {
+                                            egui::Color32::from_rgb(180, 180, 200)
+                                        } else {
+                                            egui::Color32::from_rgb(80, 80, 100)
+                                        }),
                                     );
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.button("Stop it").clicked() {
-                                            // Cancel the operation
-                                            s.cancel_ai(thinking_mode);
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.button("Stop it").clicked() {
+                                                // Cancel the operation
+                                                s.cancel_ai(thinking_mode);
+                                            }
+                                        },
+                                    );
                                 });
                             });
                         ui.add_space(8.0);
@@ -1568,27 +1726,60 @@ impl eframe::App for LittleHelperApp {
 
                 // Get current mode's chat history (clone to avoid borrow issues)
                 let current_mode = s.current_mode;
-                let chat_history: Vec<ChatMessage> = s.mode_chat_histories
+                let chat_history: Vec<ChatMessage> = s
+                    .mode_chat_histories
                     .get(&current_mode)
                     .cloned()
                     .unwrap_or_default();
                 let allowed_dirs = s.settings.allowed_dirs.clone();
                 // Only show thinking if current mode matches the thinking mode
-                let is_thinking = s.thinking_mode == Some(current_mode) && 
-                    s.is_thinking.get(&current_mode).copied().unwrap_or(false);
-                let thinking_status = s.thinking_status.get(&current_mode).cloned().unwrap_or_default();
+                let is_thinking = s.thinking_mode == Some(current_mode)
+                    && s.is_thinking.get(&current_mode).copied().unwrap_or(false);
+                let thinking_status = s
+                    .thinking_status
+                    .get(&current_mode)
+                    .cloned()
+                    .unwrap_or_default();
+
+                // Lightweight agent diagnostics: helps debug slowness/quota/auth issues.
+                if s.last_llm_provider.is_some()
+                    || s.last_llm_model.is_some()
+                    || s.last_llm_error_kind.is_some()
+                {
+                    let provider = s.last_llm_provider.as_deref().unwrap_or("unknown");
+                    let model = s.last_llm_model.as_deref().unwrap_or("?");
+                    let seconds = (s.last_llm_duration_ms as f64) / 1000.0;
+                    let mut status = format!(
+                        "Agent: {} / {}  ({:.2}s, {} calls)",
+                        provider, model, seconds, s.last_llm_calls
+                    );
+                    if let Some(kind) = &s.last_llm_error_kind {
+                        status.push_str(&format!("  [error: {}]", kind));
+                    }
+
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(status).size(11.0).color(if dark {
+                        egui::Color32::from_rgb(140, 140, 160)
+                    } else {
+                        egui::Color32::from_rgb(90, 90, 110)
+                    }));
+                    ui.add_space(2.0);
+                }
 
                 egui::ScrollArea::vertical()
                     .max_height(chat_height)
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        for msg in chat_history.iter() {
+                        for (i, msg) in chat_history.iter().enumerate() {
                             ui.add_space(6.0);
-                            let action = render_message(ui, msg, dark, &allowed_dirs);
-                            if action.clicked_path.is_some() {
-                                clicked_path = action.clicked_path;
-                            }
+                            // Ensure per-message widgets (Copy/Details buttons, etc.) get unique IDs.
+                            ui.push_id(i, |ui| {
+                                let action = render_message(ui, msg, dark, &allowed_dirs);
+                                if action.clicked_path.is_some() {
+                                    clicked_path = action.clicked_path;
+                                }
+                            });
                             // Slack sharing not supported (public edition)
                             ui.add_space(6.0);
                         }
@@ -1678,14 +1869,51 @@ impl eframe::App for LittleHelperApp {
                     ui.add_space(8.0);
                 }
 
+                // Research controls (Quick vs Deep + file picker)
+                if s.current_mode == ChatMode::Research {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.label(egui::RichText::new("Mode:").size(11.0).color(if dark {
+                            egui::Color32::from_rgb(150, 150, 165)
+                        } else {
+                            egui::Color32::from_rgb(95, 95, 110)
+                        }));
+
+                        let quick_selected = s.research_depth == crate::types::ResearchDepth::Quick;
+                        if ui
+                            .selectable_label(quick_selected, "Quick")
+                            .on_hover_text("One search + a short answer")
+                            .clicked()
+                        {
+                            s.research_depth = crate::types::ResearchDepth::Quick;
+                        }
+                        let deep_selected = s.research_depth == crate::types::ResearchDepth::Deep;
+                        if ui
+                            .selectable_label(deep_selected, "Deep")
+                            .on_hover_text("Multiple searches + deeper synthesis")
+                            .clicked()
+                        {
+                            s.research_depth = crate::types::ResearchDepth::Deep;
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Attach file…").clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_title("Choose a file")
+                                    .pick_file()
+                                {
+                                    s.attach_file_for_analysis(path);
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+
                 // Input area
                 ui.horizontal(|ui| {
                     let is_busy = s.thinking_mode == Some(s.current_mode)
-                        && s
-                            .is_thinking
-                            .get(&s.current_mode)
-                            .copied()
-                            .unwrap_or(false);
+                        && s.is_thinking.get(&s.current_mode).copied().unwrap_or(false);
 
                     let hint = match s.current_mode {
                         ChatMode::Find => "What are you trying to find?",
@@ -1700,15 +1928,11 @@ impl eframe::App for LittleHelperApp {
                     if !s.pending_commands.is_empty() {
                         let blink = ((ui.input(|i| i.time) * 2.0) as i32) % 2 == 0;
                         if blink {
-                            ui.label(
-                                egui::RichText::new("↑")
-                                    .size(18.0)
-                                    .color(if dark {
-                                        egui::Color32::from_rgb(220, 180, 100)
-                                    } else {
-                                        egui::Color32::from_rgb(160, 120, 60)
-                                    }),
-                            );
+                            ui.label(egui::RichText::new("↑").size(18.0).color(if dark {
+                                egui::Color32::from_rgb(220, 180, 100)
+                            } else {
+                                egui::Color32::from_rgb(160, 120, 60)
+                            }));
                         } else {
                             ui.add_space(18.0);
                         }
@@ -1789,7 +2013,9 @@ impl eframe::App for LittleHelperApp {
                 // Center the window for stable resizing behavior
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.set_min_width(460.0);
+                    // Keep Settings usable on smaller windows.
+                    let max_w = ui.available_width().max(320.0);
+                    ui.set_min_width(460.0_f32.min(max_w));
                     ui.set_max_height(640.0);
 
                     ui.horizontal(|ui| {
@@ -2431,7 +2657,7 @@ fn mode_button(
     has_unread: bool,
 ) {
     let is_selected = *current == mode;
-    
+
     // Build label with processing indicator
     let label_text = if is_processing && !is_selected {
         // Pulsing dot effect based on time
@@ -2444,7 +2670,7 @@ fn mode_button(
     } else {
         label.to_string()
     };
-    
+
     let text_color = if is_selected {
         egui::Color32::WHITE
     } else if is_processing {
@@ -2458,7 +2684,7 @@ fn mode_button(
     } else {
         egui::Color32::from_rgb(70, 70, 90)
     };
-    
+
     let btn = egui::Button::new(egui::RichText::new(label_text).size(14.0).color(text_color))
         .fill(if is_selected {
             egui::Color32::from_rgb(70, 130, 180)
@@ -2619,13 +2845,20 @@ fn friendly_command_description(cmd: &str) -> String {
     } else {
         (false, base)
     };
-    let prefix = if is_sudo { "Install/update (needs admin): " } else { "" };
+    let prefix = if is_sudo {
+        "Install/update (needs admin): "
+    } else {
+        ""
+    };
 
     let desc = match effective {
-        "apt" | "apt-get" | "dnf" | "pacman" | "yum" | "zypper" =>
-            "Update or install software packages".to_string(),
-        "systemctl" => format!("Manage a system service ({})",
-            parts.last().unwrap_or(&"service")),
+        "apt" | "apt-get" | "dnf" | "pacman" | "yum" | "zypper" => {
+            "Update or install software packages".to_string()
+        }
+        "systemctl" => format!(
+            "Manage a system service ({})",
+            parts.last().unwrap_or(&"service")
+        ),
         "find" => "Search for files on your computer".to_string(),
         "grep" | "rg" => "Search inside files for text".to_string(),
         "ls" | "dir" => "List files in a folder".to_string(),
@@ -2653,7 +2886,8 @@ fn friendly_command_description(cmd: &str) -> String {
 }
 
 /// Render command output in the preview panel
-fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str) {
+/// Returns an optional prompt to populate the chat input.
+fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str) -> Option<String> {
     let bg_color = if dark {
         egui::Color32::from_rgb(20, 20, 25)
     } else {
@@ -2668,41 +2902,204 @@ fn render_command_output(ui: &mut egui::Ui, dark: bool, cmd: &str, output: &str)
 
     ui.add_space(8.0);
 
-    // Command that was run
-    ui.horizontal(|ui| {
+    // Non-technical description first
+    let friendly = friendly_command_description(cmd);
+    ui.label(
+        egui::RichText::new(format!("What I tried: {}", friendly))
+            .size(12.0)
+            .strong()
+            .color(if dark {
+                egui::Color32::from_rgb(220, 220, 235)
+            } else {
+                egui::Color32::from_rgb(40, 40, 55)
+            }),
+    );
+
+    // Quick explanation / context
+    let subtle = if dark {
+        egui::Color32::from_rgb(165, 165, 180)
+    } else {
+        egui::Color32::from_rgb(90, 90, 110)
+    };
+    ui.label(
+        egui::RichText::new(
+            "This panel is for transparency. You don't need to understand the technical output — I'll turn it into next steps.",
+        )
+        .size(11.0)
+        .color(subtle),
+    );
+
+    // Lightweight heuristic summary for common issues
+    let summary = summarize_command_output(output);
+    if let Some(summary) = &summary {
+        ui.add_space(6.0);
+        egui::Frame::none()
+            .fill(if dark {
+                egui::Color32::from_rgb(28, 28, 36)
+            } else {
+                egui::Color32::from_rgb(250, 250, 252)
+            })
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("What this means")
+                        .strong()
+                        .size(12.0)
+                        .color(if dark {
+                            egui::Color32::from_rgb(220, 220, 235)
+                        } else {
+                            egui::Color32::from_rgb(40, 40, 55)
+                        }),
+                );
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(summary).size(11.0).color(subtle));
+            });
+    }
+
+    // Suggested next step buttons (non-technical)
+    let mut clicked_prompt: Option<String> = None;
+    let lower = output.to_lowercase();
+    if lower.contains("externally-managed-environment") {
+        ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("$")
-                .size(14.0)
-                .color(egui::Color32::from_rgb(100, 200, 100))
-                .strong(),
+            egui::RichText::new("Next step")
+                .strong()
+                .size(12.0)
+                .color(subtle),
         );
         ui.label(
-            egui::RichText::new(cmd)
-                .size(13.0)
-                .color(text_color)
-                .monospace(),
+            egui::RichText::new(
+                "I can install this in a private Python environment so it doesn't touch your system Python.",
+            )
+            .size(11.0)
+            .color(subtle),
         );
-    });
+        ui.add_space(6.0);
 
-    ui.add_space(8.0);
+        if ui.button("Fix it for me").clicked() {
+            clicked_prompt = Some(
+                "Install this Python package safely (use a private environment) and explain what you did in plain English.".to_string(),
+            );
+        }
+    } else if lower.contains("command not found") {
+        ui.add_space(8.0);
+        if ui.button("Help me install what's missing").clicked() {
+            clicked_prompt = Some(
+                "That command wasn't found. Figure out what I need to install and do it safely."
+                    .to_string(),
+            );
+        }
+    } else if summary.is_some() {
+        ui.add_space(8.0);
+        if ui.button("Help me fix this").clicked() {
+            clicked_prompt = Some(
+                "Help me fix the last command error. Keep it simple and do the steps for me."
+                    .to_string(),
+            );
+        }
+    }
 
-    // Output in a scrollable code block
-    egui::Frame::none()
-        .fill(bg_color)
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::same(12.0))
+    // Raw output (advanced)
+    ui.add_space(10.0);
+    egui::CollapsingHeader::new("Raw output (advanced)")
+        .default_open(false)
         .show(ui, |ui| {
-            egui::ScrollArea::both()
-                .max_height(ui.available_height() - 20.0)
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("$")
+                        .size(13.0)
+                        .color(egui::Color32::from_rgb(100, 200, 100))
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(cmd)
+                        .size(12.0)
+                        .color(text_color)
+                        .monospace(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("Copy").clicked() {
+                        ui.output_mut(|o| o.copied_text = cmd.to_string());
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            egui::Frame::none()
+                .fill(bg_color)
+                .rounding(egui::Rounding::same(6.0))
+                .inner_margin(egui::Margin::same(12.0))
                 .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(output)
-                            .size(12.0)
-                            .color(text_color)
-                            .monospace(),
-                    );
+                    egui::ScrollArea::both()
+                        .max_height(ui.available_height().max(200.0) - 20.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(output)
+                                    .size(12.0)
+                                    .color(text_color)
+                                    .monospace(),
+                            );
+                        });
                 });
         });
+
+    clicked_prompt
+}
+
+fn summarize_command_output(output: &str) -> Option<String> {
+    let out = output.trim();
+    if out.is_empty() {
+        return None;
+    }
+    let lower = out.to_lowercase();
+
+    if lower.contains("externally-managed-environment") {
+        return Some(
+            "Your computer is protecting its built-in Python, so it won't let us install Python packages globally.\n\nGood news: we can still install this safely in a private environment (recommended), and it won't affect your system."
+                .to_string(),
+        );
+    }
+
+    if lower.contains("command not found") {
+        return Some(
+            "The command isn't installed (or isn't on PATH). Install it, or use an alternative command.".to_string(),
+        );
+    }
+
+    if lower.contains("permission denied") {
+        return Some(
+            "This failed due to permissions. You may need to run it with different permissions, choose a different folder, or use `sudo` (only if you trust the command).".to_string(),
+        );
+    }
+
+    if lower.contains("no such file") || lower.contains("no such file or directory") {
+        return Some(
+            "A referenced file/path doesn't exist. Double-check the path, working directory, and spelling.".to_string(),
+        );
+    }
+
+    if lower.contains("could not resolve") || lower.contains("temporary failure in name resolution")
+    {
+        return Some(
+            "This looks like a DNS/network issue. Check your connection, VPN, or DNS settings."
+                .to_string(),
+        );
+    }
+
+    if lower.contains("failed") || lower.contains("error") {
+        // Extract a short "headline" from the first few lines.
+        let headline = out.lines().take(8).map(|l| l.trim()).find(|l| {
+            !l.is_empty()
+                && (l.to_lowercase().starts_with("error")
+                    || l.contains(": error")
+                    || l.contains("failed"))
+        });
+        if let Some(h) = headline {
+            return Some(format!("{}", h));
+        }
+    }
+
+    None
 }
 
 /// Render Matrix-style rain animation while processing
@@ -2850,9 +3247,7 @@ fn render_message(
     allowed_dirs: &[String],
 ) -> MessageAction {
     let is_user = msg.role == "user";
-    let mut action = MessageAction {
-        clicked_path: None,
-    };
+    let mut action = MessageAction { clicked_path: None };
 
     if is_user {
         // User message - right aligned, blue
@@ -3157,7 +3552,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                         });
 
                         ui.add_space(30.0);
-                        
+
                         // Show what I can do
                         ui.label(
                             egui::RichText::new("Here's what I can help you with:")
@@ -3173,7 +3568,7 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                         let features = [
                             ("🔎", "Find things", "files, photos, and docs"),
                             ("🔧", "Fix problems", "with safe, guided steps"),
-                            ("🔬", "Research", "with sources and previews"),
+                            ("🔬", "Re(search)", "with sources and previews"),
                             ("🐶", "Build", "projects with Spec Kit"),
                         ];
 
@@ -3354,7 +3749,6 @@ fn render_onboarding_screen(s: &mut AppState, ctx: &egui::Context) {
                 });
         });
 }
-
 
 fn normalize_allowed_dir_input(input: &str) -> Option<PathBuf> {
     let expanded = expand_user_path(input);
