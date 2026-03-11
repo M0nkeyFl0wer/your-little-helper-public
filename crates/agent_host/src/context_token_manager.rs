@@ -283,7 +283,7 @@ impl ContextUsageTracker {
         let usage_percent =
             (self.total_tokens as f64 / self.budget.max_context_tokens as f64 * 100.0) as usize;
 
-        report.push_str(&format!("## 📊 Token Usage\n\n"));
+        report.push_str("## 📊 Token Usage\n\n");
         report.push_str(&format!(
             "**{}/{} tokens** ({}%)\n\n",
             self.total_tokens, self.budget.max_context_tokens, usage_percent

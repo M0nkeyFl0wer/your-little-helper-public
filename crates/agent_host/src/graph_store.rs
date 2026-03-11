@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strsim::jaro_winkler;
 
 /// Operational Mode for the Agent
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Mode {
     Find,
     Fix,
@@ -23,13 +23,8 @@ pub enum Mode {
     Build, // Renamed from "Data" in some contexts, but let's stick to the app's modes
     Data,
     Content,
+    #[default]
     General,
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Mode::General
-    }
 }
 
 /// A node in the knowledge graph representing an entity or concept
@@ -81,6 +76,12 @@ pub struct GraphStore {
     pub graph: DiGraph<NodeData, EdgeData>,
     /// Lookup map for quick node access by label
     node_map: HashMap<String, NodeIndex>,
+}
+
+impl Default for GraphStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphStore {
@@ -171,8 +172,9 @@ impl GraphStore {
 
                 // Look at neighbors
                 for neighbor in self.graph.neighbors(nx) {
-                    if !depth_map.contains_key(&neighbor) {
-                        depth_map.insert(neighbor, current_depth + 1);
+                    if let std::collections::hash_map::Entry::Vacant(e) = depth_map.entry(neighbor)
+                    {
+                        e.insert(current_depth + 1);
 
                         // Record relationship
                         if let Some(edge_idx) = self.graph.find_edge(nx, neighbor) {
@@ -248,7 +250,6 @@ impl GraphStore {
     /// Consolidate nodes with similar labels
     /// Returns the number of nodes merged
     pub fn consolidate_nodes(&mut self, threshold: f64) -> usize {
-        let mut merged_count = 0;
         let mut nodes_to_remove = Vec::new();
         let mut edges_to_add = Vec::new();
 
@@ -383,8 +384,7 @@ impl GraphStore {
             self.node_map.insert(label, ix);
         }
 
-        merged_count = nodes_to_remove.len();
-        merged_count
+        nodes_to_remove.len()
     }
 
     /// Prune nodes that are low quality or unused and old
@@ -491,7 +491,7 @@ mod tests {
         let n2 = store.add_node("apple ", None, "test", Mode::General, None);
 
         // Add distinct node
-        let n3 = store.add_node("Banana", None, "test", Mode::General, None);
+        let _n3 = store.add_node("Banana", None, "test", Mode::General, None);
 
         // Usage stats to influence merge
         store.graph[n1].usage_count = 10;
@@ -546,7 +546,7 @@ mod tests {
 
         // Node 2: "Y-Axis"
         let v2 = vec![0.0, 1.0];
-        let n2 = store.add_node("Y-Axis", None, "math", Mode::General, Some(v2));
+        let _n2 = store.add_node("Y-Axis", None, "math", Mode::General, Some(v2));
 
         // Node 3: "Near X"
         let v3 = vec![0.9, 0.1];

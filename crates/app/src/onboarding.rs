@@ -10,20 +10,18 @@ use serde::{Deserialize, Serialize};
 use shared::settings::AppSettings;
 
 /// Current step in the onboarding flow
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OnboardingStep {
+    #[default]
     Welcome,
     TerminalPermission,
     DependencyCheck,
-    DependencyInstall { name: String, status: InstallStatus },
+    DependencyInstall {
+        name: String,
+        status: InstallStatus,
+    },
     Verification,
     Complete,
-}
-
-impl Default for OnboardingStep {
-    fn default() -> Self {
-        OnboardingStep::Welcome
-    }
 }
 
 /// Status of a dependency installation

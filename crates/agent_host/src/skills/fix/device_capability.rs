@@ -227,7 +227,7 @@ impl DeviceCapabilityDetector {
         };
 
         // Get disk space
-        let disk_output = Command::new("df").args(&["-h", "/"]).output()?;
+        let disk_output = Command::new("df").args(["-h", "/"]).output()?;
         let free_disk_gb = self.parse_disk_output(&String::from_utf8_lossy(&disk_output.stdout));
 
         // Get OS version
@@ -402,7 +402,7 @@ impl DeviceCapabilityDetector {
         };
 
         // Get disk space
-        let disk_output = Command::new("df").args(&["-h", "/"]).output()?;
+        let disk_output = Command::new("df").args(["-h", "/"]).output()?;
         let free_disk_gb = self.parse_disk_output(&String::from_utf8_lossy(&disk_output.stdout));
 
         // Get OS version
@@ -445,8 +445,7 @@ impl DeviceCapabilityDetector {
                     .unwrap_or(0.0);
                 let unit = size_str
                     .chars()
-                    .skip_while(|c| c.is_ascii_digit() || *c == '.')
-                    .next()
+                    .find(|c| !c.is_ascii_digit() && *c != '.')
                     .unwrap_or('G');
 
                 return match unit {

@@ -9,7 +9,7 @@ use shared::skill::{
     FileAction, FileResult, Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput,
     SkillOutput, SuggestedAction,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::skills::common::SafeFileOps;
 
@@ -469,13 +469,13 @@ fn extract_file_path_from_query(query: &str) -> Option<String> {
 }
 
 /// Resolve a path relative to working directory if not absolute
-fn resolve_path(path_str: &str, working_dir: &PathBuf) -> PathBuf {
+fn resolve_path(path_str: &str, working_dir: &Path) -> PathBuf {
     let path = PathBuf::from(path_str);
     if path.is_absolute() {
         path
-    } else if path_str.starts_with("~/") {
+    } else if let Some(stripped) = path_str.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            home.join(&path_str[2..])
+            home.join(stripped)
         } else {
             path
         }

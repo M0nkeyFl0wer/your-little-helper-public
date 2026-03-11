@@ -213,19 +213,17 @@ impl ParsedPreviewTag {
                 og_image: None,
                 snippet: Some(self.caption.clone()),
             }),
-            "image" => {
-                if let Some(path) = &self.path {
-                    Some(PreviewContent::Image {
-                        source: ImageSource::File(PathBuf::from(path)),
+            "image" => self
+                .path
+                .as_ref()
+                .map(|p| PreviewContent::Image {
+                    source: ImageSource::File(PathBuf::from(p)),
+                })
+                .or_else(|| {
+                    self.url.as_ref().map(|u| PreviewContent::Image {
+                        source: ImageSource::Url(u.clone()),
                     })
-                } else if let Some(url) = &self.url {
-                    Some(PreviewContent::Image {
-                        source: ImageSource::Url(url.clone()),
-                    })
-                } else {
-                    None
-                }
-            }
+                }),
             "ascii" => {
                 let state = match self.state.as_deref() {
                     Some("welcome") => AsciiState::Welcome,
@@ -303,7 +301,7 @@ fn parse_preview_attributes(attrs_str: &str) -> Vec<(String, String)> {
             if c == '"' || c == '\'' {
                 let quote = c;
                 chars.next();
-                while let Some(next_char) = chars.next() {
+                for next_char in chars.by_ref() {
                     if next_char == quote {
                         break;
                     }
@@ -622,7 +620,7 @@ pub struct SuspiciousProcess {
 }
 
 /// Process/activity audit showing what's running
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProcessAudit {
     /// Count of normal processes
     pub normal_count: usize,
@@ -634,18 +632,6 @@ pub struct ProcessAudit {
     pub malware_names: Vec<String>,
     /// When this scan was performed
     pub scan_time: Option<i64>,
-}
-
-impl Default for ProcessAudit {
-    fn default() -> Self {
-        Self {
-            normal_count: 0,
-            suspicious: Vec::new(),
-            malware_detected: false,
-            malware_names: Vec::new(),
-            scan_time: None,
-        }
-    }
 }
 
 /// An available software update
@@ -664,7 +650,7 @@ pub struct AvailableUpdate {
 }
 
 /// Update status view
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UpdateStatus {
     /// Critical/security updates available
     pub security_updates: Vec<AvailableUpdate>,
@@ -674,17 +660,6 @@ pub struct UpdateStatus {
     pub up_to_date_count: usize,
     /// When last checked
     pub last_checked: Option<i64>,
-}
-
-impl Default for UpdateStatus {
-    fn default() -> Self {
-        Self {
-            security_updates: Vec::new(),
-            regular_updates: Vec::new(),
-            up_to_date_count: 0,
-            last_checked: None,
-        }
-    }
 }
 
 /// A network connection
@@ -714,7 +689,7 @@ pub struct ListeningService {
 }
 
 /// Network connection monitor
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConnectionMonitor {
     /// Is firewall enabled?
     pub firewall_enabled: bool,
@@ -726,18 +701,6 @@ pub struct ConnectionMonitor {
     pub unknown_count: usize,
     /// When this scan was performed
     pub scan_time: Option<i64>,
-}
-
-impl Default for ConnectionMonitor {
-    fn default() -> Self {
-        Self {
-            firewall_enabled: false,
-            connections: Vec::new(),
-            listening: Vec::new(),
-            unknown_count: 0,
-            scan_time: None,
-        }
-    }
 }
 
 /// An item that can be cleaned up

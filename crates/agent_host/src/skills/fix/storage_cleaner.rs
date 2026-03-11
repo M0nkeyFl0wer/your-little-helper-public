@@ -402,7 +402,7 @@ impl StorageCleaner {
 
         // Space that can be reclaimed
         if result.reclaimable_bytes > 0 {
-            output.push_str(&format!("### 💾 Potential Space Savings\n\n"));
+            output.push_str("### 💾 Potential Space Savings\n\n");
             output.push_str(&format!(
                 "**{}** can be archived to free up space\n\n",
                 self.format_bytes(result.reclaimable_bytes)
@@ -487,7 +487,7 @@ impl StorageCleaner {
         // Old files
         if !result.old_files.is_empty() {
             let old_size: u64 = result.old_files.iter().map(|f| f.size_bytes).sum();
-            output.push_str(&format!("### 📅 Old Files (> 1 year)\n\n"));
+            output.push_str("### 📅 Old Files (> 1 year)\n\n");
             output.push_str(&format!(
                 "**{} files** taking {}\n\n",
                 result.old_files.len(),
@@ -692,7 +692,7 @@ impl Skill for StorageCleaner {
             .get("path")
             .and_then(|p| p.as_str())
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir())
+            .or_else(dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("/"));
 
         // Analyze storage

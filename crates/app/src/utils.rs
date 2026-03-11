@@ -123,24 +123,18 @@ fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
                 return Some("&");
             }
         }
-        if c == '|' {
-            if chars.peek().copied() == Some('|') {
-                return Some("||");
-            }
+        if c == '|' && chars.peek().copied() == Some('|') {
+            return Some("||");
         }
         // Substitution / heredocs
         if c == '`' {
             return Some("`");
         }
-        if c == '$' {
-            if chars.peek().copied() == Some('(') {
-                return Some("$()");
-            }
+        if c == '$' && chars.peek().copied() == Some('(') {
+            return Some("$()");
         }
-        if c == '<' {
-            if chars.peek().copied() == Some('<') {
-                return Some("<<");
-            }
+        if c == '<' && chars.peek().copied() == Some('<') {
+            return Some("<<");
         }
 
         prev = c;
@@ -150,16 +144,14 @@ fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
 }
 
 fn strip_glob_prefix(path: &str) -> &str {
-    let wildcard_pos = path
-        .find(|c| matches!(c, '*' | '?' | '[' | ']'))
-        .unwrap_or(path.len());
+    let wildcard_pos = path.find(['*', '?', '[', ']']).unwrap_or(path.len());
     if wildcard_pos == path.len() {
         return path;
     }
 
     // Trim to the last separator before the wildcard
     let prefix = &path[..wildcard_pos];
-    let sep_pos = prefix.rfind(|c| c == '/' || c == '\\').unwrap_or(0);
+    let sep_pos = prefix.rfind(['/', '\\']).unwrap_or(0);
     if sep_pos == 0 {
         prefix
     } else {
@@ -234,10 +226,7 @@ pub fn run_user_command(command: &str) -> Result<CommandResult, String> {
 
 /// Check if preloaded OpenAI is enabled
 pub fn preload_openai_enabled() -> bool {
-    match std::env::var("LH_DISABLE_PRELOAD_OPENAI") {
-        Ok(v) if v == "1" || v.to_lowercase() == "true" => false,
-        _ => true,
-    }
+    !matches!(std::env::var("LH_DISABLE_PRELOAD_OPENAI"), Ok(v) if v == "1" || v.to_lowercase() == "true")
 }
 
 /// Get the config file path
@@ -307,9 +296,9 @@ pub fn load_settings_or_default() -> (AppSettings, bool) {
 
                         // Best-effort cleanup (may fail if running from a read-only volume)
                         let _ = std::fs::remove_file(&seed_path);
-                        let _ = std::fs::remove_file(&dir.join("seed-mascot.png"));
-                        let _ = std::fs::remove_file(&dir.join("seed-mascot.jpg"));
-                        let _ = std::fs::remove_file(&dir.join("seed-mascot.jpeg"));
+                        let _ = std::fs::remove_file(dir.join("seed-mascot.png"));
+                        let _ = std::fs::remove_file(dir.join("seed-mascot.jpg"));
+                        let _ = std::fs::remove_file(dir.join("seed-mascot.jpeg"));
 
                         return (settings, true);
                     }

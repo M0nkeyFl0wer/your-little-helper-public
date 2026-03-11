@@ -202,7 +202,7 @@ impl StartupOptimizer {
 
         // Check systemd user services
         let output = Command::new("systemctl")
-            .args(&[
+            .args([
                 "--user",
                 "list-unit-files",
                 "--type=service",
@@ -533,7 +533,7 @@ impl StartupOptimizer {
             "systemd" => {
                 // Disable the systemd user service
                 let output = std::process::Command::new("systemctl")
-                    .args(&["--user", "disable", program_name])
+                    .args(["--user", "disable", program_name])
                     .output()?;
 
                 if output.status.success() {

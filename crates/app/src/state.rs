@@ -19,6 +19,7 @@ use std::sync::Arc;
 ///
 /// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
 /// The UI polls this channel each frame to update the thinking indicator.
+#[allow(clippy::too_many_arguments)]
 pub fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
     settings: shared::settings::ModelProvider,
@@ -645,10 +646,12 @@ fn parse_first_web_result(output: &str) -> Option<FirstWebResult> {
         }
 
         // Indented description line
-        if !l.starts_with('[') && !l.starts_with('$') && !l.starts_with("Results from") {
-            if last_desc.is_none() {
-                last_desc = Some(l.to_string());
-            }
+        if !l.starts_with('[')
+            && !l.starts_with('$')
+            && !l.starts_with("Results from")
+            && last_desc.is_none()
+        {
+            last_desc = Some(l.to_string());
         }
     }
 
@@ -696,10 +699,13 @@ fn parse_web_result_items(output: &str) -> Vec<shared::preview_types::WebSearchR
         }
 
         // Description line (between title and URL)
-        if current_title.is_some() && current_snippet.is_none() {
-            if !l.starts_with('[') && !l.starts_with('$') && !l.starts_with("Results from") {
-                current_snippet = Some(l.to_string());
-            }
+        if current_title.is_some()
+            && current_snippet.is_none()
+            && !l.starts_with('[')
+            && !l.starts_with('$')
+            && !l.starts_with("Results from")
+        {
+            current_snippet = Some(l.to_string());
         }
     }
 

@@ -4,9 +4,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use shared::skill::{
-    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
-};
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 use std::process::Command;
 
 /// Helper for standard Git operations

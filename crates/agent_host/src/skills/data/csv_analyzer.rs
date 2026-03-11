@@ -157,7 +157,7 @@ impl CsvAnalyzer {
         let categoricals: Vec<&ColumnStats> = analysis
             .column_stats
             .iter()
-            .filter(|s| s.unique_values.len() > 0 && s.unique_values.len() <= 10)
+            .filter(|s| !s.unique_values.is_empty() && s.unique_values.len() <= 10)
             .take(3)
             .collect();
 

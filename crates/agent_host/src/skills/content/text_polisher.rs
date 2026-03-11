@@ -21,7 +21,7 @@ impl TextPolisher {
     fn analyze_text(text: &str) -> TextAnalysis {
         let words: Vec<&str> = text.split_whitespace().collect();
         let sentences: Vec<&str> = text
-            .split(|c| c == '.' || c == '!' || c == '?')
+            .split(['.', '!', '?'])
             .filter(|s| !s.trim().is_empty())
             .collect();
 

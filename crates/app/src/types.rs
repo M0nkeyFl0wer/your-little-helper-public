@@ -343,6 +343,7 @@ impl Default for AppState {
         if crate::secrets::should_skip_onboarding() {
             settings.user_profile.onboarding_complete = true;
             settings.user_profile.terminal_permission_granted = true;
+            #[allow(clippy::const_is_empty)]
             if !crate::secrets::PRELOAD_USER_NAME.is_empty() {
                 settings.user_profile.name = crate::secrets::PRELOAD_USER_NAME.to_string();
             }
@@ -829,11 +830,8 @@ impl AppState {
             expires_at: Some(chrono::Utc::now().timestamp() + 3600), // ~1 hour
         };
 
-        match result.provider.as_str() {
-            "gemini" => {
-                self.settings.model.gemini_auth.oauth = Some(oauth_creds);
-            }
-            _ => {}
+        if result.provider.as_str() == "gemini" {
+            self.settings.model.gemini_auth.oauth = Some(oauth_creds);
         }
 
         crate::utils::save_settings(&self.settings);
@@ -949,7 +947,7 @@ impl AppState {
                 // cpu_usage is a % of a single core (sysinfo semantics)
                 self.settings_cpu_percent = proc_.cpu_usage();
                 // sysinfo returns bytes
-                self.settings_mem_mb = (proc_.memory() / (1024 * 1024)) as u64;
+                self.settings_mem_mb = proc_.memory() / (1024 * 1024);
             }
         }
     }

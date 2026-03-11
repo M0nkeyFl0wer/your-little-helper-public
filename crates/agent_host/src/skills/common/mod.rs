@@ -22,13 +22,13 @@ pub use version_restore::VersionRestore;
 pub use write_file::WriteFileSkill;
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Initialize common skill infrastructure.
 ///
 /// Creates the SafeFileOps and AuditLogger instances with the given data directory.
-pub fn init_common_infrastructure(data_dir: &PathBuf) -> Result<CommonInfrastructure> {
+pub fn init_common_infrastructure(data_dir: &Path) -> Result<CommonInfrastructure> {
     let archive_dir = data_dir.join("archive");
     let log_dir = data_dir.join("audit");
 
@@ -40,7 +40,7 @@ pub fn init_common_infrastructure(data_dir: &PathBuf) -> Result<CommonInfrastruc
     Ok(CommonInfrastructure {
         safe_file_ops: Arc::new(safe_file_ops),
         audit_logger: Arc::new(audit_logger),
-        data_dir: data_dir.clone(),
+        data_dir: data_dir.to_path_buf(),
         security_context,
     })
 }

@@ -203,17 +203,15 @@ fn render_inline_markdown(
                     remaining = &remaining[close_bracket + 2..]; // skip ](
                     if let Some(close_paren) = remaining.find(')') {
                         let url = &remaining[..close_paren];
-                        if ui
-                            .add(egui::Hyperlink::from_label_and_url(
-                                egui::RichText::new(link_text)
-                                    .size(base_size)
-                                    .color(link_color)
-                                    .underline(),
-                                url,
-                            ))
-                            .on_hover_text(url)
-                            .changed()
-                        {}
+                        ui.add(egui::Hyperlink::from_label_and_url(
+                            egui::RichText::new(link_text)
+                                .size(base_size)
+                                .color(link_color)
+                                .underline(),
+                            url,
+                        ))
+                        .on_hover_text(url)
+                        .changed();
                         remaining = &remaining[close_paren + 1..];
                     } else {
                         // Malformed — emit as-is
@@ -258,10 +256,8 @@ fn find_next_marker(text: &str) -> Option<(usize, MarkerKind)> {
     }
     if let Some(pos) = text.find('[') {
         // Only treat as link if followed by ]( somewhere
-        if text[pos..].contains("](") {
-            if best.is_none() || pos < best.as_ref().unwrap().0 {
-                best = Some((pos, MarkerKind::Link));
-            }
+        if text[pos..].contains("](") && (best.is_none() || pos < best.as_ref().unwrap().0) {
+            best = Some((pos, MarkerKind::Link));
         }
     }
 

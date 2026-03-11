@@ -17,7 +17,7 @@ pub mod settings {
         pub expires_at: Option<i64>, // Unix timestamp
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct ProviderAuth {
         pub api_key: Option<String>,
         pub oauth: Option<OAuthCredentials>,
@@ -132,15 +132,6 @@ pub mod settings {
         /// Returns true if either an API key or OAuth token is configured.
         pub fn has_auth(&self) -> bool {
             self.api_key.is_some() || self.oauth.is_some()
-        }
-    }
-
-    impl Default for ProviderAuth {
-        fn default() -> Self {
-            Self {
-                api_key: None,
-                oauth: None,
-            }
         }
     }
 

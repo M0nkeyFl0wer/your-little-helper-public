@@ -6,8 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
 use shared::skill::{
-    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
-    SuggestedAction,
+    Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput, SuggestedAction,
 };
 use std::collections::HashMap;
 use std::fs;

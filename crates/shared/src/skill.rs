@@ -21,17 +21,12 @@ pub enum PermissionLevel {
 }
 
 /// User's permission setting for a skill
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Permission {
     Enabled,
     Disabled,
+    #[default]
     Ask,
-}
-
-impl Default for Permission {
-    fn default() -> Self {
-        Permission::Ask
-    }
 }
 
 /// Agent modes that can use skills

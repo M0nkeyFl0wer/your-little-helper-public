@@ -10,7 +10,7 @@ use shared::skill::{
     Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
 use shared::version::FileVersion;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Version history skill for viewing file versions.
 ///
@@ -24,7 +24,7 @@ impl VersionHistory {
     }
 
     /// Create version control service for a path
-    fn create_service(path: &PathBuf) -> Result<VersionControlService> {
+    fn create_service(path: &Path) -> Result<VersionControlService> {
         let root = path.parent().unwrap_or(path);
         VersionControlService::new(root)
     }

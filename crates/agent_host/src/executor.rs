@@ -33,6 +33,12 @@ pub struct SessionState {
     pub security_context: Option<Arc<SecurityContext>>,
 }
 
+impl Default for SessionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionState {
     pub fn new() -> Self {
         Self {

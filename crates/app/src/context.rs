@@ -18,9 +18,7 @@ static SYSTEM_INFO: OnceLock<String> = OnceLock::new();
 /// Load campaign context documents for the agent
 /// Returns full content of key campaign files for deep context
 pub fn load_campaign_context() -> String {
-    CAMPAIGN_CONTEXT
-        .get_or_init(|| build_campaign_context())
-        .clone()
+    CAMPAIGN_CONTEXT.get_or_init(build_campaign_context).clone()
 }
 
 fn build_campaign_context() -> String {
@@ -34,9 +32,7 @@ fn build_campaign_context() -> String {
 /// Load persona files from ~/Process/personas/
 /// Returns all personas as context for content generation
 pub fn load_personas() -> String {
-    PERSONA_CONTEXT
-        .get_or_init(|| build_persona_context())
-        .clone()
+    PERSONA_CONTEXT.get_or_init(build_persona_context).clone()
 }
 
 fn build_persona_context() -> String {
@@ -130,7 +126,7 @@ YYYY-MM-DD_platform_topic.md
 
 /// Get system information for tech support context (cross-platform)
 pub fn get_system_info() -> String {
-    SYSTEM_INFO.get_or_init(|| build_system_info()).clone()
+    SYSTEM_INFO.get_or_init(build_system_info).clone()
 }
 
 fn build_system_info() -> String {
