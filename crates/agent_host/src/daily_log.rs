@@ -47,10 +47,7 @@ impl DailyLogManager {
 
         // Append if file exists, create if not
         if path.exists() {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&path)?;
+            let mut file = fs::OpenOptions::new().append(true).open(&path)?;
             use std::io::Write;
             writeln!(file, "\n{}", entry)?;
         } else {
@@ -67,7 +64,7 @@ impl DailyLogManager {
             for entry in fs::read_dir(&self.log_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "md") {
+                if path.extension().is_some_and(|ext| ext == "md") {
                     logs.push(path);
                 }
             }

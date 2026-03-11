@@ -10,7 +10,7 @@ use services::version_control::VersionControlService;
 use shared::skill::{
     Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Version restore skill for reverting files.
 ///
@@ -24,7 +24,7 @@ impl VersionRestore {
     }
 
     /// Create version control service for a path
-    fn create_service(path: &PathBuf) -> Result<VersionControlService> {
+    fn create_service(path: &Path) -> Result<VersionControlService> {
         let root = path.parent().unwrap_or(path);
         VersionControlService::new(root)
     }

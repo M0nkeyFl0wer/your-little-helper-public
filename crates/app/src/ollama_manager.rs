@@ -66,16 +66,15 @@ pub fn has_gpu_acceleration() -> bool {
         }
 
         // Also check for AMD ROCm
-        if !cfg!(windows) {
-            if Command::new("rocminfo")
+        if !cfg!(windows)
+            && Command::new("rocminfo")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
-            {
-                return true;
-            }
+        {
+            return true;
         }
     }
 

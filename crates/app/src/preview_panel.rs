@@ -1014,7 +1014,7 @@ impl PreviewPanel {
                 ref og_image,
                 ref screenshot,
             }) => {
-                let has_screenshot = screenshot.as_ref().map_or(false, |p| p.exists());
+                let has_screenshot = screenshot.as_ref().is_some_and(|p| p.exists());
 
                 ui.vertical(|ui| {
                     // Web preview header
@@ -1490,7 +1490,6 @@ impl PreviewPanel {
                                                     .clicked()
                                                 {
                                                     self.open_file(path_clone.as_path(), ui.ctx());
-                                                    return;
                                                 }
                                             },
                                         );

@@ -113,7 +113,7 @@ impl Thread {
         let mut chars = title.chars();
         match chars.next() {
             None => String::new(),
-            Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str(),
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         }
     }
 

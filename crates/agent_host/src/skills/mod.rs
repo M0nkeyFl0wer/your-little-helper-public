@@ -113,12 +113,12 @@ impl SkillRegistry {
             }
             Permission::Ask => {
                 // For Sensitive skills, check session approval
-                if skill.permission_level() == PermissionLevel::Sensitive {
-                    if !ctx.is_session_approved(skill_id) {
-                        return Err(SkillError::PermissionDenied {
-                            skill_id: skill_id.to_string(),
-                        });
-                    }
+                if skill.permission_level() == PermissionLevel::Sensitive
+                    && !ctx.is_session_approved(skill_id)
+                {
+                    return Err(SkillError::PermissionDenied {
+                        skill_id: skill_id.to_string(),
+                    });
                 }
             }
             Permission::Enabled => {
@@ -173,10 +173,10 @@ impl SkillRegistry {
     /// Check if skill requires session approval
     pub fn requires_approval(&self, skill_id: &str, ctx: &SkillContext) -> bool {
         if let Some(skill) = self.skills.get(skill_id) {
-            if skill.permission_level() == PermissionLevel::Sensitive {
-                if self.get_permission(skill_id) == Permission::Ask {
-                    return !ctx.is_session_approved(skill_id);
-                }
+            if skill.permission_level() == PermissionLevel::Sensitive
+                && self.get_permission(skill_id) == Permission::Ask
+            {
+                return !ctx.is_session_approved(skill_id);
             }
         }
         false

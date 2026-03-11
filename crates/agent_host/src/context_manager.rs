@@ -382,12 +382,10 @@ impl ContextManager {
                     // Embed
                     let mut embedding = None;
                     if let Some(service) = &self.embedding_service {
-                        if !self.graph.has_embedding(&doc.name) {
-                            if doc.size_bytes < 50_000 {
-                                if let Ok(content) = std::fs::read_to_string(&doc.path) {
-                                    if let Ok(e) = service.embed(&content) {
-                                        embedding = Some(e);
-                                    }
+                        if !self.graph.has_embedding(&doc.name) && doc.size_bytes < 50_000 {
+                            if let Ok(content) = std::fs::read_to_string(&doc.path) {
+                                if let Ok(e) = service.embed(&content) {
+                                    embedding = Some(e);
                                 }
                             }
                         }
@@ -731,7 +729,7 @@ impl ContextManager {
         // 1. Find nodes related to the query terms (Keyword/Graph)
         let mut related_docs = Vec::new();
         // Simple heuristic: treat query as a potential entity label
-        let related_entities = self.graph.find_related(&query, 2); // 2 hops depth
+        let related_entities = self.graph.find_related(query, 2); // 2 hops depth
 
         for (entity_label, relation_desc) in related_entities {
             // Find documents containing this related entity

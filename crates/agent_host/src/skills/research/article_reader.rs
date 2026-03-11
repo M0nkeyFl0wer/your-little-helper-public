@@ -138,7 +138,7 @@ fn extract_title(html: &str) -> Option<String> {
 }
 
 fn estimate_read_time(word_count: u32) -> u32 {
-    let minutes = (word_count + 199) / 200;
+    let minutes = word_count.div_ceil(200);
     minutes.max(1)
 }
 

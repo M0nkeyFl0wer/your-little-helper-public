@@ -199,9 +199,9 @@ impl GeminiClient {
                 let body: GeminiResponse = resp.json().await?;
                 let text = body
                     .candidates
-                    .get(0)
+                    .first()
                     .and_then(|c| c.content.as_ref())
-                    .and_then(|c| c.parts.get(0))
+                    .and_then(|c| c.parts.first())
                     .map(|p| p.text.clone())
                     .unwrap_or_default();
                 return Ok(text);

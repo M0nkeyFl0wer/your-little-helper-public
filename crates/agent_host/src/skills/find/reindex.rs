@@ -3,9 +3,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use services::file_index::FileIndexService;
-use shared::skill::{
-    Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
-};
+use shared::skill::{Mode, PermissionLevel, Skill, SkillContext, SkillInput, SkillOutput};
 
 use std::sync::Arc;
 

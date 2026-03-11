@@ -386,7 +386,7 @@ impl PrivacyAuditor {
         // - Portals: xdg-desktop-portal
 
         // Check Flatpak permissions
-        if let Ok(_output) = Command::new("flatpak").args(&["permission-show"]).output() {
+        if let Ok(_output) = Command::new("flatpak").args(["permission-show"]).output() {
             // Parse flatpak permission output
         }
 
@@ -400,7 +400,7 @@ impl PrivacyAuditor {
         for app in apps {
             for perm in &app.permissions {
                 if perm.allowed {
-                    *summary.entry(perm.permission_type.clone()).or_insert(0) += 1;
+                    *summary.entry(perm.permission_type).or_insert(0) += 1;
                 }
             }
         }
@@ -463,9 +463,7 @@ impl PrivacyAuditor {
                     .collect();
 
                 output.push_str(&format!("**{}** can {}\n", app.name, perms.join(" and ")));
-                output.push_str(&format!(
-                    "_Consider if this app really needs this access_\n\n"
-                ));
+                output.push_str("_Consider if this app really needs this access_\n\n");
             }
         }
 

@@ -123,13 +123,14 @@ impl Modal for PasswordDialog {
                     }
 
                     // Handle Enter key
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                        if !self.password.is_empty() {
-                            // Take ownership of password and secure transfer
-                            let password = std::mem::replace(&mut *self.password, String::new());
-                            self.result = ModalResult::Confirmed(password);
-                            should_close = true;
-                        }
+                    if response.lost_focus()
+                        && ui.input(|i| i.key_pressed(Key::Enter))
+                        && !self.password.is_empty()
+                    {
+                        // Take ownership of password and secure transfer
+                        let password = std::mem::take(&mut *self.password);
+                        self.result = ModalResult::Confirmed(password);
+                        should_close = true;
                     }
                 });
 
@@ -149,7 +150,7 @@ impl Modal for PasswordDialog {
                         .add_enabled(submit_enabled, egui::Button::new("Submit"))
                         .clicked()
                     {
-                        let password = std::mem::replace(&mut *self.password, String::new());
+                        let password = std::mem::take(&mut *self.password);
                         self.result = ModalResult::Confirmed(password);
                         should_close = true;
                     }

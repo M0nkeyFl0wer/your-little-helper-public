@@ -38,7 +38,7 @@ impl SecuritySkill {
 
         // 1. Save to Keyring
         let entry = Entry::new("little-helper-2fa", user)?;
-        let secret_str = BASE64.encode(&secret_bytes);
+        let secret_str = BASE64.encode(secret_bytes);
         entry
             .set_password(&secret_str)
             .context("Failed to save secret to keyring")?;

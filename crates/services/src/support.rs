@@ -32,10 +32,7 @@ fn test_tcp(addr: &str) -> String {
 }
 
 pub fn network_diagnostics() -> Result<DiagnosticReport> {
-    let mut details = Vec::new();
-    details.push(test_dns());
-    details.push(test_tcp("1.1.1.1:53"));
-    details.push(test_tcp("8.8.8.8:53"));
+    let details = vec![test_dns(), test_tcp("1.1.1.1:53"), test_tcp("8.8.8.8:53")];
 
     let failures = details.iter().filter(|d| d.contains("FAIL")).count();
     let summary = if failures == 0 {

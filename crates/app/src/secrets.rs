@@ -34,6 +34,7 @@ const GOOGLE_OAUTH_CLIENT_SECRET: &str = match option_env!("LITTLE_HELPER_GOOGLE
 /// Load Google OAuth credentials — checks (in order):
 /// 1. Compile-time env vars (bespoke builds)
 /// 2. Runtime JSON at ~/.config/little-helper/google_oauth.json
+#[allow(clippy::const_is_empty)]
 pub fn google_oauth_credentials() -> Option<(String, Option<String>)> {
     // 1. Compile-time constants
     if !GOOGLE_OAUTH_CLIENT_ID.is_empty() {
@@ -74,8 +75,8 @@ pub const PRELOAD_USER_NAME: &str = match option_env!("LITTLE_HELPER_USER_NAME")
 
 /// Whether to skip the onboarding screen (bespoke builds).
 pub fn should_skip_onboarding() -> bool {
-    match option_env!("LITTLE_HELPER_SKIP_ONBOARDING") {
-        Some("1") | Some("true") | Some("yes") => true,
-        _ => false,
-    }
+    matches!(
+        option_env!("LITTLE_HELPER_SKIP_ONBOARDING"),
+        Some("1") | Some("true") | Some("yes")
+    )
 }

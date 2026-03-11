@@ -179,7 +179,7 @@ impl AuditLogger {
         cache
             .iter()
             .rev()
-            .filter(|e| e.file_path.as_ref().map_or(false, |p| p == path))
+            .filter(|e| e.file_path.as_ref().is_some_and(|p| p == path))
             .take(limit)
             .cloned()
             .collect()
@@ -208,15 +208,9 @@ impl AuditLogger {
     fn matches_filter(&self, entry: &AuditEntry, filter: &AuditFilter) -> bool {
         // Event type filter
         if let Some(ref types) = filter.event_types {
-            let entry_type = match entry.event_type {
-                EventType::SkillExec => EventType::SkillExec,
-                EventType::FileOp => EventType::FileOp,
-                EventType::PermChange => EventType::PermChange,
-                EventType::Error => EventType::Error,
-            };
             if !types
                 .iter()
-                .any(|t| std::mem::discriminant(t) == std::mem::discriminant(&entry_type))
+                .any(|t| std::mem::discriminant(t) == std::mem::discriminant(&entry.event_type))
             {
                 return false;
             }

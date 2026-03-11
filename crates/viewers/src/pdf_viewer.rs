@@ -10,22 +10,12 @@ use egui::{self, ScrollArea};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Default)]
 pub struct PdfViewer {
     path: Option<PathBuf>,
     file_size: u64,
     extracted_text: String,
     error_message: Option<String>,
-}
-
-impl Default for PdfViewer {
-    fn default() -> Self {
-        Self {
-            path: None,
-            file_size: 0,
-            extracted_text: String::new(),
-            error_message: None,
-        }
-    }
 }
 
 impl PdfViewer {

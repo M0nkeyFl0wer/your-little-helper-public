@@ -85,8 +85,8 @@ fn parse_results(text: &str) -> Vec<SearchResult> {
 
             let title_line = lines.first()?.to_string();
             let title = title_line
-                .splitn(2, ". ")
-                .nth(1)
+                .split_once(". ")
+                .map(|x| x.1)
                 .unwrap_or(title_line.trim())
                 .trim()
                 .to_string();

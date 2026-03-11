@@ -4,7 +4,7 @@ use crate::skills::{Skill, SkillContext, SkillInput};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use serde_json::json;
+
 use shared::skill::{Mode, PermissionLevel, SkillOutput};
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ impl MemoryOptimizerSkill {
             .safe_file_ops
             .archive_dir()
             .parent()
-            .unwrap_or(&self.infra.safe_file_ops.archive_dir());
+            .unwrap_or(self.infra.safe_file_ops.archive_dir());
 
         let log_mgr = DailyLogManager::new(data_dir)?;
         let path = log_mgr.create_entry(slug, content)?;

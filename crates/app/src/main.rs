@@ -334,7 +334,7 @@ impl eframe::App for LittleHelperApp {
         }
 
         // Detect mode change and show mode introduction
-        let mode_changed = s.previous_mode.map_or(false, |prev| prev != s.current_mode);
+        let mode_changed = s.previous_mode.is_some_and(|prev| prev != s.current_mode);
         if mode_changed {
             // Dismiss the "try one!" hint on first mode switch
             s.show_mode_picker_hint = false;
@@ -920,17 +920,16 @@ impl eframe::App for LittleHelperApp {
                         ui.add_space(8.0);
 
                         // Keep the top bar compact; preview controls live on the preview panel.
-                        if !s.show_preview {
-                            if ui
+                        if !s.show_preview
+                            && ui
                                 .small_button("◂ Preview")
                                 .on_hover_text("Show the preview panel")
                                 .clicked()
-                            {
-                                s.show_preview = true;
-                                if matches!(s.active_viewer, ActiveViewer::Panel) {
-                                    let mode_str = s.current_mode.as_str();
-                                    s.preview_panel.show_mode_intro(mode_str);
-                                }
+                        {
+                            s.show_preview = true;
+                            if matches!(s.active_viewer, ActiveViewer::Panel) {
+                                let mode_str = s.current_mode.as_str();
+                                s.preview_panel.show_mode_intro(mode_str);
                             }
                         }
                     });
@@ -964,7 +963,7 @@ impl eframe::App for LittleHelperApp {
                             }
                             ActiveViewer::Matrix => {
                                 // Only show "Processing..." if current mode is the one processing
-                                if s.thinking_mode == Some(s.current_mode.clone()) {
+                                if s.thinking_mode == Some(s.current_mode) {
                                     "Processing...".to_string()
                                 } else {
                                     "Preview Panel".to_string()
@@ -980,13 +979,12 @@ impl eframe::App for LittleHelperApp {
                                 s.close_preview();
                             }
                             // Only show close button if not the welcome view
-                            if !matches!(s.active_viewer, ActiveViewer::Panel) {
-                                if ui.small_button("Back").clicked() {
+                            if !matches!(s.active_viewer, ActiveViewer::Panel)
+                                && ui.small_button("Back").clicked() {
                                     let mode_name = s.current_mode.as_str().to_string();
                                     s.active_viewer = ActiveViewer::Panel;
                                     s.preview_panel.show_mode_intro(&mode_name);
                                 }
-                            }
                         });
                     });
 
@@ -1286,7 +1284,7 @@ impl eframe::App for LittleHelperApp {
                         s.thread_history
                             .search(&s.thread_search_query)
                             .into_iter()
-                            .filter(|t| s.thread_history_mode_filter.map_or(true, |m| t.mode == m))
+                            .filter(|t| s.thread_history_mode_filter.is_none_or(|m| t.mode == m))
                             .map(|t| {
                                 (
                                     t.id.clone(),
@@ -2478,11 +2476,10 @@ impl eframe::App for LittleHelperApp {
                                         .family(egui::FontFamily::Monospace)
                                         .size(12.0),
                                 );
-                                if s.settings.allowed_dirs.len() > 1 {
-                                    if ui.small_button("Remove").clicked() {
+                                if s.settings.allowed_dirs.len() > 1
+                                    && ui.small_button("Remove").clicked() {
                                         dir_to_remove = Some(dir.clone());
                                     }
-                                }
                             });
                         }
 
@@ -3095,7 +3092,7 @@ fn summarize_command_output(output: &str) -> Option<String> {
                     || l.contains("failed"))
         });
         if let Some(h) = headline {
-            return Some(format!("{}", h));
+            return Some(h.to_string());
         }
     }
 
@@ -3138,7 +3135,7 @@ fn render_matrix_rain(ui: &mut egui::Ui, ctx: &egui::Context) {
                 let ch = chars[char_idx];
 
                 // Fade based on position in trail
-                let fade = (1.0 - (y_pos / rows as f64)).max(0.0).min(1.0);
+                let fade = (1.0 - (y_pos / rows as f64)).clamp(0.0, 1.0);
                 let alpha = (fade * 255.0) as u8;
 
                 let color = if row as f64 == y_pos.floor() {
