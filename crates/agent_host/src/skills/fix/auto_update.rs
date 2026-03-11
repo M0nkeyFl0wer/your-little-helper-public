@@ -180,7 +180,9 @@ impl shared::skill::Skill for AutoUpdateSkill {
                 self.install_update(&download_path).await?;
 
                 // If we get here, something went wrong (install should relaunch)
-                Ok(SkillOutput::text("Update installed. Please restart Little Helper."))
+                Ok(SkillOutput::text(
+                    "Update installed. Please restart Little Helper.",
+                ))
             }
             _ => Ok(SkillOutput::error(format!(
                 "Unknown action '{}'. Use 'check' or 'install'.",
