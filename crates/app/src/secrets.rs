@@ -1,18 +1,13 @@
-// THIS FILE IS GITIGNORED - Never commit API keys or user info!
-//
-// Public builds: all constants are empty — users configure keys at runtime.
-//
-// Bespoke builds: set environment variables before `cargo build` to bake
-// credentials into the binary. Nothing in git changes.
-//
-//   LITTLE_HELPER_OPENAI_KEY="sk-or-v1-..."  \
-//   LITTLE_HELPER_OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
-//   LITTLE_HELPER_OPENAI_MODEL="anthropic/claude-sonnet-4" \
-//   LITTLE_HELPER_GOOGLE_CLIENT_ID="390..." \
-//   LITTLE_HELPER_GOOGLE_CLIENT_SECRET="GOCSPX-..." \
-//   LITTLE_HELPER_USER_NAME="Flower" \
-//   LITTLE_HELPER_SKIP_ONBOARDING=1 \
-//   cargo build --release
+//! Compile-time secrets for bespoke builds.
+//!
+//! **This file is gitignored** -- it must never contain real credentials in version
+//! control. Public/CI builds compile with all constants empty; users configure
+//! keys at runtime through the Settings dialog.
+//!
+//! For bespoke builds (e.g., distributing to a specific client), set environment
+//! variables before `cargo build` to bake credentials into the binary.
+//! Google OAuth credentials can also be loaded at runtime from a JSON file
+//! at `~/.config/little-helper/google_oauth.json`.
 
 /// OpenAI API key (baked in at compile time, or empty for public builds).
 pub const OPENAI_API_KEY: &str = match option_env!("LITTLE_HELPER_OPENAI_KEY") {

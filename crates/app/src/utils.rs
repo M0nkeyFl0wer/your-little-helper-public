@@ -1,15 +1,27 @@
-//! Utility functions for the Little Helper app
+//! Utility functions for the Little Helper app.
 //!
-//! This module contains helper functions for path handling, settings management,
-//! and other utility operations.
+//! This module centralizes cross-cutting concerns that don't belong to a specific
+//! UI component:
+//!
+//! - **Path safety**: Expanding `~`, validating paths against allowed directories,
+//!   blocking access to sensitive locations (`.ssh`, `.aws`, `.gnupg`, etc.)
+//! - **Shell injection prevention**: Blocking command chaining operators (`;`, `&&`,
+//!   `||`, backticks, `$()`) outside of quoted strings
+//! - **Settings I/O**: Loading, saving, and migrating settings (including automatic
+//!   migration of retired model names like Gemini 1.x to current equivalents)
+//! - **Bundled tool management**: Auto-installing the Spec Kit Assistant from a
+//!   compiled-in tarball on first run
 
 use agent_host::CommandResult;
 use shared::settings::AppSettings;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// Cached regex for extracting file paths from shell commands (compiled once).
 static COMMAND_PATH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
+/// The Spec Kit Assistant tarball, embedded at compile time. Unpacked on first run
+/// into the user's config directory so Build mode works out of the box.
 const BUNDLED_SPECKIT_TGZ: &[u8] = include_bytes!("../assets/spec-kit-assistant-legacy-node.tgz");
 const BUNDLED_SPECKIT_VERSION: &str = "legacy-node-2026-02-01.1";
 
@@ -17,6 +29,10 @@ fn is_nonempty_opt(s: &Option<String>) -> bool {
     s.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false)
 }
 
+/// Auto-install or upgrade the bundled Spec Kit Assistant.
+/// Only runs if the user hasn't configured a custom path, or if they're
+/// already using the bundled version (so we can upgrade in place).
+/// Returns true if the settings were modified (caller should save).
 fn try_install_bundled_speckit(settings: &mut AppSettings) -> bool {
     let cfg_dir = match config_path().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
         Some(p) => p,
@@ -75,11 +91,14 @@ fn try_install_bundled_speckit(settings: &mut AppSettings) -> bool {
     true
 }
 
+/// Scan a command string for dangerous shell operators that could enable injection.
+/// Returns the first forbidden operator found, or None if the command is clean.
+///
+/// Allowed: pipes (`|`), simple redirects (`>`, `2>&1`)
+/// Blocked: `;`, `&&`, `||`, backticks, `$()`, heredocs (`<<`)
+///
+/// Quoted strings are skipped -- operators inside quotes are harmless.
 fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
-    // Allow pipes and simple redirects, but block multi-command chaining and substitution.
-    // This prevents common shell-injection vectors when commands are executed via a shell.
-    //
-    // Forbidden (outside quotes): ; && || ` $( ) <<
     let mut in_single = false;
     let mut in_double = false;
     let mut prev = '\0';
@@ -143,6 +162,9 @@ fn contains_forbidden_shell_ops(command: &str) -> Option<&'static str> {
     None
 }
 
+/// Strip glob wildcards from a path, returning only the concrete directory prefix.
+/// Used when validating command paths -- we need the real directory to check
+/// against allowed dirs, even if the command uses wildcards like `~/Documents/*.pdf`.
 fn strip_glob_prefix(path: &str) -> &str {
     let wildcard_pos = path.find(['*', '?', '[', ']']).unwrap_or(path.len());
     if wildcard_pos == path.len() {
@@ -170,9 +192,12 @@ fn normalize_windows_env_vars(s: &str) -> String {
     out
 }
 
+/// Check if a path touches a well-known sensitive location (SSH keys, AWS
+/// credentials, GPG keyrings, keychains, .npmrc, .env files). These are
+/// blocked regardless of the allowed-dirs setting to prevent accidental
+/// credential exposure.
 fn is_sensitive_path(path: &Path) -> bool {
     let s = path.to_string_lossy().to_lowercase();
-    // Credentials and secrets commonly stored here.
     s.contains("/.ssh/")
         || s.contains("\\\\.ssh\\\\")
         || s.contains("/.aws/")
@@ -238,7 +263,10 @@ pub fn config_path() -> Option<std::path::PathBuf> {
     })
 }
 
-/// Load settings from disk or return defaults
+/// Load settings from disk, applying migrations and bundled-tool setup.
+/// Returns `(settings, true)` if a saved config was found, or `(defaults, false)`
+/// for first-run. Also supports "seed settings" for bespoke builds -- a
+/// `seed-settings.json` next to the binary is imported and deleted on first launch.
 pub fn load_settings_or_default() -> (AppSettings, bool) {
     if let Some(path) = config_path() {
         if let Ok(contents) = std::fs::read_to_string(&path) {
@@ -396,7 +424,8 @@ pub fn save_settings(settings: &AppSettings) {
 }
 
 /// Migrate retired/outdated model names to current best equivalents.
-/// Returns true if any migration was applied.
+/// Prevents 404 errors when APIs sunset old model IDs (e.g. Gemini 1.x retired,
+/// old Claude 3.x models replaced). Returns true if any migration was applied.
 fn migrate_gemini_model(settings: &mut AppSettings) -> bool {
     let mut changed = false;
 
@@ -459,7 +488,13 @@ pub fn normalize_allowed_dir_input(input: &str) -> Option<PathBuf> {
     }
 }
 
-/// Validate a command against allowed directories
+/// Validate a command against the allowed-directory sandbox and security rules.
+/// Checks three things in order:
+/// 1. At least one allowed directory is configured
+/// 2. No forbidden shell operators (injection prevention)
+/// 3. All file paths in the command fall within allowed directories
+///
+/// Returns `Ok(())` if safe, or `Err(reason)` with a user-friendly explanation.
 pub fn validate_command_against_allowed(
     command: &str,
     allowed_dirs: &[String],

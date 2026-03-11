@@ -1,13 +1,17 @@
 //! Lightweight markdown renderer for egui chat bubbles.
 //!
-//! Handles the subset of markdown that AI models actually produce:
-//! - `# Heading` through `#### Heading`
-//! - `**bold**`
-//! - `*italic*` (single asterisk not at line start)
-//! - `- bullet` and `* bullet` list items
-//! - `[text](url)` links
-//! - `` `inline code` ``
-//! - Paragraphs separated by blank lines
+//! This is intentionally minimal -- it only handles the subset of markdown that
+//! AI models actually produce in chat responses. A full CommonMark parser would
+//! be overkill and slower. The rendering is done inline within egui's immediate
+//! mode, so each call to `render_markdown` emits widgets directly into the UI.
+//!
+//! Supported syntax:
+//! - `# Heading` through `#### Heading` (with scaled font sizes)
+//! - `**bold**` text
+//! - `- bullet` and `* bullet` list items (rendered with bullet characters)
+//! - `[text](url)` clickable hyperlinks
+//! - `` `inline code` `` with background highlight
+//! - Paragraphs separated by blank lines (rendered as spacing)
 
 use eframe::egui;
 
@@ -242,7 +246,9 @@ enum MarkerKind {
     Link, // [
 }
 
-/// Find the next inline marker in the text.
+/// Find the next inline formatting marker in the text, returning its position
+/// and kind. The caller uses this to split the string into plain text and
+/// formatted spans. Returns the marker closest to the start of the string.
 fn find_next_marker(text: &str) -> Option<(usize, MarkerKind)> {
     let mut best: Option<(usize, MarkerKind)> = None;
 

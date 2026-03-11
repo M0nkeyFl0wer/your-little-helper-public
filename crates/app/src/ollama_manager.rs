@@ -1,8 +1,14 @@
 //! Bundled Ollama lifecycle management.
 //!
-//! Finds the Ollama binary shipped alongside the app, starts it on demand,
-//! selects an appropriate model based on system RAM, and pulls the model
-//! on first run.
+//! Handles everything needed to make local AI "just work" on first launch:
+//! 1. **Find** the Ollama binary (bundled in the app, system PATH, or AppImage)
+//! 2. **Start** `ollama serve` if it's not already running
+//! 3. **Select** an appropriate model based on system RAM and GPU availability
+//! 4. **Pull** the model if it hasn't been downloaded yet
+//!
+//! The model selection is conservative on CPU-only machines -- even with 16GB RAM,
+//! it caps at 3B parameters because larger models are painfully slow without GPU
+//! acceleration. This prevents a poor first-run experience.
 
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;

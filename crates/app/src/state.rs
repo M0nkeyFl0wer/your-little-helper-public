@@ -1,7 +1,19 @@
-//! State management for the Little Helper app
+//! AI generation pipeline for the Little Helper app.
 //!
-//! This module contains AppState implementations and methods for managing
-//! application state, chat history, and async operations.
+//! This module runs on a **background thread** (spawned from `types.rs`) and
+//! communicates with the UI via two `mpsc` channels:
+//!
+//! - `tx: Sender<AiResult>` -- final result (response text, preview data, errors)
+//! - `status_tx: Sender<String>` -- live progress updates ("Searching...", "Running: ls")
+//!
+//! The pipeline is a multi-turn agentic loop:
+//! 1. Send the conversation to the LLM via `ProviderRouter`
+//! 2. Parse the response for action tags (`<search>`, `<command>`, `<skill>`)
+//! 3. Execute safe actions automatically; queue dangerous ones for user approval
+//! 4. Feed results back into the conversation and loop (up to `max_iterations`)
+//! 5. If iterations are exhausted, ask the LLM for a summary of what it found
+//!
+//! The entire pipeline is wrapped in `Abortable` so the user can cancel mid-flight.
 
 use crate::types::*;
 use crate::utils::*;
@@ -15,10 +27,16 @@ use futures::future::{AbortRegistration, Abortable};
 use shared::skill::{Mode, SkillContext, SkillInput};
 use std::sync::Arc;
 
-/// Run AI generation in background thread (non-blocking)
+/// Run the multi-turn AI generation loop in a background thread (non-blocking).
 ///
-/// `status_tx` sends live status strings back to the UI (e.g. "Searching the web…").
+/// This is the core agentic pipeline. It creates its own Tokio runtime because
+/// the egui main thread is synchronous -- we need async for LLM API calls, web
+/// searches, and command execution.
+///
+/// `status_tx` sends live status strings back to the UI (e.g. "Searching the web...").
 /// The UI polls this channel each frame to update the thinking indicator.
+///
+/// `abort_reg` allows the user to cancel the operation mid-flight via the Stop button.
 #[allow(clippy::too_many_arguments)]
 pub fn run_ai_generation(
     messages: Vec<ApiChatMessage>,
@@ -63,7 +81,9 @@ pub fn run_ai_generation(
         }
     };
 
-    // Fast Mode Logic: Use faster models for Find/Fix or simple queries
+    // Fast Mode Logic: Use cheaper/faster models for Find/Fix/Content since these
+    // modes need quick responses and don't require deep reasoning. Research/Build/Data
+    // keep the full-power model for multi-step synthesis.
     let mut model_settings = settings.clone();
     if matches!(current_mode, Mode::Find | Mode::Fix | Mode::Content) {
         model_settings.openai_model = model_settings.openai_fast_model.clone();
@@ -74,17 +94,21 @@ pub fn run_ai_generation(
     let router = ProviderRouter::new(model_settings);
     let mut session_state = SessionState::new();
 
-    // Pre-compile regexes
+    // Pre-compile regexes for parsing structured action tags from LLM output.
+    // The LLM is instructed to use these XML-like tags to request tool use.
     let search_re = regex::Regex::new(r"(?s)<search>(.*?)</search>").unwrap();
+    // Accept multiple tag names because different models vary in what they emit.
     let cmd_re =
         regex::Regex::new(r"(?s)<(?:command|request|cmd|run)>(.*?)</(?:command|request|cmd|run)>")
             .unwrap();
-    // Also catch markdown code blocks as commands (AI keeps outputting these instead of tags)
+    // Fallback: catch markdown code blocks as commands (models often emit these
+    // instead of proper XML tags despite system prompt instructions).
     let md_cmd_re = regex::Regex::new(r"(?s)```(?:bash|sh|shell|zsh)?\n(.*?)```").unwrap();
     let skill_re = regex::Regex::new(r"(?s)<skill id=[\x22'](.*?)[\x22']>(.*?)</skill>").unwrap();
 
-    // Heuristic: detect when the model wrote command-looking text but didn't use tags.
-    // Used for a one-shot "format repair" retry.
+    // Heuristic: detect when the model wrote command-looking text (e.g. "cd ~/foo")
+    // but forgot to wrap it in tags. Triggers a one-shot "format repair" retry
+    // where we ask the model to re-emit with proper tags.
     let commandish_re = regex::Regex::new(
         r"(?mi)^(?:\$\s*)?(?:cd|ls|rg|grep|find|cat|head|tail|git|cargo|npm|bun|pnpm|yarn|python|python3|pip|pip3)\b.*$",
     )
@@ -110,8 +134,9 @@ pub fn run_ai_generation(
         let mut llm_calls: u32 = 0;
         let mut llm_duration_ms: u64 = 0;
 
-        // Loop for multi-turn interactions.
-        // Research defaults to a shorter "quick" loop unless the user opts into Deep.
+        // Multi-turn agentic loop: the LLM can request searches/commands, get results,
+        // and iterate. Research Quick caps at 2 turns to keep latency low; other modes
+        // get up to 5 turns for deeper tool-use chains.
         let max_iterations: u32 = match (current_mode, research_depth) {
             (Mode::Research, ResearchDepth::Quick) => 2,
             _ => 5,
@@ -346,7 +371,9 @@ pub fn run_ai_generation(
                 }
             }
 
-            // Run safe commands automatically; queue the rest for approval.
+            // Safety-tiered command execution: safe commands run automatically, risky
+            // commands get queued for user approval, and blocked commands are rejected.
+            // Only one safe command runs per iteration to keep the loop predictable.
             let mut safe_command_executed = false;
             for cmd in &commands {
                 if !allow_terminal {
@@ -463,7 +490,8 @@ pub fn run_ai_generation(
             }
         }
 
-        // Ran out of iterations — ask the model to summarize what it found
+        // Ran out of iterations -- ask the model to summarize what it found so far.
+        // This prevents the user from seeing a raw "tool output" as the final response.
         let _ = status_tx.send("Summarizing results...".to_string());
         msgs.push(ApiChatMessage {
             role: "user".to_string(),
@@ -603,12 +631,17 @@ fn truncate_for_status(s: &str) -> String {
     }
 }
 
+/// Parsed metadata from the first web search result for the preview panel.
 struct FirstWebResult {
     url: String,
     title: Option<String>,
     snippet: Option<String>,
 }
 
+/// Extract the first URL, title, and description from the web search executor's
+/// text output. The format is numbered entries with indented description lines
+/// followed by "URL: https://...". This is fragile but matches the current
+/// executor output format.
 fn parse_first_web_result(output: &str) -> Option<FirstWebResult> {
     // Executor formats results like:
     // 1. Title

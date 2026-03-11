@@ -1,7 +1,15 @@
-//! Preview Panel component for the Interactive Preview Companion feature.
+//! Preview Panel -- the right-side companion that shows contextual content.
 //!
-//! This module provides the PreviewPanel struct which manages the display of
-//! contextual preview content including files, web pages, images, and ASCII art.
+//! This panel serves multiple roles depending on what the app is doing:
+//! - **Idle**: Shows mode introduction art, context meter, and quick-action prompts
+//! - **File preview**: Renders text, CSV, JSON, HTML, images, and PDFs inline
+//!   using the `viewers` crate (each file type has a dedicated viewer)
+//! - **Web preview**: Shows URL metadata (title, OG image, snippet) from search results
+//! - **Command output**: Displays terminal output with syntax highlighting
+//! - **Processing**: Shows Matrix rain animation while the AI is thinking
+//!
+//! The panel state is saved per-mode so switching between Find/Fix/Research
+//! preserves what each mode was showing.
 
 use agent_host::get_mode_introduction;
 use anyhow::Result;

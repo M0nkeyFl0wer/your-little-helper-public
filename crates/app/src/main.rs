@@ -1,3 +1,20 @@
+//! Little Helper -- desktop AI assistant application.
+//!
+//! This is the main entry point and UI loop for the app, built on egui/eframe.
+//! The architecture follows an immediate-mode GUI pattern:
+//!
+//! - **AppState** (in `types.rs`) holds all mutable state in a single struct,
+//!   protected by a `parking_lot::Mutex` so background threads can't race the UI.
+//! - **eframe::App::update** (this file) runs every frame: it polls async channels
+//!   for AI responses, command results, and web previews, then renders the full UI.
+//! - **state.rs** contains the AI generation pipeline that runs on a background
+//!   thread and communicates back via `mpsc` channels.
+//!
+//! The app supports multiple "modes" (Find, Fix, Research, Data, Content, Build),
+//! each with its own chat history, system prompt, and preview state. Users can
+//! switch modes without losing context -- drafts and preview content are saved
+//! per-mode and restored on switch.
+
 #![allow(dead_code)]
 
 use agent_host::CommandResult;
@@ -11,6 +28,8 @@ use std::time::Duration;
 
 use crate::utils::{ensure_allowed_dirs, save_settings};
 
+/// Try to read text from the system clipboard, returning None on failure or empty content.
+/// Used by the Settings dialog to offer a "paste from clipboard" button for API keys.
 fn try_read_clipboard_text() -> Option<String> {
     let mut clipboard = arboard::Clipboard::new().ok()?;
     let text = clipboard.get_text().ok()?;
@@ -22,6 +41,9 @@ fn try_read_clipboard_text() -> Option<String> {
     }
 }
 
+/// Rebuild the provider preference list with the given provider first.
+/// Always keeps "local" (Ollama) as a fallback so the app can degrade
+/// gracefully when cloud keys are missing or quota is exhausted.
 pub(crate) fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &str) {
     let mut out: Vec<String> = Vec::new();
 
@@ -40,43 +62,48 @@ pub(crate) fn set_primary_provider_preference(pref: &mut Vec<String>, primary: &
     *pref = out;
 }
 
-// Default mascot image (boss's dog!)
+/// Default mascot image embedded at compile time (displayed as a chat wallpaper).
 pub(crate) const DEFAULT_MASCOT: &[u8] = include_bytes!("../assets/default_mascot.png");
 
-// Pre-loaded secrets (gitignored secrets.rs, or empty for CI builds)
+// Compile-time secrets (gitignored). Empty strings in public/CI builds;
+// bespoke builds bake in values via environment variables at build time.
 #[allow(dead_code)]
 mod secrets;
-// Support contact info (gitignored - your personal contact stays private)
+// Support contact info (gitignored -- keeps personal contact details private).
 #[allow(dead_code)]
 mod support_info;
 use support_info::{SUPPORT_BUTTON_TEXT, SUPPORT_LINK};
 
-// Bundled Ollama lifecycle management
+/// Bundled Ollama lifecycle: find binary, start server, pick model by RAM tier.
 pub(crate) mod ollama_manager;
 
-// Interactive Preview Companion modules
 mod ascii_art;
 mod modals;
 #[allow(dead_code)]
 mod onboarding;
+/// Right-side preview companion panel (files, web results, mode intros, ASCII art).
 mod preview_panel;
+/// Persistent thread history (saved to disk, searchable, per-mode).
 mod thread_history;
 
-// Campaign context loader
+/// Campaign context loader -- injects domain documents and personas into prompts.
 mod context;
 
-// Types module - core type definitions
+/// Core type definitions: AppState, ChatMessage, AiResult, screen/mode enums.
 mod types;
 pub use types::*;
 
-// Utils module - helper functions
+/// Lightweight markdown renderer for chat bubbles (headings, bold, links, code).
 mod simple_md;
+/// Helper functions: path expansion, settings I/O, command validation, model migration.
 mod utils;
 
+/// AI generation pipeline (runs on a background thread, communicates via channels).
 mod state;
 pub use state::*;
 
-/// Extract file paths from text
+/// Extract file paths from text for making them clickable in chat bubbles.
+/// Only returns paths that actually exist on disk and fall within allowed directories.
 fn extract_paths(text: &str, allowed_dirs: &[String]) -> Vec<PathBuf> {
     use std::sync::OnceLock;
     static PATH_RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -144,7 +171,8 @@ fn preload_openai_enabled() -> bool {
 // config_path, load_settings_or_default, save_settings, ensure_allowed_dirs
 // are all defined in crate::utils and imported above.
 
-/// Clean up AI response by removing action tags
+/// Clean up AI response by stripping internal action tags (preview, search, command)
+/// that the user should never see. Uses OnceLock to compile regexes only once.
 fn clean_ai_response(response: &str) -> String {
     use std::sync::OnceLock;
     static RE_PREVIEW: OnceLock<regex::Regex> = OnceLock::new();
@@ -166,7 +194,9 @@ fn clean_ai_response(response: &str) -> String {
     cleaned.trim().to_string()
 }
 
-/// Format error message with helpful troubleshooting info
+/// Format error messages with user-friendly troubleshooting hints.
+/// Classifies errors (auth, rate-limit, network, quota) and suggests concrete next steps
+/// so non-technical users know what to do instead of seeing raw HTTP status codes.
 fn format_error_message(error: &str) -> String {
     let error_lower = error.to_lowercase();
 
@@ -229,6 +259,9 @@ fn format_error_message(error: &str) -> String {
     )
 }
 
+/// Application entry point. Sets up logging, configures the native window,
+/// and hands control to the eframe event loop. All state is initialized
+/// lazily inside `AppState::default()` (including background Ollama startup).
 fn main() -> eframe::Result<()> {
     init_logging();
     let options = eframe::NativeOptions {
@@ -249,6 +282,9 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// Initialize structured logging to a persistent file under the app's cache directory.
+/// GUI apps often lack a visible terminal, so file-based logging is essential for
+/// post-mortem debugging. Falls back to stderr if the log file can't be created.
 fn init_logging() {
     use std::io::Write;
 
@@ -291,15 +327,28 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter("info").init();
 }
 
+/// Top-level eframe application wrapper. Holds the shared AppState behind a
+/// mutex so that background threads (AI generation, command execution, Ollama
+/// startup) can safely communicate results back to the UI thread via channels.
 struct LittleHelperApp {
     state: Arc<Mutex<AppState>>,
 }
 
 impl eframe::App for LittleHelperApp {
+    /// Main UI loop -- called every frame by eframe.
+    ///
+    /// The flow each frame is:
+    /// 1. Poll all async channels (AI response, command results, web previews, Ollama, OAuth)
+    /// 2. Handle mode switches (save/restore per-mode drafts, preview state, show intros)
+    /// 3. Apply theme (dark/light mode with accessibility-enhanced focus states)
+    /// 4. Render panels: top header with mode buttons, right preview panel, left thread
+    ///    history, and center chat area with input bar
+    /// 5. Handle modals (password dialog for sudo, settings dialog)
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut s = self.state.lock();
 
-        // Poll for AI response and live status updates (non-blocking)
+        // Poll for AI response and live status updates (non-blocking).
+        // These drain mpsc channels without blocking the UI thread.
         s.poll_ai_status();
         s.poll_ai_response();
         s.poll_command_result();
