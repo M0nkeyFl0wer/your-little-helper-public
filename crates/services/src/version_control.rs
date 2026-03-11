@@ -67,9 +67,12 @@ impl VersionControlService {
         })
     }
 
-    /// Save a new version of a file
+    /// Save a new version of a file.
+    ///
+    /// Copies the file into the hidden `.little-helper/versions` repo, stages it,
+    /// and creates a commit. The returned [`FileVersion`] contains a user-friendly
+    /// description and the internal commit ref (hidden from the UI).
     pub fn save_version(&self, file_path: &Path) -> Result<FileVersion> {
-        // Get relative path from root
         let rel_path = file_path.strip_prefix(&self.root).unwrap_or(file_path);
 
         // Copy file to version control directory
@@ -166,11 +169,15 @@ impl VersionControlService {
         Ok(versions)
     }
 
-    /// Restore a file to a previous version
+    /// Restore a file to a previous version.
+    ///
+    /// Safety: the current file content is saved as a new version first,
+    /// so the user can always "undo" a restore. The version's commit ref
+    /// is used to locate the blob in the hidden git repo.
     pub fn restore_version(&self, file_path: &Path, version: &FileVersion) -> Result<()> {
         let rel_path = file_path.strip_prefix(&self.root).unwrap_or(file_path);
 
-        // First save current state as a new version
+        // First save current state as a new version so restore is reversible
         if file_path.exists() {
             self.save_version(file_path)?;
         }

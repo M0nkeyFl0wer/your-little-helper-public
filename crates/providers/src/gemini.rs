@@ -1,3 +1,12 @@
+//! Google Gemini (Generative Language API) client.
+//!
+//! Gemini has several quirks that this module handles:
+//! - System messages go in a separate `system_instruction` field.
+//! - The `contents` array must start and end with role "user".
+//! - Consecutive same-role messages must be merged (no two "user" in a row).
+//! - API keys go in the URL query string; OAuth tokens go in the `Authorization` header.
+//! - Transient 429/503 errors are retried with exponential backoff (up to 3 retries).
+
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -64,6 +73,8 @@ pub struct GeminiClient {
     http: Client,
     auth_token: String,
     model: String,
+    /// Determines auth strategy: `true` puts token in Authorization header,
+    /// `false` puts API key in the URL query parameter.
     use_oauth: bool,
 }
 

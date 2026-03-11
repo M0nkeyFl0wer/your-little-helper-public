@@ -1,3 +1,8 @@
+//! OpenAI-compatible chat completions client.
+//!
+//! Also used for any provider exposing an OpenAI-compatible API (Kimi/Moonshot,
+//! OpenRouter, Together, etc.) by setting `openai_base_url` in settings.
+
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -7,6 +12,7 @@ use std::env;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+/// Shared HTTP client -- keeps TCP/TLS connections alive across requests.
 static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(120))
@@ -41,12 +47,15 @@ pub struct OpenAIClient {
     http: Client,
     auth_token: String,
     model: String,
+    /// Base URL for the API. Defaults to `https://api.openai.com` but can be
+    /// overridden for OpenAI-compatible third-party endpoints.
     base_url: String,
 }
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 
 impl OpenAIClient {
+    /// Create a client using the `OPENAI_API_KEY` environment variable.
     pub fn new(model: &str) -> Result<Self> {
         let key = env::var("OPENAI_API_KEY").map_err(|_| anyhow!("OPENAI_API_KEY not set"))?;
         Ok(Self {
@@ -57,6 +66,9 @@ impl OpenAIClient {
         })
     }
 
+    /// Create a client from persisted auth config, with optional custom base URL.
+    ///
+    /// Auth priority: API key > OAuth token > `OPENAI_API_KEY` env var.
     pub fn from_auth(model: &str, auth: &ProviderAuth, base_url: Option<&str>) -> Result<Self> {
         let auth_token = if let Some(api_key) = &auth.api_key {
             api_key.clone()

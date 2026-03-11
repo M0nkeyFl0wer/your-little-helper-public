@@ -1,14 +1,17 @@
-//! Context Token Manager
+//! Context Token Manager -- token budget enforcement for LLM context windows.
 //!
-//! Manages token budgets and context window constraints for AI conversations.
-//! Prevents context bloat and helps users understand token costs.
+//! Different models have wildly different context limits (8k for GPT-4 vs
+//! 200k for Claude), and context bloat is a common failure mode: users load
+//! many documents but only reference a few, wasting expensive tokens.
 //!
-//! Strategy:
-//! - Monitor cumulative token usage per conversation
-//! - Warn when approaching limits
-//! - Suggest context pruning strategies
-//! - Track which documents are actually being referenced
-//! - Auto-summarize old context to save tokens
+//! This module tracks per-document token costs, reference counts, and
+//! recency to provide:
+//! - **Status tiers**: Healthy / ApproachingLimit / Warning / Critical.
+//! - **Optimisation suggestions**: remove unused docs, summarise stale
+//!   ones, or switch to a larger-context model.
+//! - **LRU auto-pruning**: when the Critical threshold is hit, the least
+//!   valuable documents (fewest references + oldest access) are evicted
+//!   automatically to bring usage back under the target budget.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

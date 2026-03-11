@@ -1,4 +1,12 @@
-//! CSV/TSV viewer with table display, sorting, and filtering
+//! CSV/TSV viewer with interactive table display, column sorting, and row filtering.
+//!
+//! Data is loaded entirely into memory as `Vec<Vec<String>>`. Sorting and
+//! filtering operate on an index array (`filtered_indices`) rather than
+//! rearranging the data itself, which keeps re-sort cheap and preserves
+//! the original row order.
+//!
+//! For performance, the UI caps rendered rows at 1000. Larger files are
+//! still fully searchable -- only rendering is limited.
 
 use anyhow::Result;
 use std::fs::File;
@@ -13,6 +21,8 @@ pub struct CsvViewer {
     sort_column: Option<usize>,
     sort_ascending: bool,
     filter_text: String,
+    /// Indices into `rows` after applying filter + sort. This avoids
+    /// copying row data when the user changes sort order or filter text.
     filtered_indices: Vec<usize>,
 }
 
@@ -114,6 +124,10 @@ impl CsvViewer {
         self.filtered_indices.len()
     }
 
+    /// Rebuild the filtered/sorted index from scratch.
+    ///
+    /// Called whenever filter text or sort column changes. Filter is a
+    /// case-insensitive substring match across all cells in a row.
     fn update_filtered_indices(&mut self) {
         let filter_lower = self.filter_text.to_lowercase();
 
@@ -131,13 +145,12 @@ impl CsvViewer {
                 .collect()
         };
 
-        // Apply sorting
         if let Some(col) = self.sort_column {
             self.filtered_indices.sort_by(|&a, &b| {
                 let val_a = self.rows[a].get(col).map(|s| s.as_str()).unwrap_or("");
                 let val_b = self.rows[b].get(col).map(|s| s.as_str()).unwrap_or("");
 
-                // Try numeric comparison first
+                // Numeric-aware sort: parse as f64 first, fall back to string comparison
                 let cmp = match (val_a.parse::<f64>(), val_b.parse::<f64>()) {
                     (Ok(num_a), Ok(num_b)) => num_a
                         .partial_cmp(&num_b)

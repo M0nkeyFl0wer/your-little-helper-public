@@ -1,4 +1,9 @@
-//! Text/Code viewer with optional syntax highlighting
+//! Text/Code viewer with line numbers and zoom support.
+//!
+//! Renders plain text and source code in a monospace font with optional
+//! line numbers and word wrap. Implements the [`Zoomable`] trait for
+//! Ctrl+scroll zoom. Syntax highlighting is not yet implemented but the
+//! structure is ready for it (the content is rendered via `LayoutJob`).
 
 use anyhow::Result;
 use std::fs;

@@ -1,3 +1,10 @@
+//! Ollama local model client.
+//!
+//! Talks to a locally-running Ollama instance via its HTTP chat API.
+//! Base URL defaults to `http://127.0.0.1:11434` but can be overridden
+//! with the `OLLAMA_BASE_URL` environment variable. Streaming is disabled
+//! (`stream: false`) so we get a single response object.
+
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -6,6 +13,7 @@ use std::env;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+/// Shared HTTP client -- keeps TCP/TLS connections alive across requests.
 static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(120))

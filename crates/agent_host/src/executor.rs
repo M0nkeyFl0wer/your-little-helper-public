@@ -1,7 +1,25 @@
-//! Command executor with safety classification and structured output
+//! Command executor with safety classification, sandboxing, and structured output.
 //!
-//! This module handles running shell commands on behalf of the AI agent,
-//! with safety checks, confirmation requirements, and user-friendly output.
+//! This is the most security-sensitive module in the crate. Every shell command
+//! the AI proposes passes through a multi-layer gauntlet before execution:
+//!
+//! 1. **Secret scanning** -- regex-based detection of AWS keys, GitHub PATs,
+//!    Slack tokens, OpenAI keys, and PEM private keys. Matched commands are
+//!    rejected immediately to prevent credential leakage.
+//!
+//! 2. **Path sandbox validation** -- each path-like token in the command is
+//!    resolved and checked against the user's allowed directories.
+//!
+//! 3. **Danger classification** -- commands are bucketed into a five-tier
+//!    safety model (Safe, NeedsConfirmation, Dangerous, NeedsSudo, NeedsAuth,
+//!    Blocked) based on static allowlists / blocklists.
+//!
+//! 4. **2FA gate** -- destructive commands (rm, chmod, kill, etc.) require an
+//!    active TOTP session before the executor will proceed.
+//!
+//! On Windows, the executor transparently translates common Unix commands
+//! (ls, cat, grep, find, etc.) to their native equivalents so the LLM does
+//! not need to be perfectly platform-aware.
 
 use anyhow::Result;
 use regex::Regex;
@@ -16,7 +34,9 @@ use tokio::process::Command;
 use crate::security::{PathSandbox, SecurityContext};
 use std::sync::Arc;
 
-/// Agent Session State (Virtual Environment)
+/// Virtual session environment for the agent. Tracks a working directory,
+/// environment variables, and command history independently of the host OS
+/// shell, so the agent can `cd` and `export` without mutating the real process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     /// Virtual environment variables for the agent (not OS envs)
@@ -61,7 +81,11 @@ impl SessionState {
     }
 }
 
-/// Danger level for commands
+/// Five-tier safety classification for shell commands.
+///
+/// The tiers are checked in order from most to least restrictive:
+/// Blocked -> NeedsAuth -> NeedsSudo -> Dangerous -> NeedsConfirmation -> Safe.
+/// Unknown commands default to `NeedsConfirmation` to stay conservative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DangerLevel {
     /// Safe read-only commands (ls, cat, grep, etc.)
@@ -72,9 +96,9 @@ pub enum DangerLevel {
     Dangerous,
     /// Commands that require elevated privileges
     NeedsSudo,
-    /// Commands that require 2FA authentication
+    /// Commands that require an active 2FA session
     NeedsAuth,
-    /// Blocked commands that should never run
+    /// Permanently blocked patterns (fork bombs, `rm -rf /`, etc.)
     Blocked,
 }
 
@@ -103,7 +127,8 @@ pub struct CommandResult {
     pub needed_auth: bool,
 }
 
-/// Safe commands that can run without confirmation
+/// Allowlist of read-only commands that can run without user confirmation.
+/// Matched by prefix: `cmd_lower.starts_with(entry)`.
 const SAFE_COMMANDS: &[&str] = &[
     // === UNIX/LINUX COMMANDS ===
     // File listing and info (read-only)
@@ -336,11 +361,12 @@ const NEEDS_AUTH_COMMANDS: &[&str] = &[
     "kill", "killall", "pkill",
 ];
 
-/// Translate common Unix commands to Windows equivalents.
+/// Best-effort translation of Unix commands to Windows equivalents.
 ///
-/// LLMs frequently suggest Unix commands even when prompted for Windows.
-/// Rather than failing silently, we translate the most common ones so the
-/// experience works out of the box. This only runs on Windows builds.
+/// LLMs frequently emit Unix commands regardless of platform prompts.
+/// Instead of erroring out, we translate the most common patterns so the
+/// user experience degrades gracefully. Only compiled on Windows targets.
+/// Unrecognised commands pass through unchanged.
 #[cfg(windows)]
 fn translate_unix_to_windows(cmd: &str) -> String {
     let trimmed = cmd.trim();
@@ -535,7 +561,10 @@ fn translate_unix_to_windows(cmd: &str) -> String {
     }
 }
 
-/// Classify a command by danger level
+/// Classify a command into a safety tier by matching against the static
+/// allowlists / blocklists. The check order ensures the most restrictive
+/// category wins when a command matches multiple lists (e.g. `rm` appears
+/// in both DANGEROUS and NEEDS_AUTH).
 pub fn classify_command(cmd: &str) -> DangerLevel {
     let cmd_lower = cmd.to_lowercase();
     let cmd_trimmed = cmd_lower.trim();
@@ -591,7 +620,12 @@ pub fn classify_command(cmd: &str) -> DangerLevel {
     DangerLevel::NeedsConfirmation
 }
 
-/// Execute a command and return structured result
+/// Execute a shell command within the agent's virtual session, applying
+/// the full security pipeline (secret scan -> sandbox check -> danger
+/// classification -> 2FA gate) before spawning the process.
+///
+/// Internal commands (`cd`, environment variable mutations) are handled
+/// in-process to maintain the virtual session state without a real shell.
 pub async fn execute_command(
     cmd: &str,
     timeout_secs: u64,
@@ -865,11 +899,12 @@ pub async fn execute_command(
     }
 }
 
-/// Check if a command contains potential secrets
+/// Scan a command string for accidentally pasted credentials.
+///
+/// Returns `Some(reason)` if a known secret pattern is detected, which
+/// causes the executor to reject the command before it reaches a shell.
+/// Uses `LazyLock` to compile each regex exactly once.
 fn check_for_secrets(cmd: &str) -> Option<String> {
-    // Basic heuristics to catch common accidental pastes.
-    // NOTE: these regexes must never be fallible at runtime.
-
     static RE_AWS_AKID: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid AWS AKID regex"));
     static RE_GITHUB_PAT: LazyLock<Regex> =
@@ -1222,8 +1257,11 @@ pub fn needs_elevation(result: &CommandResult) -> bool {
         || result.stderr.contains("must be root")
 }
 
-/// Web search using Brave Search API (free tier: 2000 queries/month).
-/// Falls back to Wikipedia API if no Brave key is set.
+/// Web search with automatic provider fallback.
+///
+/// Tries Brave Search API first (2000 free queries/month) for full web
+/// results. If `BRAVE_SEARCH_API_KEY` is not set, falls back to the
+/// Wikipedia search API which always works without authentication.
 pub async fn web_search(query: &str) -> Result<CommandResult> {
     // Try Brave Search API first (if key is available)
     if let Ok(api_key) = std::env::var("BRAVE_SEARCH_API_KEY") {

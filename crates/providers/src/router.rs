@@ -1,3 +1,10 @@
+//! Provider router -- tries LLM providers in preference order with automatic fallback.
+//!
+//! The router is the single entry point the rest of the app uses to call an LLM.
+//! It iterates through `provider_preference` (e.g., `["openai", "anthropic", "local"]`),
+//! attempting each until one succeeds. On fallback, the metadata records which provider
+//! failed and why, so the UI can surface a non-blocking notice to the user.
+
 use crate::anthropic::AnthropicClient;
 use crate::gemini::GeminiClient;
 use crate::ollama::OllamaClient;
@@ -7,6 +14,8 @@ use shared::agent_api::ChatMessage;
 use shared::settings::ModelProvider;
 use std::time::Instant;
 
+/// Metadata about a completed generation: which provider answered, how long
+/// it took, and whether a fallback occurred.
 #[derive(Debug, Clone)]
 pub struct GenerationMeta {
     pub provider: String,
@@ -18,12 +27,19 @@ pub struct GenerationMeta {
     pub fallback_error: Option<String>,
 }
 
+/// The full response from a generation call, pairing the LLM output with
+/// provider metadata for diagnostics and UI display.
 #[derive(Debug, Clone)]
 pub struct GenerationResponse {
     pub text: String,
     pub meta: GenerationMeta,
 }
 
+/// Routes LLM requests to the best available provider.
+///
+/// Created once from [`ModelProvider`] config and reused for the app lifetime.
+/// Each call to [`generate`](ProviderRouter::generate) clones messages so the
+/// router can retry on a different provider without consuming the input.
 pub struct ProviderRouter {
     config: ModelProvider,
 }
@@ -33,10 +49,17 @@ impl ProviderRouter {
         Self { config }
     }
 
+    /// Convenience wrapper that discards metadata and returns just the text.
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
         Ok(self.generate_with_meta(messages).await?.text)
     }
 
+    /// Generate a response, returning both the text and provider metadata.
+    ///
+    /// Walks `provider_preference` in order. Each provider is instantiated
+    /// fresh (they are lightweight -- they share a `LazyLock` HTTP client pool).
+    /// If the primary provider fails, the error is captured in `GenerationMeta`
+    /// so the UI can show "answered by X (Y was unavailable)".
     pub async fn generate_with_meta(
         &self,
         messages: Vec<ChatMessage>,

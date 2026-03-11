@@ -1,6 +1,9 @@
-//! Build Mode Skills - Project creation and spec-driven development
+//! Build Mode Skills -- spec-driven project creation and implementation.
 //!
-//! Integrates with spec-kit-assistant for structured project workflows.
+//! Integrates with the spec-kit-assistant workflow:
+//! `scaffold -> init -> implement -> next_task`, guiding users from a
+//! rough idea through specification, planning, and incremental
+//! task-by-task implementation.
 
 mod rust_spec;
 pub mod spec_tracker;

@@ -1,7 +1,14 @@
-//! Mode-specific agent prompts for the Interactive Preview Companion feature.
+//! Mode-specific system prompt construction for the Interactive Preview Companion.
 //!
-//! This module provides system prompts tailored to each mode (Find, Fix, Research,
-//! Data, Content) with distinct personalities, expertise, and capabilities.
+//! Each agent mode (Find, Fix, Research, Data, Content, Build) gets a
+//! distinct personality, expertise list, tone, and toolset. The
+//! `get_system_prompt()` function assembles these pieces together with
+//! runtime information (OS, user name, permissions, memory summary) into
+//! the final system message sent to the LLM.
+//!
+//! Design note: prompts are defined as `static` `ModePrompt` structs
+//! rather than generated at runtime so they can be referenced cheaply
+//! from the registry and serialised into introduction panels.
 
 use std::path::PathBuf;
 
@@ -38,7 +45,9 @@ pub fn get_mode_prompt(mode: &str) -> &'static ModePrompt {
     }
 }
 
-/// Get the complete system prompt for a mode
+/// Assemble the full system prompt for a mode by combining the agent's
+/// personality, OS context, permission-gated capability list, security
+/// protocol, skill instructions, and optional memory summary.
 pub fn get_system_prompt(
     mode: &str,
     user_name: &str,

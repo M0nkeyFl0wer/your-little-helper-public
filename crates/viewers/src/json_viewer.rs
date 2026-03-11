@@ -1,4 +1,9 @@
-//! JSON viewer with tree view and raw mode
+//! JSON viewer with collapsible tree view and raw text mode.
+//!
+//! Parses JSON into `serde_json::Value` and renders a recursive tree.
+//! Nodes are tracked by their JSON path string (e.g., `$.data[0].name`)
+//! in `expanded_paths` to remember which objects/arrays the user has
+//! opened. Leaf values are color-coded by type (strings, numbers, booleans).
 
 use anyhow::Result;
 use serde_json::Value;
@@ -12,6 +17,8 @@ pub struct JsonViewer {
     value: Option<Value>,
     raw_content: String,
     show_raw: bool,
+    /// Tracks which object/array nodes are expanded, keyed by JSON path
+    /// (e.g., `$`, `$.data`, `$.data[0]`). Root (`$`) is expanded by default.
     expanded_paths: HashSet<String>,
 }
 

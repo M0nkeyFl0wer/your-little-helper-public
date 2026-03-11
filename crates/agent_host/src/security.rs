@@ -1,15 +1,29 @@
-//! Security module for command execution sandboxing.
+//! Security primitives for command execution sandboxing and session authentication.
 //!
-//! Provides `PathSandbox` to enforce file system access restrictions.
+//! Two independent mechanisms live here:
+//!
+//! - **`PathSandbox`** -- restricts all file-touching commands to a set of
+//!   user-approved directories.  Every path token in a command is resolved
+//!   and checked *before* the shell is spawned, preventing directory
+//!   traversal even when the LLM crafts creative paths.
+//!
+//! - **`SecurityContext`** -- time-boxed TOTP session gate.  Destructive
+//!   commands (rm, chmod, kill, ...) require an active authentication
+//!   window before the executor will proceed. The window expires after a
+//!   configurable timeout (default 15 minutes) to limit blast radius.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Context for tracking authentication state (2FA)
+/// Tracks whether a TOTP verification has occurred recently enough to
+/// permit destructive operations. Uses an atomic timestamp so the check
+/// is lock-free and safe to share across async tasks.
 #[derive(Debug)]
 pub struct SecurityContext {
-    last_auth_time: AtomicI64, // Timestamp in seconds, 0 = never
+    /// Unix epoch seconds of last successful verification; 0 means never.
+    last_auth_time: AtomicI64,
+    /// How long a successful verification remains valid.
     auth_timeout: Duration,
 }
 
@@ -46,7 +60,10 @@ impl SecurityContext {
     }
 }
 
-/// A sandbox that restricts file access to specific allowed directories.
+/// Filesystem access guard. All allowed directories are canonicalised at
+/// construction time so that symlink tricks and `..` traversals cannot
+/// escape the sandbox at check time. An empty `allowed_dirs` list means
+/// *everything* is blocked -- fail-closed by design.
 #[derive(Debug, Clone)]
 pub struct PathSandbox {
     allowed_dirs: Vec<PathBuf>,
@@ -97,17 +114,12 @@ impl PathSandbox {
             .any(|allowed| canonical_path.starts_with(allowed))
     }
 
-    /// Scan a command string for potential path violations.
-    ///
-    /// This is a heuristic scan. It splits by whitespace and treats any token
-    /// containing a path separator as a candidate path.
-    ///
-    /// Returns:
-    /// - Ok(()) if all detected paths are safe
-    /// - Err(String) with a message describing the violation
+    /// Heuristic scan of a command string for path tokens that escape the
+    /// sandbox. Not a full shell parser -- it splits on whitespace, skips
+    /// flag tokens, and treats anything with a path separator (or `cd`
+    /// arguments) as a candidate path to validate. This catches the vast
+    /// majority of real-world commands without needing a proper shell AST.
     pub fn validate_command(&self, cmd: &str, cwd: &Path) -> Result<(), String> {
-        // Simple tokenizer - smart enough for basic shell commands
-        // Ignores flags (--foo, -f)
         let tokens: Vec<&str> = cmd.split_whitespace().collect();
 
         let mut prev: Option<&str> = None;

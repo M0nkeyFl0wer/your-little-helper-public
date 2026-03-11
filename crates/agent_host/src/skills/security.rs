@@ -1,3 +1,12 @@
+//! TOTP-based two-factor authentication skill.
+//!
+//! Provides `setup_2fa` (generate secret + QR code) and `verify_2fa`
+//! (validate a 6-digit code) actions. The TOTP secret is stored in the
+//! OS keyring via the `keyring` crate, so it never touches disk in
+//! plaintext. On successful verification the shared `SecurityContext`
+//! is marked as authenticated, which unlocks destructive commands in
+//! the executor for the configured timeout window.
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -9,7 +18,7 @@ use crate::skills::common::CommonInfrastructure;
 use crate::skills::{Skill, SkillContext, SkillInput};
 use shared::skill::{Mode, PermissionLevel, SkillOutput};
 
-/// Skill for managing 2FA Security
+/// 2FA management skill (setup and verification).
 pub struct SecuritySkill {
     infra: Arc<CommonInfrastructure>,
 }

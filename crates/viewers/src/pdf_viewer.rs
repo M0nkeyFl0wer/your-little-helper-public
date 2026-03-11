@@ -38,9 +38,13 @@ impl PdfViewer {
         Ok(())
     }
 
+    /// Best-effort PDF metadata extraction without a full PDF parser.
+    ///
+    /// Scans raw bytes for PDF version, approximate page count (by counting
+    /// `/Type /Page` objects minus `/Type /Pages` containers), and the
+    /// `/Title` metadata field. This is intentionally crude -- a proper
+    /// PDF library would be needed for reliable text extraction.
     fn try_extract_text(&mut self, path: &Path) -> String {
-        // Read raw bytes and look for text streams
-        // This is a very basic approach - real PDF needs a proper parser
         match fs::read(path) {
             Ok(bytes) => {
                 // Look for PDF version

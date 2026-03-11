@@ -1,3 +1,12 @@
+//! Anthropic Messages API client.
+//!
+//! Anthropic differs from OpenAI in two key ways:
+//! 1. System messages are a separate top-level `system` field, not a message role.
+//! 2. Auth uses `x-api-key` header plus a required `anthropic-version` header.
+//!
+//! The [`generate`](AnthropicClient::generate) method handles both transformations
+//! transparently so callers can pass a uniform `Vec<ChatMessage>`.
+
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -7,6 +16,7 @@ use std::env;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+/// Shared HTTP client -- keeps TCP/TLS connections alive across requests.
 static SHARED_HTTP: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(120))
@@ -77,9 +87,14 @@ impl AnthropicClient {
         })
     }
 
+    /// Send a chat completion request.
+    ///
+    /// System messages are extracted and concatenated into the Anthropic-specific
+    /// top-level `system` field. All other messages pass through as-is.
     pub async fn generate(&self, messages: Vec<ChatMessage>) -> Result<String> {
         let url = "https://api.anthropic.com/v1/messages";
 
+        // Anthropic requires system messages in a separate field, not inline.
         let mut system_prompt = String::new();
         let mut anthropic_messages: Vec<AnthropicMessage> = Vec::new();
         for m in messages {

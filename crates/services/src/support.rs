@@ -1,7 +1,14 @@
+//! Basic network diagnostics for the Fix/Support mode.
+//!
+//! Runs quick, non-invasive connectivity checks (DNS resolution, TCP connect)
+//! against well-known endpoints. Used to give the user a fast "is my internet
+//! working?" answer before diving into more specific troubleshooting.
+
 use anyhow::Result;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+/// Summary of network health checks with per-test detail lines.
 #[derive(Debug, Clone)]
 pub struct DiagnosticReport {
     pub summary: String,
@@ -31,6 +38,7 @@ fn test_tcp(addr: &str) -> String {
     }
 }
 
+/// Run DNS + TCP connectivity checks and return a pass/fail report.
 pub fn network_diagnostics() -> Result<DiagnosticReport> {
     let details = vec![test_dns(), test_tcp("1.1.1.1:53"), test_tcp("8.8.8.8:53")];
 

@@ -1,7 +1,16 @@
-//! Async skill execution wrapper.
+//! Async skill execution wrapper with timeout, progress, and event streaming.
 //!
-//! Provides timeout handling, progress reporting, and execution management
-//! for skill invocations (different from executor.rs which handles shell commands).
+//! This module is the counterpart to `executor.rs`: where the executor runs
+//! *shell commands*, the `SkillExecutor` runs *typed Rust skills* (`dyn Skill`).
+//! It adds three capabilities that raw `skill.execute()` does not provide:
+//!
+//! 1. **Timeout enforcement** -- prevents runaway skills from blocking the
+//!    agent loop indefinitely (default: 60 seconds).
+//! 2. **Event channel** -- emits `SkillEvent` (Started, Progress, Completed,
+//!    Failed, Timeout) so the UI can show real-time feedback.
+//! 3. **Batch execution** -- sequential (`execute_batch`) and concurrent
+//!    (`execute_concurrent`) execution of skill lists with bounded
+//!    parallelism.
 
 use anyhow::Result;
 use shared::events::SkillEvent;

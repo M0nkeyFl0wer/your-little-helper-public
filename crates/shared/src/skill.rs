@@ -29,7 +29,11 @@ pub enum Permission {
     Ask,
 }
 
-/// Agent modes that can use skills
+/// Agent modes that can use skills.
+///
+/// Each mode represents a distinct user intent and determines which skills
+/// are available, what system prompt the agent receives, and how the preview
+/// panel behaves. Modes are selected via the sidebar mode picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Mode {
     Find,
@@ -117,7 +121,11 @@ impl SkillInput {
     }
 }
 
-/// File action result (NO DELETE - by design)
+/// File action result (NO DELETE -- by design).
+///
+/// Little Helper is intentionally non-destructive: files can be created,
+/// modified, moved, or archived, but never deleted. This is a core safety
+/// guarantee enforced at the type level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FileAction {
     Created,
@@ -218,7 +226,12 @@ impl SkillOutput {
     }
 }
 
-/// Context provided to skills during execution
+/// Context provided to skills during execution.
+///
+/// Carries the runtime environment a skill needs: which mode triggered it,
+/// where to store data, and the session-scoped approval cache. Sensitive
+/// skills check `session_approvals` to avoid re-prompting the user within
+/// the same session.
 pub struct SkillContext {
     /// Current mode
     pub mode: Mode,

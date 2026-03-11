@@ -1,15 +1,19 @@
-//! Context Manager Module
+//! Context Manager -- the RAG orchestration layer.
 //!
-//! Manages documents, personas, research files, and templates that the AI
-//! can reference during conversations. Provides search and retrieval capabilities
-//! for contextual knowledge.
+//! Owns the document corpus, the knowledge graph (`GraphStore`), the
+//! embedding service, and the daily log. Together these form the agent's
+//! long-term memory:
 //!
-//! Features:
-//! - Multiple context types (Personas, Research, Skills, Templates)
-//! - Full-text search across all documents
-//! - Add/remove documents via UI
-//! - Auto-load context based on mode (Fix, Research, Content, Data)
-//! - Beta testing package with pre-loaded coworker context
+//! - **Documents** are typed (Persona, Research, Skill, Template,
+//!   Reference, Campaign) and auto-loaded based on the active agent mode.
+//! - **Knowledge graph** stores entities extracted from documents and
+//!   their relationships for multi-hop retrieval.
+//! - **Embeddings** enable semantic search over both documents and graph
+//!   nodes.
+//! - **Daily log** provides episodic, date-keyed archival memory.
+//!
+//! The manager also supports distribution levels (Internal / ExternalBeta /
+//! Public) to control what context is exposed in different release tiers.
 
 use crate::daily_log::DailyLogManager;
 use crate::embedding::EmbeddingService;

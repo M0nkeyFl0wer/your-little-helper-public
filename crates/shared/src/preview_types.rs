@@ -255,6 +255,11 @@ impl ParsedPreviewTag {
     }
 }
 
+/// Parse HTML-like attributes from a `<preview ...>` tag into key-value pairs.
+///
+/// Handles both single and double-quoted values, unquoted values, and
+/// whitespace between `key = "value"` tokens. Trailing `/` (self-closing
+/// tags) is silently skipped.
 fn parse_preview_attributes(attrs_str: &str) -> Vec<(String, String)> {
     let mut attrs = Vec::new();
     let mut chars = attrs_str.chars().peekable();

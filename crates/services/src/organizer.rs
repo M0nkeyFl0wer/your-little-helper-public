@@ -1,7 +1,16 @@
+//! File organizer -- builds and applies move/rename plans.
+//!
+//! Follows Little Helper's non-destructive principle: files are only moved
+//! or renamed, never deleted. The two-phase workflow (build plan, then apply)
+//! lets the UI show a preview of proposed changes before anything touches disk.
+//! Applying a plan skips actions whose destination already exists, preventing
+//! accidental overwrites.
+
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// A single action in a file organization plan.
 #[derive(Debug, Clone)]
 pub enum OrganizeAction {
     Rename { from: String, to: String },
@@ -26,6 +35,11 @@ pub struct ApplyReport {
     pub errors: Vec<ApplyError>,
 }
 
+/// Build a plan of move and rename actions for the given file paths.
+///
+/// If `move_dir` is set, each file is moved to that directory first.
+/// If `prefix` is set, each file (at its new location) is renamed with the prefix prepended.
+/// Both can be combined -- move happens first, then rename at the destination.
 pub fn build_plan(
     paths: Vec<String>,
     move_dir: Option<String>,
@@ -72,6 +86,11 @@ pub fn build_plan(
     Ok(ProposedPlan { actions })
 }
 
+/// Execute a plan, applying each action in order.
+///
+/// Actions whose destination already exists are silently skipped (counted in
+/// `report.skipped`). This prevents accidental overwrites when a plan is
+/// applied multiple times or when files have been manually moved.
 pub fn apply(plan: ProposedPlan) -> Result<ApplyReport> {
     let mut report = ApplyReport {
         applied: 0,
