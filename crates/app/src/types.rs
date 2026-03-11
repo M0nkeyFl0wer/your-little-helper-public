@@ -1,7 +1,18 @@
-//! Core types for the Little Helper app
+//! Core types and application state for the Little Helper app.
 //!
-//! This module contains all the main type definitions used throughout the app,
-//! including result types, screen states, chat types, and the main AppState.
+//! This module defines the central `AppState` struct and all supporting types.
+//! `AppState` is the single source of truth for the entire application -- every
+//! piece of UI state, async channel handle, and configuration lives here.
+//!
+//! Key design decisions:
+//! - **Per-mode isolation**: Each chat mode (Find, Fix, Research, etc.) has its own
+//!   chat history, thinking state, and preview state. This lets users multitask
+//!   across modes without losing context.
+//! - **Channel-based async**: Background work (AI generation, command execution,
+//!   web preview fetching, OAuth flows) communicates results via `mpsc::Receiver`
+//!   fields that are polled each frame.
+//! - **Abort handles**: In-flight AI requests can be cancelled via `AbortHandle`,
+//!   stored per-mode in `ai_abort_handles`.
 
 use agent_host::{classify_command, AgentHost, CommandResult, DangerLevel};
 
@@ -100,7 +111,8 @@ pub enum AppScreen {
     Chat,
 }
 
-/// Chat mode - determines agent behavior and available skills
+/// Chat mode -- determines the system prompt, available skills, and UI affordances.
+/// Each mode has its own chat history and preview state so users can switch freely.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ChatMode {
     /// Find files and content
@@ -174,7 +186,11 @@ pub enum ResearchDepth {
     Deep,
 }
 
-/// Main application state
+/// Main application state -- the single source of truth for the entire UI.
+///
+/// This struct is wrapped in `Arc<Mutex<AppState>>` and locked each frame.
+/// Background threads never hold the lock; they send results via channels
+/// that are polled in the `update` loop.
 pub struct AppState {
     pub settings: AppSettings,
     pub current_screen: AppScreen,
@@ -335,6 +351,16 @@ pub struct AppState {
 }
 
 impl Default for AppState {
+    /// Initialize the full application state on first launch.
+    ///
+    /// This is where all the "startup magic" happens:
+    /// 1. Load settings from disk (or seed from a bundled config for bespoke builds)
+    /// 2. Apply bespoke-build overrides (preloaded user name, skip onboarding)
+    /// 3. Start Ollama in a background thread (non-blocking)
+    /// 4. Set up provider fallback logic (cloud vs local, based on available keys)
+    /// 5. Initialize the context manager and skill registry
+    /// 6. Spawn a background memory optimization thread
+    /// 7. Build per-mode welcome messages and chat histories
     fn default() -> Self {
         let (mut settings, _) = crate::utils::load_settings_or_default();
         crate::utils::ensure_allowed_dirs(&mut settings);
@@ -347,6 +373,20 @@ impl Default for AppState {
             if !crate::secrets::PRELOAD_USER_NAME.is_empty() {
                 settings.user_profile.name = crate::secrets::PRELOAD_USER_NAME.to_string();
             }
+        }
+
+        // Apply baked-in API key and provider config (bespoke builds)
+        #[allow(clippy::const_is_empty)]
+        if !crate::secrets::OPENAI_API_KEY.is_empty() && !settings.model.openai_auth.has_auth() {
+            settings.model.openai_auth.api_key = Some(crate::secrets::OPENAI_API_KEY.to_string());
+        }
+        #[allow(clippy::const_is_empty)]
+        if !crate::secrets::OPENAI_BASE_URL.is_empty() && settings.model.openai_base_url.is_none() {
+            settings.model.openai_base_url = Some(crate::secrets::OPENAI_BASE_URL.to_string());
+        }
+        #[allow(clippy::const_is_empty)]
+        if !crate::secrets::OPENAI_MODEL.is_empty() {
+            settings.model.openai_model = crate::secrets::OPENAI_MODEL.to_string();
         }
 
         // ── Start Ollama in the background (don't block the UI) ──
@@ -493,12 +533,15 @@ impl Default for AppState {
             cm
         }));
 
-        // Background Memory Optimization Task
+        // Background memory optimization: periodically consolidate near-duplicate
+        // nodes in the knowledge graph and prune low-value ones. Runs on its own
+        // thread to avoid blocking the UI. Two triggers:
+        //   - Reactive: fires when 50+ new documents have been added
+        //   - Periodic: daily pruning of old, low-feedback nodes
         let bg_cm = context_manager.clone();
         std::thread::spawn(move || {
             let mut last_prune = std::time::SystemTime::now();
             loop {
-                // Check every minute
                 std::thread::sleep(std::time::Duration::from_secs(60));
 
                 // 1. Reactive Check (New Docs)
@@ -852,8 +895,9 @@ impl AppState {
         }
     }
 
+    /// Rough token count estimate for budget calculations. Not used for billing --
+    /// only for trimming old messages to keep prompts within a comfort window.
     fn estimate_tokens(text: &str) -> u32 {
-        // Rough heuristic: ~4 chars per token for English.
         (text.chars().count() as u32).saturating_div(4).max(1)
     }
 
@@ -887,11 +931,15 @@ impl AppState {
         }
     }
 
+    /// Build the API message array with a token budget, trimming old messages as needed.
+    ///
+    /// Returns `(messages, tokens_used, messages_dropped)`. The budget is deliberately
+    /// small (8K tokens) even for models with huge context windows -- this keeps latency
+    /// low and costs predictable. Newer messages are always prioritized over older ones.
     fn build_api_messages_with_budget(
         &self,
         system_prompt: String,
     ) -> (Vec<ApiChatMessage>, u32, usize) {
-        // Budget: keep prompts small and fast even on cloud models.
         const COMFORT_TOTAL_TOKENS: u32 = 8_000;
         const RESERVED_FOR_REPLY: u32 = 2_000;
         let budget = COMFORT_TOTAL_TOKENS.saturating_sub(RESERVED_FOR_REPLY);
@@ -1886,6 +1934,10 @@ What to do next:\n\
         self.refocus_input = true;
     }
 
+    /// Handle the user pressing Send or Enter. Validates input, constructs the
+    /// mode-specific system prompt with capabilities and context, then spawns the
+    /// background AI generation thread. Also handles provider fallback: if the
+    /// configured cloud provider lacks a key, falls back to local Ollama.
     pub fn send_message(&mut self) {
         if self.input_text.trim().is_empty() {
             return;
@@ -2281,6 +2333,9 @@ WORKFLOW:
         );
     }
 
+    /// Spawn the background AI generation thread and wire up all the channels.
+    /// Sets up abort handles so the user can cancel, and wraps the generation in
+    /// `catch_unwind` so a panic in the AI pipeline doesn't crash the app.
     pub fn start_ai_generation(
         &mut self,
         messages: Vec<ApiChatMessage>,
@@ -2364,6 +2419,9 @@ WORKFLOW:
         });
     }
 
+    /// Cancel an in-flight AI request by aborting the future.
+    /// The background thread will receive an `Aborted` error and send back
+    /// a "Cancelled" result, which poll_ai_response handles gracefully.
     pub fn cancel_ai(&mut self, mode: ChatMode) {
         if let Some(handle) = self.ai_abort_handles.remove(&mode) {
             handle.abort();

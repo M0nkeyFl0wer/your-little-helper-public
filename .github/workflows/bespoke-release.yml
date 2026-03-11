@@ -1,0 +1,170 @@
+name: Bespoke Build (Friends & Family)
+
+# Manual trigger only — never runs on push/PR
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.3.0-bespoke)'
+        required: true
+        default: 'v0.3.0-bespoke'
+      build_mac:
+        description: 'Build macOS DMG'
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows installer'
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Bespoke secrets — set in repo Settings → Secrets → Actions
+  LITTLE_HELPER_OPENAI_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  LITTLE_HELPER_OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+  LITTLE_HELPER_OPENAI_MODEL: ${{ secrets.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4' }}
+  LITTLE_HELPER_SKIP_ONBOARDING: "1"
+  LITTLE_HELPER_USER_NAME: ""
+  LITTLE_HELPER_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+  LITTLE_HELPER_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+
+jobs:
+  # ── macOS Universal Binary (Intel + Apple Silicon) ──
+  build-mac-intel:
+    if: ${{ inputs.build_mac }}
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Release (Intel)
+        run: cargo build --release -p app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-intel-binary
+          path: target/release/app
+
+  build-mac-arm:
+    if: ${{ inputs.build_mac }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Release (Apple Silicon)
+        run: cargo build --release -p app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm-binary
+          path: target/release/app
+
+  build-mac-dmg:
+    if: ${{ inputs.build_mac }}
+    needs: [build-mac-intel, build-mac-arm]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Intel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-intel-binary
+          path: intel
+
+      - name: Download ARM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-arm-binary
+          path: arm
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p universal
+          lipo -create intel/app arm/app -output universal/app
+          file universal/app
+
+      - name: Bundle Ollama
+        run: |
+          curl -fsSL -o ollama-darwin.tgz "https://github.com/ollama/ollama/releases/latest/download/ollama-darwin.tgz"
+          tar xzf ollama-darwin.tgz
+          mv bin/ollama ollama || true
+          chmod +x ollama
+
+      - name: Create App Bundle
+        run: |
+          mkdir -p "Little Helper.app/Contents/MacOS"
+          mkdir -p "Little Helper.app/Contents/Resources"
+          cp universal/app "Little Helper.app/Contents/MacOS/Little Helper"
+          chmod +x "Little Helper.app/Contents/MacOS/Little Helper"
+          cp ollama "Little Helper.app/Contents/Resources/ollama"
+          chmod +x "Little Helper.app/Contents/Resources/ollama"
+
+          cat > "Little Helper.app/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Little Helper</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.ben.littlehelper</string>
+              <key>CFBundleName</key>
+              <string>Little Helper</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Create DMG
+        run: |
+          mkdir dmg-contents
+          cp -r "Little Helper.app" dmg-contents/
+          ln -s /Applications dmg-contents/Applications
+
+          hdiutil create -volname "Little Helper" \
+            -srcfolder dmg-contents \
+            -ov -format UDZO \
+            "LittleHelper-Bespoke.dmg"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Bespoke-Mac
+          path: LittleHelper-Bespoke.dmg
+
+  # ── Windows (optional) ──
+  build-windows:
+    if: ${{ inputs.build_windows }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Release
+        run: cargo build --release -p app
+
+      - name: Bundle Ollama
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip" -OutFile "ollama.zip"
+          Expand-Archive -Path ollama.zip -DestinationPath ollama-extracted
+          Copy-Item ollama-extracted\ollama.exe target\release\ollama.exe
+          if (Test-Path ollama-extracted\lib) {
+            Copy-Item -Recurse ollama-extracted\lib target\release\lib
+          }
+
+      - name: Create ZIP
+        run: |
+          Compress-Archive -Path target\release\app.exe, target\release\ollama.exe -DestinationPath LittleHelper-Bespoke-Windows.zip
+
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleHelper-Bespoke-Windows
+          path: LittleHelper-Bespoke-Windows.zip
