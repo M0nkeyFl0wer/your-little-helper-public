@@ -5,7 +5,9 @@
 // Bespoke builds: set environment variables before `cargo build` to bake
 // credentials into the binary. Nothing in git changes.
 //
-//   LITTLE_HELPER_OPENAI_KEY="sk-..."  \
+//   LITTLE_HELPER_OPENAI_KEY="sk-or-v1-..."  \
+//   LITTLE_HELPER_OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
+//   LITTLE_HELPER_OPENAI_MODEL="anthropic/claude-sonnet-4" \
 //   LITTLE_HELPER_GOOGLE_CLIENT_ID="390..." \
 //   LITTLE_HELPER_GOOGLE_CLIENT_SECRET="GOCSPX-..." \
 //   LITTLE_HELPER_USER_NAME="Flower" \
@@ -65,6 +67,19 @@ pub fn google_oauth_credentials() -> Option<(String, Option<String>)> {
 
     Some((client_id, client_secret))
 }
+
+/// Custom base URL for OpenAI-compatible APIs (OpenRouter, Kimi, Together, etc.).
+/// When set, the "openai" provider routes to this URL instead of api.openai.com.
+pub const OPENAI_BASE_URL: &str = match option_env!("LITTLE_HELPER_OPENAI_BASE_URL") {
+    Some(v) => v,
+    None => "",
+};
+
+/// Default model to use with the OpenAI-compatible provider.
+pub const OPENAI_MODEL: &str = match option_env!("LITTLE_HELPER_OPENAI_MODEL") {
+    Some(v) => v,
+    None => "",
+};
 
 // ── Preloaded user info (for bespoke builds that skip onboarding) ──
 

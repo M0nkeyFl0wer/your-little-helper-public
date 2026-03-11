@@ -113,12 +113,17 @@ impl WebPreviewService {
         }
     }
 
-    /// Fetch preview for a URL with fallback chain
+    /// Fetch preview for a URL with a graceful degradation chain.
+    ///
+    /// The fallback order is:
+    /// 1. OG metadata (title, description, og:image) from HTML.
+    /// 2. wkhtmltoimage screenshot (if the binary is available on the system).
+    /// 3. Plain text fallback: just the URL itself.
+    ///
+    /// Each step failing is non-fatal -- the preview simply has less data.
     async fn fetch_preview(&self, url: &str) -> Result<WebPreview> {
-        // Try to fetch the page content for metadata
         let (title, description, og_image) = self.fetch_metadata(url).await.unwrap_or_default();
 
-        // Try screenshot capture if available
         let screenshot_path = if self.wkhtmltoimage_available {
             self.capture_screenshot(url).await.ok()
         } else {
@@ -185,7 +190,10 @@ impl WebPreviewService {
             .map(|m| html_decode(m.as_str().trim()))
     }
 
-    /// Extract Open Graph meta tag content
+    /// Extract Open Graph meta tag content.
+    ///
+    /// Tries both attribute orderings (`property=... content=...` and
+    /// `content=... property=...`) because real-world HTML uses both.
     fn extract_og_meta(&self, html: &str, property: &str) -> Option<String> {
         let pattern = format!(
             r#"(?i)<meta[^>]*property=["']{}["'][^>]*content=["']([^"']+)["']"#,
@@ -320,7 +328,9 @@ fn html_decode(s: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-/// Simple hash function for URL -> filename
+/// Hash a URL to a u64 for use as a cache filename.
+/// Not cryptographic -- just needs to be deterministic and collision-resistant enough
+/// for a small local screenshot cache.
 fn md5_hash(s: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
