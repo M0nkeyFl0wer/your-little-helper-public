@@ -1,15 +1,18 @@
-//! Token Usage Tracking Module
+//! API token usage tracking with cost estimation and budget enforcement.
 //!
-//! Tracks API token usage and costs across conversations,
-//! provides budget alerts, and suggests cost optimizations.
+//! Tracks every LLM call (input tokens, output tokens, model, provider)
+//! and estimates cost using a built-in pricing table. Provides:
 //!
-//! Features:
-//! - Real-time token counting per message
-//! - Cost estimation in USD
-//! - Daily/weekly/monthly budget tracking
-//! - Smart model switching suggestions
-//! - Usage history and trends
-//! - Team budget management (for pre-loaded keys)
+//! - **Per-period statistics** (daily / weekly / monthly) with breakdowns
+//!   by model and conversation.
+//! - **Budget alerts** at configurable thresholds (default: warn at 80%
+//!   of weekly/monthly budget).
+//! - **Auto-switch suggestions** when a single conversation exceeds a
+//!   cost threshold, recommending a cheaper model alternative.
+//!
+//! Budget checks are rate-limited to once per 5 minutes to avoid spamming
+//! the UI. Usage history can be persisted to disk as JSON for cross-session
+//! continuity.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

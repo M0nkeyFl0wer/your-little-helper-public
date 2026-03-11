@@ -1,17 +1,27 @@
-//! Image viewer with zoom and pan
+//! Image viewer with zoom, pan, and fit-to-window.
+//!
+//! Loads images via the `image` crate, uploads them as an egui texture,
+//! and renders with scroll-wheel zoom and drag-to-pan. The "Fit" button
+//! auto-scales the image to fill the available panel without exceeding
+//! the native resolution (scale <= 1.0).
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::Zoomable;
 
-/// Image viewer state
+/// Image viewer state.
+///
+/// The texture is uploaded to the GPU once on load and reused across frames.
+/// Zoom and pan state is maintained per-viewer instance.
 pub struct ImageViewer {
     path: Option<PathBuf>,
     texture: Option<egui::TextureHandle>,
     image_size: Option<[usize; 2]>,
     zoom: f32,
     pan_offset: egui::Vec2,
+    /// When true, zoom is recalculated each frame to fill the panel.
+    /// Set to false as soon as the user manually zooms or pans.
     fit_to_window: bool,
 }
 

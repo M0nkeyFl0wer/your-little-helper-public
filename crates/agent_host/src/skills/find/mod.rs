@@ -1,10 +1,12 @@
-//! Find mode skills for file search and navigation.
+//! Find mode skills -- file search, indexing, and organisation.
 //!
 //! Provides:
-//! - Fuzzy file search across indexed drives
-//! - Drive/directory indexing
-//! - File preview with metadata
-//! - Safe file organization (NO DELETE policy)
+//! - **Fuzzy file search** across pre-indexed drives using the shared
+//!   `FileIndexService` for sub-second results.
+//! - **Drive/directory indexing** to populate and refresh the search index.
+//! - **File preview** with metadata extraction.
+//! - **Safe file organisation** -- suggestions only, enforcing the global
+//!   NO DELETE policy via `SafeFileOps::archive_file`.
 
 pub mod drive_index;
 pub mod file_organize;

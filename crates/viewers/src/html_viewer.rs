@@ -1,4 +1,9 @@
-//! HTML Viewer - displays HTML with option to open in browser
+//! HTML Viewer -- displays HTML source with basic syntax highlighting.
+//!
+//! Full HTML rendering inside egui is not practical, so this viewer offers
+//! two modes: syntax-highlighted source view, and a tag-stripped text
+//! extraction for quick reading. The "Open in Browser" button delegates
+//! to the system's default browser for proper rendering.
 
 use anyhow::Result;
 use egui::{self, ScrollArea};
@@ -168,7 +173,10 @@ impl HtmlViewer {
     }
 }
 
-/// Simple HTML tag stripper for text preview
+/// Strip HTML tags, decode common entities, and collapse whitespace.
+///
+/// Skips content inside `<script>` and `<style>` blocks entirely. Inserts
+/// newlines after block-level closing tags for readability.
 fn strip_html_tags(html: &str) -> String {
     let mut result = String::new();
     let mut in_tag = false;

@@ -197,7 +197,12 @@ impl FileIndexService {
         Ok(stats)
     }
 
-    /// Fuzzy search for files matching the query
+    /// Fuzzy search for files matching the query.
+    ///
+    /// Uses a two-pass strategy: FTS5 prefix search for fast candidate
+    /// retrieval (fetches 2x limit), then Jaro-Winkler re-ranking for
+    /// fzf-like fuzzy match quality. This balances SQLite's speed with
+    /// the more intuitive ranking users expect from fuzzy finders.
     pub fn fuzzy_search(&self, query: &str, limit: usize) -> Result<Vec<FileSearchResult>> {
         let conn = self.conn.lock().unwrap();
 

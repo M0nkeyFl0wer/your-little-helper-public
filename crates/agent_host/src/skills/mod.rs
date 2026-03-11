@@ -1,7 +1,22 @@
-//! Skill registry and management for agent tool execution.
+//! Skill registry, permission management, and mode-scoped dispatch.
 //!
-//! This module provides the SkillRegistry that manages all available skills,
-//! handles permission checking, and coordinates skill execution.
+//! The `SkillRegistry` is the central catalogue of everything the agent can
+//! do beyond plain chat. Each skill declares:
+//! - An ID and human-readable name/description.
+//! - A `PermissionLevel` (Safe or Sensitive) that controls the default
+//!   permission policy.
+//! - A set of `Mode`s it belongs to (Find, Fix, Research, Data, Content,
+//!   Build).
+//!
+//! Before a skill runs, three checks are applied in order:
+//! 1. **Mode check** -- the skill must support the agent's current mode.
+//! 2. **User permission** -- the user may have Enabled, Ask, or Disabled
+//!    the skill in their settings.
+//! 3. **Session approval** -- Sensitive skills with `Ask` permission need
+//!    per-session confirmation before they execute.
+//!
+//! The `init_registry()` function wires up all skill families (common, find,
+//! fix, research, data, content, build, memory optimiser, security).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -233,7 +248,10 @@ use crate::context_manager::ContextManager;
 use crate::skills::common::CommonInfrastructure;
 use parking_lot::Mutex;
 
-/// Initialize the skill registry with all available skills
+/// Wire up the full skill registry. Called once during app startup.
+///
+/// Registration order does not matter -- skills are looked up by ID.
+/// Each `register_*_skills` function is responsible for its own family.
 pub fn init_registry(
     file_index: Arc<FileIndexService>,
     infra: Arc<CommonInfrastructure>,

@@ -1,10 +1,17 @@
-//! Common skill infrastructure shared across all modes.
+//! Common infrastructure and cross-mode skills.
 //!
-//! This module provides foundational components:
-//! - SafeFileOps: File operations with NO DELETE policy
-//! - AuditLogger: JSON-based audit logging with rotation
-//! - VersionHistory: View file version history
-//! - VersionRestore: Restore files to previous versions
+//! Every agent mode shares these foundational components:
+//!
+//! - **`SafeFileOps`** -- all file mutations route through here to enforce
+//!   the NO DELETE policy.  There is intentionally no `delete_file` method;
+//!   unwanted files are *archived* instead.
+//! - **`AuditLogger`** -- JSONL audit trail with automatic 10 MB rotation.
+//! - **`VersionHistory` / `VersionRestore`** -- user-facing version control
+//!   that hides git terminology behind friendly natural-language prompts.
+//! - **`WriteFileSkill`** -- skill wrapper around `SafeFileOps::write_file`
+//!   that auto-versions and emits a `<preview>` tag.
+//! - **`GitHelper`** -- exposes real git operations (status, add, commit,
+//!   log) as a Sensitive skill for the Build and Fix modes.
 
 mod git_helper;
 pub use git_helper::GitHelper;
@@ -45,13 +52,18 @@ pub fn init_common_infrastructure(data_dir: &Path) -> Result<CommonInfrastructur
     })
 }
 
-/// Common infrastructure shared across all skills.
+/// Shared services injected into every skill via `Arc`.
+///
+/// Constructed once during `init_common_infrastructure()` and threaded
+/// through the registry so individual skills never need to manage their
+/// own file-safety or audit plumbing.
 use crate::security::SecurityContext;
 
 pub struct CommonInfrastructure {
     pub safe_file_ops: Arc<SafeFileOps>,
     pub audit_logger: Arc<AuditLogger>,
     pub data_dir: PathBuf,
+    /// Used by the security skill and the executor's 2FA gate.
     pub security_context: Arc<SecurityContext>,
 }
 

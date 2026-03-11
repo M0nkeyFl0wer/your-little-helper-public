@@ -1,3 +1,16 @@
+//! Memory Optimizer skill -- the "Context Engineer".
+//!
+//! Exposes three maintenance actions for the knowledge graph:
+//!
+//! - **consolidate** -- merge near-duplicate nodes using Jaro-Winkler
+//!   similarity (configurable threshold, default 0.9).
+//! - **prune** -- remove nodes with poor feedback or zero usage past a
+//!   staleness window (default: -0.5 score, 30 days).
+//! - **archive** -- write an important insight to the daily log so it
+//!   survives aggressive pruning.
+//!
+//! Marked as `Sensitive` because it mutates the graph and daily log.
+
 use crate::context_manager::ContextManager;
 use crate::skills::common::CommonInfrastructure;
 use crate::skills::{Skill, SkillContext, SkillInput};
@@ -8,12 +21,7 @@ use parking_lot::Mutex;
 use shared::skill::{Mode, PermissionLevel, SkillOutput};
 use std::sync::Arc;
 
-/// Skill for optimizing the Knowledge Graph (The "Context Engineer")
-///
-/// This skill exposes tools to:
-/// 1. Consolidate duplicate nodes (fuzzy matching)
-/// 2. Prune low-value/outdated nodes
-/// 3. Archive important information to the Daily Log
+/// Knowledge graph maintenance skill.
 pub struct MemoryOptimizerSkill {
     infra: Arc<CommonInfrastructure>,
     context_manager: Arc<Mutex<ContextManager>>,

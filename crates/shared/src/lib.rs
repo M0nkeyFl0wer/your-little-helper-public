@@ -1,8 +1,24 @@
+//! Shared types, settings, and serialization used across all Little Helper crates.
+//!
+//! This crate is the "common vocabulary" for the project. It defines:
+//! - [`settings`] -- Application configuration persisted to disk (providers, auth, user profile).
+//! - [`agent_api`] -- Chat message types used between the UI and LLM providers.
+//! - [`search_types`] -- Query/result types for the fuzzy file finder.
+//! - [`preview_types`] -- Rich preview content shown in the companion panel.
+//! - [`skill`] -- Skill system: traits, permissions, execution lifecycle.
+//! - [`events`] -- Audit log and real-time skill execution events.
+//! - [`version`] -- User-friendly version tracking types (hides git internals).
+
 pub mod events;
 pub mod preview_types;
 pub mod skill;
 pub mod version;
 
+/// Application settings persisted as JSON on disk.
+///
+/// Settings are loaded once at startup and can be edited through the UI.
+/// The [`AppSettings`] struct is the root; it owns sub-structs for each
+/// configurable subsystem (model providers, user profile, Slack, etc.).
 pub mod settings {
     use serde::{Deserialize, Serialize};
 
@@ -10,6 +26,7 @@ pub mod settings {
         true
     }
 
+    /// OAuth 2.0 credentials obtained through the browser-based flow.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct OAuthCredentials {
         pub access_token: String,
@@ -17,12 +34,23 @@ pub mod settings {
         pub expires_at: Option<i64>, // Unix timestamp
     }
 
+    /// Authentication for a single LLM provider.
+    ///
+    /// Supports two auth strategies: a plain API key (simplest) or OAuth
+    /// credentials from the browser flow. The provider clients try API key
+    /// first, then OAuth, then fall back to environment variables.
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct ProviderAuth {
         pub api_key: Option<String>,
         pub oauth: Option<OAuthCredentials>,
     }
 
+    /// Configuration for all LLM providers and model selection.
+    ///
+    /// Each cloud provider has two model slots: a primary (higher quality) and
+    /// a fast variant (cheaper/faster for routine tasks). The `provider_preference`
+    /// list controls fallback order -- the router tries each in sequence until
+    /// one succeeds.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ModelProvider {
         pub local_model: String,              // e.g., "llama3.2:3b" for Ollama
@@ -104,13 +132,21 @@ pub mod settings {
         pub default_project_folder: Option<String>,
     }
 
+    /// Root configuration for the entire application.
+    ///
+    /// Serialized to/from `settings.json` in the app data directory.
+    /// New fields should always have `#[serde(default)]` so that older
+    /// config files deserialize without errors.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct AppSettings {
+        /// Directories the file finder is allowed to search.
         pub allowed_dirs: Vec<String>,
+        /// Extra directories scanned for RAG context injection.
         #[serde(default)]
-        pub external_context_dirs: Vec<String>, // Directories to scan for RAG
+        pub external_context_dirs: Vec<String>,
         pub model: ModelProvider,
         pub enable_internet_research: bool,
+        /// Maximum file search results returned to the UI.
         pub max_results: usize,
         pub user_profile: UserProfile,
         #[serde(default)]
@@ -177,9 +213,15 @@ pub mod settings {
     }
 }
 
+/// Chat message types shared between the UI layer and LLM provider clients.
 pub mod agent_api {
     use serde::{Deserialize, Serialize};
 
+    /// A single message in an LLM conversation.
+    ///
+    /// Role follows the OpenAI/Anthropic convention: "system", "user", or
+    /// "assistant". Provider clients translate to API-specific formats
+    /// (e.g., Anthropic's separate `system` field, Gemini's "model" role).
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ChatMessage {
         pub role: String, // "system" | "user" | "assistant"
@@ -187,21 +229,25 @@ pub mod agent_api {
     }
 }
 
+/// Types for the fuzzy file search subsystem.
 pub mod search_types {
     use serde::{Deserialize, Serialize};
 
+    /// A user-initiated file search with optional extension filter.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SearchQuery {
         pub text: String,
         pub extensions: Option<Vec<String>>, // e.g., ["pdf","md"]
     }
 
+    /// A single file matching a search query, ranked by relevance score.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SearchResult {
         pub path: String,
         pub file_name: String,
         pub size_bytes: u64,
         pub modified: Option<i64>, // unix timestamp
+        /// Relevance score (0.0-1.0) combining substring position and length ratio.
         pub score: f32,
     }
 }

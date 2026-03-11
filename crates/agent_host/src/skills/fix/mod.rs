@@ -8,8 +8,10 @@
 //! - Privacy auditing
 //! - Storage cleaning and organization
 //! - Device capability detection
+//! - Auto-update from GitHub Releases (stub, v0.4.0)
 //! - Log analysis (future)
 
+pub mod auto_update;
 pub mod device_capability;
 pub mod error_explainer;
 pub mod privacy_auditor;
@@ -18,6 +20,7 @@ pub mod startup_optimizer;
 pub mod storage_cleaner;
 pub mod system_diagnostics;
 
+pub use auto_update::AutoUpdateSkill;
 pub use device_capability::DeviceCapabilityDetector;
 pub use error_explainer::ErrorExplainer;
 pub use privacy_auditor::PrivacyAuditor;
@@ -38,4 +41,5 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(Arc::new(PrivacyAuditor::new()));
     registry.register(Arc::new(DeviceCapabilityDetector::new()));
     registry.register(Arc::new(StorageCleaner::new()));
+    registry.register(Arc::new(AutoUpdateSkill::new()));
 }

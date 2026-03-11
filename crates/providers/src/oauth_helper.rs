@@ -1,3 +1,15 @@
+//! Browser-based OAuth 2.0 + PKCE authentication flow.
+//!
+//! Used for cloud providers that support OAuth (e.g., Google/Gemini).
+//! The flow works as follows:
+//! 1. Bind a temporary localhost TCP listener to receive the callback.
+//! 2. Open the provider's auth URL in the user's default browser.
+//! 3. Wait (up to 5 minutes) for the browser redirect with an auth code.
+//! 4. Exchange the auth code for an access token (and optional refresh token).
+//!
+//! PKCE (Proof Key for Code Exchange) is always used, even when a client
+//! secret is provided, for defense-in-depth against interception attacks.
+
 use anyhow::{anyhow, Result};
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
@@ -10,13 +22,21 @@ use std::net::TcpListener;
 use std::time::Duration;
 use url::Url;
 
+/// Manages a single OAuth 2.0 authorization flow against one provider.
 pub struct OAuthFlow {
     client: BasicClient,
     scopes: Vec<String>,
+    /// Port the localhost callback listener will bind to.
     port: u16,
 }
 
 impl OAuthFlow {
+    /// Set up a new OAuth flow.
+    ///
+    /// Immediately probes for an available port (from a small candidate list)
+    /// to register as the redirect URI. The listener is dropped after port
+    /// discovery and re-bound in [`authenticate`](Self::authenticate) -- the
+    /// brief window is acceptable because authenticate() runs right after.
     pub fn new(
         client_id: String,
         client_secret: Option<String>,
@@ -24,10 +44,8 @@ impl OAuthFlow {
         token_url: String,
         scopes: Vec<String>,
     ) -> Result<Self> {
-        // Try a few ports in case 8765 is busy
         let (listener, port) = bind_callback_listener()?;
-        // Drop listener — we'll re-bind the same port in authenticate().
-        // The port is likely still free for the brief window.
+        // Drop listener -- re-bound in authenticate() on the same port.
         drop(listener);
 
         let client = BasicClient::new(
@@ -48,8 +66,11 @@ impl OAuthFlow {
         })
     }
 
+    /// Run the full browser-based auth flow, returning (access_token, optional refresh_token).
+    ///
+    /// Opens the user's browser, waits for the callback, verifies the CSRF
+    /// state parameter, and exchanges the authorization code for tokens.
     pub async fn authenticate(&self) -> Result<(String, Option<String>)> {
-        // Generate PKCE challenge for security
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
         // Build authorization URL
@@ -117,6 +138,8 @@ fn bind_callback_listener() -> Result<(TcpListener, u16)> {
     ))
 }
 
+/// Poll the non-blocking listener until a callback arrives or 5 minutes elapse.
+/// Returns the (authorization_code, state) pair from the redirect query string.
 fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
     let deadline = std::time::Instant::now() + Duration::from_secs(300);
 

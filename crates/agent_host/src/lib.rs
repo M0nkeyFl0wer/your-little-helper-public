@@ -1,12 +1,28 @@
 #![allow(dead_code)]
-//! Agent Host - AI agent with command execution capabilities
+//! Agent Host -- the core "brain" of the Little Helper AI assistant.
 //!
-//! This crate provides the AI agent that can:
-//! - Chat with users via multiple AI providers
-//! - Execute shell commands safely on behalf of users
-//! - Parse and extract commands from AI responses
-//! - Provide user-friendly summaries of command output
-//! - Invoke skills with permission handling
+//! This crate owns every layer between the user's message and the
+//! observable side-effects (shell commands, file writes, web searches,
+//! skill invocations). It is organised into three major subsystems:
+//!
+//! 1. **Executor** (`executor.rs`) -- classifies, sandboxes, and runs
+//!    shell commands with safety tiers (Safe / NeedsConfirmation /
+//!    Dangerous / NeedsAuth / Blocked).
+//!
+//! 2. **Skill system** (`skills/`, `skill_executor.rs`) -- a registry of
+//!    typed, permission-gated skills (Find, Fix, Research, Data, Content,
+//!    Build) that the agent can invoke via `<skill>` tags.
+//!
+//! 3. **Context & memory** (`context_manager.rs`, `graph_store.rs`,
+//!    `embedding.rs`, `daily_log.rs`, `context_token_manager.rs`,
+//!    `token_tracker.rs`) -- RAG pipeline with a petgraph knowledge
+//!    graph, fastembed vector embeddings, token-budget management, and
+//!    daily log archival.
+//!
+//! Security is enforced at two boundaries:
+//! - `security.rs` provides path sandboxing and time-boxed 2FA context.
+//! - The executor layer scans commands for leaked secrets and validates
+//!   every path token against the sandbox before execution.
 
 pub mod context_manager;
 pub mod context_token_manager;
@@ -42,26 +58,31 @@ pub use executor::execute_with_sudo;
 #[cfg(windows)]
 pub use executor::execute_with_elevation;
 
-/// Tool result from command execution
+/// Pairs a command string with its execution result, used to accumulate
+/// tool invocations across the multi-turn agent loop.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub command: String,
     pub result: CommandResult,
 }
 
-/// Agent host manages AI chat and command execution
-/// Agent host manages AI chat and command execution
+/// Top-level orchestrator: routes user messages to the LLM, extracts
+/// `<command>` / `<search>` / `[RUN]` tags from the response, executes
+/// them subject to safety classification, and feeds results back for
+/// further reasoning (up to 10 turns).
 pub struct AgentHost {
     pub settings: AppSettings,
     pub session_state: Arc<AsyncMutex<SessionState>>,
 }
 
 impl AgentHost {
+    /// Initialise the agent with a filesystem sandbox derived from the
+    /// user's `allowed_dirs` setting. Commands that reference paths
+    /// outside these directories will be rejected before execution.
     pub fn new(settings: AppSettings) -> Self {
         use security::PathSandbox;
         use std::path::PathBuf;
 
-        // Create restricted sandbox based on allowed_dirs
         let allowed = settings.allowed_dirs.iter().map(PathBuf::from).collect();
         let sandbox = PathSandbox::new(allowed);
 
@@ -78,8 +99,11 @@ impl AgentHost {
         router.generate(messages).await
     }
 
-    /// Agent chat - AI can request command execution
-    /// Returns the final response and any tool results
+    /// Multi-turn agent loop: sends the conversation to the LLM, parses
+    /// any `<command>`, `[RUN]`, or `[EXECUTE]` markers from the response,
+    /// and auto-executes commands classified as Safe. Blocked commands are
+    /// reported back to the model so it can adjust. The loop runs for at
+    /// most 10 iterations to prevent runaway tool use.
     pub async fn agent_chat(
         &self,
         messages: Vec<ChatMessage>,
@@ -186,7 +210,11 @@ impl AgentHost {
         ))
     }
 
-    /// Extract commands from AI response
+    /// Parse the LLM response for executable commands using three
+    /// complementary patterns, in priority order:
+    /// 1. `<command>...</command>` XML tags (preferred format)
+    /// 2. `[RUN]` marker followed by a fenced code block
+    /// 3. `[EXECUTE]` marker with inline backtick code
     fn extract_commands(&self, response: &str) -> Vec<String> {
         let mut commands = Vec::new();
 
@@ -300,8 +328,8 @@ The file will automatically open in the preview panel.
         )
     }
 
-    /// Execute a specific command (for UI-triggered execution)
-    /// Execute a specific command (for UI-triggered execution)
+    /// Execute a single command on behalf of the UI (e.g., when the user
+    /// clicks "Run" on a pending command). Uses a 60-second timeout.
     pub async fn execute(&self, cmd: &str) -> Result<CommandResult> {
         let mut state = self.session_state.lock().await;
         execute_command(cmd, 60, &mut state).await

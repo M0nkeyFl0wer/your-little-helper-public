@@ -1,9 +1,22 @@
+//! Daily log manager -- the "episodic memory" layer.
+//!
+//! While the knowledge graph captures entities and relationships, the daily
+//! log stores narrative entries keyed by date and a human-readable slug.
+//! This gives the agent (and the user) a chronological journal of insights,
+//! decisions, and archived context that the memory optimiser skill can
+//! write to via the `archive` action.
+//!
+//! Logs are Markdown files stored under `<data_dir>/memory/logs/` with the
+//! naming pattern `YYYY-MM-DD-<slug>.md`. Multiple entries on the same day
+//! with the same slug are appended to the existing file rather than
+//! overwriting it.
+
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Manager for Daily Logs (Long-term archival memory)
+/// Manager for daily log files (long-term archival memory).
 pub struct DailyLogManager {
     log_dir: PathBuf,
 }

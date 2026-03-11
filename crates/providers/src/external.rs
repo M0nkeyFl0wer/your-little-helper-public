@@ -181,7 +181,11 @@ impl ExternalProvider for PlaceholderProvider {
     }
 }
 
-/// Initialize provider registry with all known providers
+/// Initialize provider registry with all known providers.
+///
+/// All providers start as placeholders (NeedsSetup status). As integration
+/// code lands, placeholders are replaced with real implementations that
+/// perform actual health checks.
 pub fn init_registry() -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
 

@@ -1,8 +1,20 @@
-//! Graph Store for RAG
+//! In-memory knowledge graph for RAG (Retrieval-Augmented Generation).
 //!
-//! Implements a Knowledge Graph using `petgraph` to store entities and their relationships.
-//! This allows for "multi-hop" reasoning where the agent can find connections between
-//! concepts that aren't continuously mentioned in the same text chunk.
+//! Built on `petgraph::DiGraph`, this store maps entities and their typed
+//! relationships so the agent can perform multi-hop reasoning across
+//! concepts that never co-occur in the same text chunk.
+//!
+//! Key design decisions:
+//! - **Idempotent insertion**: `add_node` is safe to call repeatedly with
+//!   the same label; it returns the existing index and optionally back-fills
+//!   a missing embedding.
+//! - **Mode specialisation**: each node carries an operational `Mode` tag
+//!   so queries can be scoped to the current agent personality.
+//! - **Reinforcement signals**: `usage_count` and `feedback_score` let the
+//!   memory optimiser prune low-value nodes and consolidate near-duplicates
+//!   via Jaro-Winkler similarity.
+//! - **Hybrid search**: both BFS traversal (`find_related`) and brute-force
+//!   cosine vector search (`vector_search`) are supported.
 
 use anyhow::Result;
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -69,12 +81,14 @@ pub struct EdgeData {
     pub weight: f32,
 }
 
-/// Serializable graph structure
+/// Serializable knowledge graph backed by a directed graph.
+///
+/// `node_map` provides O(1) label-to-index lookups and must be kept in
+/// sync whenever nodes are added or removed (see `consolidate_nodes` and
+/// `prune_nodes` which rebuild it after structural mutations).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GraphStore {
-    /// Underlying graph: Nodes are entities, Edges are relationships
     pub graph: DiGraph<NodeData, EdgeData>,
-    /// Lookup map for quick node access by label
     node_map: HashMap<String, NodeIndex>,
 }
 
@@ -247,8 +261,16 @@ impl GraphStore {
         }
     }
 
-    /// Consolidate nodes with similar labels
-    /// Returns the number of nodes merged
+    /// Merge nodes whose labels are near-duplicates (e.g. "Apple" and
+    /// "apple ") using Jaro-Winkler similarity.
+    ///
+    /// The node with the higher `usage_count` survives; its stats absorb
+    /// the loser's. All edges pointing to/from the discarded node are
+    /// remapped to the survivor. After mutations, the `node_map` index is
+    /// fully rebuilt because `petgraph::retain_nodes` invalidates indices.
+    ///
+    /// Complexity: O(N^2) pairwise comparison -- acceptable for the
+    /// expected graph sizes (hundreds to low thousands of nodes).
     pub fn consolidate_nodes(&mut self, threshold: f64) -> usize {
         let mut nodes_to_remove = Vec::new();
         let mut edges_to_add = Vec::new();
@@ -387,8 +409,9 @@ impl GraphStore {
         nodes_to_remove.len()
     }
 
-    /// Prune nodes that are low quality or unused and old
-    /// Returns number of nodes removed.
+    /// Remove nodes that are either explicitly disliked (feedback below
+    /// `min_feedback`) or stale (zero usage and older than `max_unused_days`).
+    /// Returns the number of nodes removed.
     pub fn prune_nodes(&mut self, min_feedback: f32, max_unused_days: u64) -> usize {
         let now = default_timestamp();
         let seconds_threshold = max_unused_days * 24 * 3600;
@@ -440,7 +463,10 @@ impl GraphStore {
         let store: Self = serde_json::from_str(&json)?;
         Ok(store)
     }
-    /// Perform a vector search for similar nodes
+    /// Brute-force cosine similarity search over all nodes that carry an
+    /// embedding. Returns up to `limit` results above `min_score`, sorted
+    /// by descending similarity. For small graphs this is fast enough; a
+    /// future optimisation could use an approximate nearest-neighbour index.
     pub fn vector_search(
         &self,
         query_vec: &[f32],
