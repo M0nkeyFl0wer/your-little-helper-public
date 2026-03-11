@@ -209,7 +209,11 @@ impl SkillOutput {
         }
         self
     }
-    pub fn with_suggested_action(mut self, skill_id: impl Into<String>, params: std::collections::HashMap<String, serde_json::Value>) -> Self {
+    pub fn with_suggested_action(
+        mut self,
+        skill_id: impl Into<String>,
+        params: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Self {
         self.suggested_actions.push(SuggestedAction {
             label: "Suggested Action".to_string(),
             skill_id: skill_id.into(),

@@ -3,10 +3,8 @@
 //! Provides `PathSandbox` to enforce file system access restrictions.
 
 use std::path::{Path, PathBuf};
-use shared::settings::AppSettings;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
 
 /// Context for tracking authentication state (2FA)
 #[derive(Debug)]
@@ -25,7 +23,10 @@ impl SecurityContext {
 
     /// Mark the session as authenticated NOW.
     pub fn authenticate(&self) {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         self.last_auth_time.store(now, Ordering::Relaxed);
     }
 
@@ -35,7 +36,10 @@ impl SecurityContext {
         if last == 0 {
             return false;
         }
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         let elapsed = now - last;
         // Check if elapsed is positive and within timeout
         elapsed >= 0 && elapsed < self.auth_timeout.as_secs() as i64
@@ -55,22 +59,24 @@ impl PathSandbox {
             .into_iter()
             .filter_map(|p| p.canonicalize().ok())
             .collect();
-        
-        Self { allowed_dirs: canonical_dirs }
+
+        Self {
+            allowed_dirs: canonical_dirs,
+        }
     }
 
     /// Check if a path is allowed (must be within one of the allowed dirs)
     pub fn is_allowed(&self, path: &Path) -> bool {
         if self.allowed_dirs.is_empty() {
-             // If no dirs are explicitly allowed, BLOCK EVERYTHING
-             return false;
+            // If no dirs are explicitly allowed, BLOCK EVERYTHING
+            return false;
         }
 
         let canonical = match path.canonicalize() {
             Ok(p) => p,
             Err(_) => {
                 // If path doesn't exist, try to resolve it relative to CWD or check parent
-                // For now, assume if we can't canonicalize it (e.g. creating new file), 
+                // For now, assume if we can't canonicalize it (e.g. creating new file),
                 // we check the parent.
                 if let Some(parent) = path.parent() {
                     if let Ok(p) = parent.canonicalize() {
@@ -86,11 +92,13 @@ impl PathSandbox {
     }
 
     fn is_allowed_canonical(&self, canonical_path: &Path) -> bool {
-        self.allowed_dirs.iter().any(|allowed| canonical_path.starts_with(allowed))
+        self.allowed_dirs
+            .iter()
+            .any(|allowed| canonical_path.starts_with(allowed))
     }
 
     /// Scan a command string for potential path violations.
-    /// 
+    ///
     /// This is a heuristic scan. It splits by whitespace and treats any token
     /// containing a path separator as a candidate path.
     ///
@@ -101,17 +109,35 @@ impl PathSandbox {
         // Simple tokenizer - smart enough for basic shell commands
         // Ignores flags (--foo, -f)
         let tokens: Vec<&str> = cmd.split_whitespace().collect();
-        
+
+        let mut prev: Option<&str> = None;
         for token in tokens {
             // Skip flags
             if token.starts_with('-') {
+                prev = Some(token);
                 continue;
             }
 
+            let is_cd_arg = prev == Some("cd");
+
             // Heuristic: If it has a separator, it MIGHT be a path
-            if token.contains('/') || token.contains('\\') {
-                // Try to resolve it
-                let path = PathBuf::from(token);
+            // Special-case: `cd <arg>` should always be treated as a path.
+            if is_cd_arg
+                || token.contains('/')
+                || token.contains('\\')
+                || token == "~"
+                || token.starts_with("~/")
+            {
+                // Try to resolve it (lightweight; not a shell parser).
+                let path = if token == "~" {
+                    dirs::home_dir().unwrap_or_else(|| cwd.to_path_buf())
+                } else if let Some(rest) = token.strip_prefix("~/") {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| cwd.to_path_buf())
+                        .join(rest)
+                } else {
+                    PathBuf::from(token)
+                };
                 let abs_path = if path.is_absolute() {
                     path
                 } else {
@@ -120,13 +146,15 @@ impl PathSandbox {
 
                 if !self.is_allowed(&abs_path) {
                     return Err(format!(
-                        "Access denied: Path '{}' is outside allowed directories.", 
+                        "Access denied: Path '{}' is outside allowed directories.",
                         token
                     ));
                 }
             }
+
+            prev = Some(token);
         }
-        
+
         Ok(())
     }
 }

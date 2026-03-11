@@ -18,8 +18,8 @@ pub mod content;
 pub mod data;
 pub mod find;
 pub mod fix;
-pub mod research;
 pub mod memory_optimizer;
+pub mod research;
 pub mod security;
 
 /// Registry managing all available skills
@@ -229,8 +229,8 @@ pub struct SkillInfo {
 
 use services::file_index::FileIndexService;
 
-use crate::skills::common::CommonInfrastructure;
 use crate::context_manager::ContextManager;
+use crate::skills::common::CommonInfrastructure;
 use parking_lot::Mutex;
 
 /// Initialize the skill registry with all available skills
@@ -245,7 +245,10 @@ pub fn init_registry(
     common::register_common_skills(&mut registry, &infra);
 
     // Register Memory Optimizer (The "Context Engineer")
-    registry.register(Arc::new(memory_optimizer::MemoryOptimizerSkill::new(infra.clone(), context_manager)));
+    registry.register(Arc::new(memory_optimizer::MemoryOptimizerSkill::new(
+        infra.clone(),
+        context_manager,
+    )));
 
     // Register Security Skill (2FA)
     registry.register(Arc::new(security::SecuritySkill::new(infra.clone())));

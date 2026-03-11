@@ -28,13 +28,13 @@ impl DailyLogManager {
         let now = Local::now();
         let date_str = now.format("%Y-%m-%d").to_string();
         let timestamp = now.format("%H:%M:%S").to_string();
-        
+
         // Sanitize slug
         let safe_slug = slug
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect::<String>();
-            
+
         let filename = format!("{}-{}.md", date_str, safe_slug);
         let path = self.log_dir.join(&filename);
 

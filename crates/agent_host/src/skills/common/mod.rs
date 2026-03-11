@@ -58,7 +58,10 @@ pub struct CommonInfrastructure {
 use crate::skills::SkillRegistry;
 
 /// Register common skills available in all modes.
-pub fn register_common_skills(registry: &mut SkillRegistry, infra: &std::sync::Arc<CommonInfrastructure>) {
+pub fn register_common_skills(
+    registry: &mut SkillRegistry,
+    infra: &std::sync::Arc<CommonInfrastructure>,
+) {
     registry.register(std::sync::Arc::new(VersionHistory::new()));
     registry.register(std::sync::Arc::new(VersionRestore::new()));
     registry.register(std::sync::Arc::new(WriteFileSkill::new(infra.clone())));

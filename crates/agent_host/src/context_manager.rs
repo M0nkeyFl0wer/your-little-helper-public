@@ -11,15 +11,15 @@
 //! - Auto-load context based on mode (Fix, Research, Content, Data)
 //! - Beta testing package with pre-loaded coworker context
 
+use crate::daily_log::DailyLogManager;
+use crate::embedding::EmbeddingService;
+use crate::graph_store::GraphStore;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use shared::skill::Mode;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use walkdir::WalkDir;
-use crate::graph_store::GraphStore;
-use crate::daily_log::DailyLogManager;
-use crate::embedding::EmbeddingService; // Added import
+use walkdir::WalkDir; // Added import
 
 /// Types of context documents
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -133,7 +133,7 @@ pub struct ContextManager {
     daily_log: DailyLogManager,
     /// Configuration for embedding service
     pub embedding_service: Option<EmbeddingService>,
-    
+
     /// Track documents added since last optimization
     pub docs_added_since_opt: usize,
 }
@@ -187,7 +187,9 @@ impl ContextManager {
             documents: HashMap::new(),
             content_cache: HashMap::new(),
             graph: GraphStore::new(),
-            daily_log: DailyLogManager::new(&base_dir.parent().unwrap_or(&base_dir).join("memory"))?,
+            daily_log: DailyLogManager::new(
+                &base_dir.parent().unwrap_or(&base_dir).join("memory"),
+            )?,
             embedding_service,
             docs_added_since_opt: 0,
         };
@@ -262,7 +264,11 @@ impl ContextManager {
             };
 
             // Add to graph with appropriate mode
-            let mode = context_type.applicable_modes().first().copied().unwrap_or(shared::skill::Mode::Find);
+            let mode = context_type
+                .applicable_modes()
+                .first()
+                .copied()
+                .unwrap_or(shared::skill::Mode::Find);
             let graph_mode = match mode {
                 shared::skill::Mode::Find => crate::graph_store::Mode::Find,
                 shared::skill::Mode::Fix => crate::graph_store::Mode::Fix,
@@ -281,16 +287,22 @@ impl ContextManager {
                 if !self.graph.has_embedding(&doc.name) {
                     // Limit embedding to reasonable file sizes to avoid startup lag
                     if doc.size_bytes < 50_000 {
-                         if let Ok(content) = std::fs::read_to_string(&doc.path) {
-                             if let Ok(e) = service.embed(&content) {
-                                 embedding = Some(e);
-                             }
-                         }
+                        if let Ok(content) = std::fs::read_to_string(&doc.path) {
+                            if let Ok(e) = service.embed(&content) {
+                                embedding = Some(e);
+                            }
+                        }
                     }
                 }
             }
 
-            self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode, embedding);
+            self.graph.add_node(
+                &doc.name,
+                Some("Document".to_string()),
+                &doc.id,
+                graph_mode,
+                embedding,
+            );
 
             self.documents.insert(id, doc);
             self.docs_added_since_opt += 1;
@@ -307,39 +319,55 @@ impl ContextManager {
     pub fn scan_external_dirs(&mut self, dirs: &[String]) -> Result<()> {
         for dir_str in dirs {
             let dir = PathBuf::from(dir_str);
-            if !dir.exists() { continue; }
-            
+            if !dir.exists() {
+                continue;
+            }
+
             // Limit depth to avoid massive scans
             for entry in WalkDir::new(&dir)
                 .follow_links(true)
-                .max_depth(5) 
+                .max_depth(5)
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
                 let path = entry.path();
                 // Skip hidden files/dirs
-                 if path.to_string_lossy().contains("/.") {
+                if path.to_string_lossy().contains("/.") {
                     continue;
                 }
-                
+
                 // Only process text files
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                let valid_exts = ["md", "txt", "rs", "py", "js", "ts", "json", "toml", "yaml", "yml", "html", "css", "c", "cpp", "h"];
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let valid_exts = [
+                    "md", "txt", "rs", "py", "js", "ts", "json", "toml", "yaml", "yml", "html",
+                    "css", "c", "cpp", "h",
+                ];
                 if !valid_exts.contains(&ext.as_str()) {
                     continue;
                 }
-                
+
                 // Construct ID
                 // Use a stable ID based on path hash or similar? For now, path string is fine.
-                let id = format!("external/{}", path.to_string_lossy().replace("/", "_").replace("\\", "_"));
-                
+                let id = format!(
+                    "external/{}",
+                    path.to_string_lossy().replace("/", "_").replace("\\", "_")
+                );
+
                 // Check if doc exists
                 if !self.documents.contains_key(&id) {
-                     let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
-                     let metadata = std::fs::metadata(path)?;
-                     
-                     let doc = ContextDocument {
+                    let name = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let metadata = std::fs::metadata(path)?;
+
+                    let doc = ContextDocument {
                         id: id.clone(),
                         name: name.clone(),
                         context_type: ContextType::Reference,
@@ -349,25 +377,31 @@ impl ContextManager {
                         description: format!("External file from {}", dir_str),
                         added_at: chrono::Utc::now(),
                         size_bytes: metadata.len(),
-                     };
-                     
-                     // Embed
-                     let mut embedding = None;
-                     if let Some(service) = &self.embedding_service {
+                    };
+
+                    // Embed
+                    let mut embedding = None;
+                    if let Some(service) = &self.embedding_service {
                         if !self.graph.has_embedding(&doc.name) {
-                             if doc.size_bytes < 50_000 {
-                                 if let Ok(content) = std::fs::read_to_string(&doc.path) {
-                                     if let Ok(e) = service.embed(&content) {
-                                         embedding = Some(e);
-                                     }
-                                 }
-                             }
+                            if doc.size_bytes < 50_000 {
+                                if let Ok(content) = std::fs::read_to_string(&doc.path) {
+                                    if let Ok(e) = service.embed(&content) {
+                                        embedding = Some(e);
+                                    }
+                                }
+                            }
                         }
-                     }
-                     
-                     self.graph.add_node(&doc.name, Some("External File".to_string()), &doc.id, crate::graph_store::Mode::Research, embedding);
-                     self.documents.insert(id, doc);
-                     self.docs_added_since_opt += 1;
+                    }
+
+                    self.graph.add_node(
+                        &doc.name,
+                        Some("External File".to_string()),
+                        &doc.id,
+                        crate::graph_store::Mode::Research,
+                        embedding,
+                    );
+                    self.documents.insert(id, doc);
+                    self.docs_added_since_opt += 1;
                 }
             }
         }
@@ -411,7 +445,11 @@ impl ContextManager {
         self.content_cache.insert(id.clone(), content.to_string());
 
         // Add to graph with appropriate mode
-        let mode = context_type.applicable_modes().first().copied().unwrap_or(shared::skill::Mode::Find);
+        let mode = context_type
+            .applicable_modes()
+            .first()
+            .copied()
+            .unwrap_or(shared::skill::Mode::Find);
         let graph_mode = match mode {
             shared::skill::Mode::Find => crate::graph_store::Mode::Find,
             shared::skill::Mode::Fix => crate::graph_store::Mode::Fix,
@@ -421,8 +459,17 @@ impl ContextManager {
             shared::skill::Mode::Content => crate::graph_store::Mode::Content,
         };
 
-        let embedding = self.embedding_service.as_ref().and_then(|s| s.embed(content).ok());
-        self.graph.add_node(&doc.name, Some("Document".to_string()), &doc.id, graph_mode, embedding);
+        let embedding = self
+            .embedding_service
+            .as_ref()
+            .and_then(|s| s.embed(content).ok());
+        self.graph.add_node(
+            &doc.name,
+            Some("Document".to_string()),
+            &doc.id,
+            graph_mode,
+            embedding,
+        );
 
         self.documents.insert(id.clone(), doc.clone());
         self.docs_added_since_opt += 1;
@@ -441,34 +488,63 @@ impl ContextManager {
         let merged = self.graph.consolidate_nodes(0.95);
         // Prune only very low quality nodes, keep old ones for now unless explicitly hated
         let pruned = self.graph.prune_nodes(-0.8, 60);
-        
+
         if merged > 0 || pruned > 0 {
-            println!("[System] Memory Optimized: Merged {} nodes, Pruned {} nodes.", merged, pruned);
+            println!(
+                "[System] Memory Optimized: Merged {} nodes, Pruned {} nodes.",
+                merged, pruned
+            );
         }
     }
 
     /// Add a node to the knowledge graph manually (or via LLM extraction)
-    pub fn add_graph_node(&mut self, label: &str, category: Option<String>, source_id: &str, mode: crate::graph_store::Mode) {
-        let embedding = self.embedding_service.as_ref().and_then(|s| s.embed(label).ok());
-        self.graph.add_node(label, category, source_id, mode, embedding);
+    pub fn add_graph_node(
+        &mut self,
+        label: &str,
+        category: Option<String>,
+        source_id: &str,
+        mode: crate::graph_store::Mode,
+    ) {
+        let embedding = self
+            .embedding_service
+            .as_ref()
+            .and_then(|s| s.embed(label).ok());
+        self.graph
+            .add_node(label, category, source_id, mode, embedding);
     }
 
     /// Add a relationship to the knowledge graph
-    pub fn add_graph_edge(&mut self, source_label: &str, target_label: &str, relation: &str, mode: crate::graph_store::Mode) {
+    pub fn add_graph_edge(
+        &mut self,
+        source_label: &str,
+        target_label: &str,
+        relation: &str,
+        mode: crate::graph_store::Mode,
+    ) {
         // We try to embed labels if they are new nodes, but add_node handles updates.
         // However, generating embeddings for every edge addition might be overkill if nodes exist.
-        // add_node checks if embedding exists inside the graph store logic I wrote? 
+        // add_node checks if embedding exists inside the graph store logic I wrote?
         // No, I wrote: if let Some(node) = node_weight_mut { if node.embedding.is_none() && embedding.is_some() ... }
         // So passing embedding is safe.
-        
+
         // Optimize: Check if nodes exist to avoid embedding cost?
         // For now, let's just do it. Labels are short.
-        let source_embedding = self.embedding_service.as_ref().and_then(|s| s.embed(source_label).ok());
-        let source_idx = self.graph.add_node(source_label, None, "system", mode, source_embedding);
+        let source_embedding = self
+            .embedding_service
+            .as_ref()
+            .and_then(|s| s.embed(source_label).ok());
+        let source_idx = self
+            .graph
+            .add_node(source_label, None, "system", mode, source_embedding);
 
-        let target_embedding = self.embedding_service.as_ref().and_then(|s| s.embed(target_label).ok());
-        let target_idx = self.graph.add_node(target_label, None, "system", mode, target_embedding);
-        
+        let target_embedding = self
+            .embedding_service
+            .as_ref()
+            .and_then(|s| s.embed(target_label).ok());
+        let target_idx = self
+            .graph
+            .add_node(target_label, None, "system", mode, target_embedding);
+
         self.graph.add_edge(source_idx, target_idx, relation);
     }
 
@@ -585,68 +661,81 @@ impl ContextManager {
         }
 
         // --- GRAPH RAG AUGMENTATION ---
-        
+
         // 0. Vector Search (Semantic) with Graph Expansion
         if let Some(service) = &self.embedding_service {
-             if let Ok(query_vec) = service.embed(query) {
-                 // Search for top 10 semantically similar nodes
-                 let vec_results = self.graph.vector_search(&query_vec, 10, 0.4); // 0.4 threshold
-                 
-                 for (idx, score) in vec_results {
-                     if let Some(node) = self.graph.graph.node_weight(idx) {
-                         // Find doc by ID (source_id)
-                         if let Some(doc) = self.documents.get(&node.source_id) {
-                             // Check mode
-                             if let Some(m) = mode {
-                                 if !doc.context_type.applicable_modes().contains(&m) {
-                                     continue;
-                                 }
-                             }
+            if let Ok(query_vec) = service.embed(query) {
+                // Search for top 10 semantically similar nodes
+                let vec_results = self.graph.vector_search(&query_vec, 10, 0.4); // 0.4 threshold
 
-                             // Add or update result
-                             let semantic_score = (score * 100.0) as u8;
-                             let reason = format!("Semantic Match ({:.2}): {}", score, node.label);
-                             
-                             self.add_or_boost_result(&mut results, doc, semantic_score, &reason);
-                             
-                             // --- 1-HOP GRAPH EXPANSION ---
-                             // If strong match (> 0.6), look at neighbors
-                             if score > 0.6 {
-                                 let related_nodes = self.graph.get_related_nodes(idx);
-                                 for (rel_idx, edge_label, role) in related_nodes {
-                                      if let Some(rel_node) = self.graph.graph.node_weight(rel_idx) {
-                                          if let Some(rel_doc) = self.documents.get(&rel_node.source_id) {
-                                              // Filter by mode again
-                                              if let Some(m) = mode {
-                                                 if !rel_doc.context_type.applicable_modes().contains(&m) {
-                                                     continue;
-                                                 }
-                                              }
-                                              
-                                              // Add with slightly lower score but clear reasoning
-                                              let rel_score = (score * 80.0) as u8; // 80% of original match
-                                              let rel_reason = format!("Graph Connection: {} {} {} ({})", 
-                                                  node.label, edge_label, rel_node.label, role);
-                                                  
-                                              self.add_or_boost_result(&mut results, rel_doc, rel_score, &rel_reason);
-                                          }
-                                      }
-                                 }
-                             }
-                         }
-                     }
-                 }
-             }
+                for (idx, score) in vec_results {
+                    if let Some(node) = self.graph.graph.node_weight(idx) {
+                        // Find doc by ID (source_id)
+                        if let Some(doc) = self.documents.get(&node.source_id) {
+                            // Check mode
+                            if let Some(m) = mode {
+                                if !doc.context_type.applicable_modes().contains(&m) {
+                                    continue;
+                                }
+                            }
+
+                            // Add or update result
+                            let semantic_score = (score * 100.0) as u8;
+                            let reason = format!("Semantic Match ({:.2}): {}", score, node.label);
+
+                            self.add_or_boost_result(&mut results, doc, semantic_score, &reason);
+
+                            // --- 1-HOP GRAPH EXPANSION ---
+                            // If strong match (> 0.6), look at neighbors
+                            if score > 0.6 {
+                                let related_nodes = self.graph.get_related_nodes(idx);
+                                for (rel_idx, edge_label, role) in related_nodes {
+                                    if let Some(rel_node) = self.graph.graph.node_weight(rel_idx) {
+                                        if let Some(rel_doc) =
+                                            self.documents.get(&rel_node.source_id)
+                                        {
+                                            // Filter by mode again
+                                            if let Some(m) = mode {
+                                                if !rel_doc
+                                                    .context_type
+                                                    .applicable_modes()
+                                                    .contains(&m)
+                                                {
+                                                    continue;
+                                                }
+                                            }
+
+                                            // Add with slightly lower score but clear reasoning
+                                            let rel_score = (score * 80.0) as u8; // 80% of original match
+                                            let rel_reason = format!(
+                                                "Graph Connection: {} {} {} ({})",
+                                                node.label, edge_label, rel_node.label, role
+                                            );
+
+                                            self.add_or_boost_result(
+                                                &mut results,
+                                                rel_doc,
+                                                rel_score,
+                                                &rel_reason,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 1. Find nodes related to the query terms (Keyword/Graph)
         let mut related_docs = Vec::new();
         // Simple heuristic: treat query as a potential entity label
         let related_entities = self.graph.find_related(&query, 2); // 2 hops depth
-        
+
         for (entity_label, relation_desc) in related_entities {
-             // Find documents containing this related entity
-             for (_, doc) in self.documents.iter() {
+            // Find documents containing this related entity
+            for (_, doc) in self.documents.iter() {
                 if let Some(m) = mode {
                     if !doc.context_type.applicable_modes().contains(&m) {
                         continue;
@@ -654,18 +743,20 @@ impl ContextManager {
                 }
 
                 if doc.tags.contains(&entity_label) || doc.name.contains(&entity_label) {
-                     related_docs.push((doc.clone(), relation_desc.clone()));
+                    related_docs.push((doc.clone(), relation_desc.clone()));
                 }
-             }
+            }
         }
 
         // Add related docs to results if not already present
         for (doc, reason) in related_docs {
             if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
-                  existing.relevance_score = existing.relevance_score.max(50);
-                  existing.excerpts.push(format!("Graph Connection: {}", reason));
+                existing.relevance_score = existing.relevance_score.max(50);
+                existing
+                    .excerpts
+                    .push(format!("Graph Connection: {}", reason));
             } else {
-                 results.push(ContextSearchResult {
+                results.push(ContextSearchResult {
                     document: doc,
                     relevance_score: 50, // Arbitrary score for graph connection
                     excerpts: vec![format!("Related via graph: {}", reason)],
@@ -681,16 +772,22 @@ impl ContextManager {
     }
 
     /// Helper to add a result or boost it if it already exists
-    fn add_or_boost_result(&self, results: &mut Vec<ContextSearchResult>, doc: &ContextDocument, score: u8, reason: &str) {
+    fn add_or_boost_result(
+        &self,
+        results: &mut Vec<ContextSearchResult>,
+        doc: &ContextDocument,
+        score: u8,
+        reason: &str,
+    ) {
         if let Some(existing) = results.iter_mut().find(|r| r.document.id == doc.id) {
             // Boost existing score
             existing.relevance_score = existing.relevance_score.max(score).min(100);
             // Avoid duplicate reasons
             if !existing.excerpts.iter().any(|e| e.contains(reason)) {
-                 existing.excerpts.push(reason.to_string());
+                existing.excerpts.push(reason.to_string());
             }
         } else {
-             results.push(ContextSearchResult {
+            results.push(ContextSearchResult {
                 document: doc.clone(),
                 relevance_score: score,
                 excerpts: vec![reason.to_string()],
@@ -722,10 +819,10 @@ impl ContextManager {
         // This gives the agent "recent history" context
         let recent_logs = self.get_recent_logs(3)?;
         if !recent_logs.is_empty() {
-             prompt.push_str("## 🧠 Recent Memory (Episodic Context)\n");
-             prompt.push_str("Here is a summary of recent work and decisions:\n\n");
-             prompt.push_str(&recent_logs);
-             prompt.push_str("\n---\n\n");
+            prompt.push_str("## 🧠 Recent Memory (Episodic Context)\n");
+            prompt.push_str("Here is a summary of recent work and decisions:\n\n");
+            prompt.push_str(&recent_logs);
+            prompt.push_str("\n---\n\n");
         }
 
         // 2. Inject Semantic Memory (Documents)
@@ -768,15 +865,18 @@ impl ContextManager {
     pub fn get_recent_logs(&self, days: usize) -> Result<String> {
         let logs = self.daily_log.list_logs()?;
         let mut recent_content = String::new();
-        
+
         // Take up to `days` logs
         for path in logs.into_iter().take(days) {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("unknown");
+                let filename = path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("unknown");
                 recent_content.push_str(&format!("### Log: {}\n{}\n\n", filename, content));
             }
         }
-        
+
         Ok(recent_content)
     }
 

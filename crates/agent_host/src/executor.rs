@@ -4,11 +4,13 @@
 //! with safety checks, confirmation requirements, and user-friendly output.
 
 use anyhow::Result;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::process::Stdio;
-use std::time::{Duration, Instant};
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 
 use crate::security::{PathSandbox, SecurityContext};
@@ -41,7 +43,7 @@ impl SessionState {
             security_context: None,
         }
     }
-    
+
     pub fn with_sandbox(mut self, sandbox: PathSandbox) -> Self {
         self.sandbox = Some(sandbox);
         self
@@ -323,17 +325,9 @@ const BLOCKED_COMMANDS: &[&str] = &[
 /// Commands that require 2FA authentication
 const NEEDS_AUTH_COMMANDS: &[&str] = &[
     // Destructive file operations
-    "rm",
-    "shred",
-    "dd",
-    "mkfs",
-    // Permissions
-    "chmod",
-    "chown",
-    // Process control
-    "kill",
-    "killall",
-    "pkill",
+    "rm", "shred", "dd", "mkfs", // Permissions
+    "chmod", "chown", // Process control
+    "kill", "killall", "pkill",
 ];
 
 /// Translate common Unix commands to Windows equivalents.
@@ -430,9 +424,7 @@ fn translate_unix_to_windows(cmd: &str) -> String {
         // df → wmic logicaldisk
         "df" => "wmic logicaldisk get caption,freespace,size".to_string(),
         // free → systeminfo (contains memory info)
-        "free" => {
-            "wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /Value".to_string()
-        }
+        "free" => "wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /Value".to_string(),
         // ps → tasklist
         "ps" => "tasklist".to_string(),
         // kill → taskkill
@@ -445,7 +437,10 @@ fn translate_unix_to_windows(cmd: &str) -> String {
             let mut file = "";
             let mut skip_next = false;
             for (i, arg) in args.iter().enumerate() {
-                if skip_next { skip_next = false; continue; }
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if *arg == "-n" || *arg == "-" {
                     if let Some(next) = args.get(i + 1) {
                         n = next.parse().unwrap_or(10);
@@ -474,7 +469,10 @@ fn translate_unix_to_windows(cmd: &str) -> String {
             let mut file = "";
             let mut skip_next = false;
             for (i, arg) in args.iter().enumerate() {
-                if skip_next { skip_next = false; continue; }
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if *arg == "-n" {
                     if let Some(next) = args.get(i + 1) {
                         n = next.parse().unwrap_or(10);
@@ -503,7 +501,10 @@ fn translate_unix_to_windows(cmd: &str) -> String {
             let mut pattern = "*";
             let mut skip_next = false;
             for (i, arg) in args.iter().enumerate() {
-                if skip_next { skip_next = false; continue; }
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if *arg == "-name" || *arg == "-iname" {
                     if let Some(next) = args.get(i + 1) {
                         pattern = next.trim_matches('"').trim_matches('\'');
@@ -518,7 +519,10 @@ fn translate_unix_to_windows(cmd: &str) -> String {
         }
         // chmod, chown → no-op on Windows, just explain
         "chmod" | "chown" => {
-            format!("echo Permission commands are not needed on Windows (was: {} {})", first, rest)
+            format!(
+                "echo Permission commands are not needed on Windows (was: {} {})",
+                first, rest
+            )
         }
         // Everything else passes through unchanged
         _ => trimmed.to_string(),
@@ -582,12 +586,16 @@ pub fn classify_command(cmd: &str) -> DangerLevel {
 }
 
 /// Execute a command and return structured result
-pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionState) -> Result<CommandResult> {
+pub async fn execute_command(
+    cmd: &str,
+    timeout_secs: u64,
+    state: &mut SessionState,
+) -> Result<CommandResult> {
     state.history.push(cmd.to_string());
-    
+
     // Security: Check for secrets before execution
     if let Some(reason) = check_for_secrets(cmd) {
-         return Ok(CommandResult {
+        return Ok(CommandResult {
             command: cmd.to_string(),
             exit_code: -1,
             stdout: String::new(),
@@ -609,7 +617,10 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
                 exit_code: -1,
                 stdout: String::new(),
                 stderr: format!("SANDBOX ALERT: {}", msg),
-                output: format!("SANDBOX ALERT: {}\nCommand execution blocked due to file system restrictions.", msg),
+                output: format!(
+                    "SANDBOX ALERT: {}\nCommand execution blocked due to file system restrictions.",
+                    msg
+                ),
                 duration_ms: 0,
                 success: false,
                 summary: "Blocked: Sandbox violation".to_string(),
@@ -620,37 +631,87 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
     }
 
     // Handle internal commands (cd, set_env)
-    if cmd.starts_with("cd ") {
-        let path_str = cmd.trim_start_matches("cd ").trim();
-        let new_path = state.cwd.join(path_str);
-        if new_path.exists() && new_path.is_dir() {
-             state.cwd = new_path.canonicalize()?;
-             return Ok(CommandResult {
-                command: cmd.to_string(),
-                exit_code: 0,
-                stdout: format!("Changed directory to {:?}", state.cwd),
-                stderr: String::new(),
-                output: format!("Changed directory to {:?}", state.cwd),
-                duration_ms: 0,
-                success: true,
-                summary: "Directory changed".to_string(),
-                needed_sudo: false,
-                needed_auth: false,
-            });
+    if cmd == "cd" || cmd.starts_with("cd ") {
+        let path_str = cmd.trim_start_matches("cd").trim();
+
+        let target = if path_str.is_empty() || path_str == "~" {
+            dirs::home_dir().unwrap_or_else(|| state.cwd.clone())
+        } else if let Some(rest) = path_str.strip_prefix("~/") {
+            dirs::home_dir()
+                .unwrap_or_else(|| state.cwd.clone())
+                .join(rest)
         } else {
-             return Ok(CommandResult {
+            let p = PathBuf::from(path_str);
+            if p.is_absolute() {
+                p
+            } else {
+                state.cwd.join(p)
+            }
+        };
+
+        let canonical = match target.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                return Ok(CommandResult {
+                    command: cmd.to_string(),
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: "Directory not found".to_string(),
+                    output: "Directory not found".to_string(),
+                    duration_ms: 0,
+                    success: false,
+                    summary: "Directory not found".to_string(),
+                    needed_sudo: false,
+                    needed_auth: false,
+                });
+            }
+        };
+
+        if !canonical.is_dir() {
+            return Ok(CommandResult {
                 command: cmd.to_string(),
                 exit_code: 1,
                 stdout: String::new(),
-                stderr: "Directory not found".to_string(),
-                output: "Directory not found".to_string(),
+                stderr: "Not a directory".to_string(),
+                output: "Not a directory".to_string(),
                 duration_ms: 0,
                 success: false,
-                summary: "Directory not found".to_string(),
+                summary: "Not a directory".to_string(),
                 needed_sudo: false,
                 needed_auth: false,
             });
         }
+
+        if let Some(sandbox) = &state.sandbox {
+            if !sandbox.is_allowed(&canonical) {
+                return Ok(CommandResult {
+                    command: cmd.to_string(),
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: "SANDBOX ALERT: Access denied: cd target is outside allowed directories".to_string(),
+                    output: "SANDBOX ALERT: cd target is outside allowed directories\nCommand execution blocked due to file system restrictions.".to_string(),
+                    duration_ms: 0,
+                    success: false,
+                    summary: "Blocked: Sandbox violation".to_string(),
+                    needed_sudo: false,
+                    needed_auth: false,
+                });
+            }
+        }
+
+        state.cwd = canonical;
+        return Ok(CommandResult {
+            command: cmd.to_string(),
+            exit_code: 0,
+            stdout: format!("Changed directory to {:?}", state.cwd),
+            stderr: String::new(),
+            output: format!("Changed directory to {:?}", state.cwd),
+            duration_ms: 0,
+            success: true,
+            summary: "Directory changed".to_string(),
+            needed_sudo: false,
+            needed_auth: false,
+        });
     }
 
     let danger = classify_command(cmd);
@@ -679,7 +740,7 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
         };
 
         if !authenticated {
-             return Ok(CommandResult {
+            return Ok(CommandResult {
                 command: cmd.to_string(),
                 exit_code: -1,
                 stdout: String::new(),
@@ -800,31 +861,40 @@ pub async fn execute_command(cmd: &str, timeout_secs: u64, state: &mut SessionSt
 
 /// Check if a command contains potential secrets
 fn check_for_secrets(cmd: &str) -> Option<String> {
-    // Basic heuristics to catch common accidental pastes
-    
-    // AWS Access Key ID (AKIA...)
-    if regex::Regex::new(r"AKIA[0-9A-Z]{16}").unwrap().is_match(cmd) {
+    // Basic heuristics to catch common accidental pastes.
+    // NOTE: these regexes must never be fallible at runtime.
+
+    static RE_AWS_AKID: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid AWS AKID regex"));
+    static RE_GITHUB_PAT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"ghp_[a-zA-Z0-9]{36}").expect("valid GitHub PAT regex"));
+    static RE_SLACK_TOKEN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"xox[baprs]-[a-zA-Z0-9-]+").expect("valid Slack token regex"));
+    static RE_OPENAI_KEY: LazyLock<Regex> = LazyLock::new(|| {
+        // Conservative: OpenAI-style keys are often longer, but this catches common cases.
+        Regex::new(r"sk-[a-zA-Z0-9]{20,}").expect("valid OpenAI key regex")
+    });
+
+    if RE_AWS_AKID.is_match(cmd) {
         return Some("Command contains a potential AWS Access Key ID".to_string());
     }
-    
-    // Private Key Header
-    if cmd.contains("-----BEGIN PRIVATE KEY-----") || cmd.contains("-----BEGIN RSA PRIVATE KEY-----") {
+
+    if cmd.contains("-----BEGIN PRIVATE KEY-----")
+        || cmd.contains("-----BEGIN RSA PRIVATE KEY-----")
+    {
         return Some("Command contains a Private Key".to_string());
     }
-    
-    // GitHub Personal Access Token (ghp_)
-    if regex::Regex::new(r"ghp_[a-zA-Z0-9]{36}").unwrap().is_match(cmd) {
+
+    if RE_GITHUB_PAT.is_match(cmd) {
         return Some("Command contains a GitHub Personal Access Token".to_string());
     }
-    
-    // Slack Token
-    if regex::Regex::new(r"xox[baprs]-[a-zA-Z0-9-]").unwrap().is_match(cmd) {
+
+    if RE_SLACK_TOKEN.is_match(cmd) {
         return Some("Command contains a Slack Token".to_string());
     }
 
-    // OpenAI Key (sk-...)
-    if regex::Regex::new(r"sk-[a-zA-Z0-9]{20,T}").unwrap().is_match(cmd) {
-        return Some("Command contains a potential OpenAI Key".to_string());
+    if RE_OPENAI_KEY.is_match(cmd) {
+        return Some("Command contains a potential OpenAI API key".to_string());
     }
 
     None
@@ -1189,7 +1259,10 @@ async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
                 exit_code: status.as_u16() as i32,
                 stdout: String::new(),
                 stderr: format!("Brave API HTTP {}", status),
-                output: format!("Search failed: HTTP {} — check your BRAVE_SEARCH_API_KEY", status),
+                output: format!(
+                    "Search failed: HTTP {} — check your BRAVE_SEARCH_API_KEY",
+                    status
+                ),
                 duration_ms,
                 success: false,
                 summary: "Search failed".to_string(),
@@ -1217,20 +1290,18 @@ async fn brave_search(query: &str, api_key: &str) -> Result<CommandResult> {
     let web_results = parsed["web"]["results"].as_array();
 
     let output_text = match web_results {
-        Some(results) if !results.is_empty() => {
-            results
-                .iter()
-                .take(8)
-                .enumerate()
-                .map(|(i, r)| {
-                    let title = r["title"].as_str().unwrap_or("");
-                    let desc = r["description"].as_str().unwrap_or("");
-                    let url = r["url"].as_str().unwrap_or("");
-                    format!("{}. {}\n   {}\n   URL: {}\n", i + 1, title, desc, url)
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+        Some(results) if !results.is_empty() => results
+            .iter()
+            .take(8)
+            .enumerate()
+            .map(|(i, r)| {
+                let title = r["title"].as_str().unwrap_or("");
+                let desc = r["description"].as_str().unwrap_or("");
+                let url = r["url"].as_str().unwrap_or("");
+                format!("{}. {}\n   {}\n   URL: {}\n", i + 1, title, desc, url)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => "No results found.".to_string(),
     };
 

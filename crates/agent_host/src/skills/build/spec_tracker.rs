@@ -1,11 +1,11 @@
 //! Tracks the status of a Spec-Driven Build.
-//! 
+//!
 //! Persists the build plan and current progress to `specs/status.json`.
 
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
@@ -71,7 +71,7 @@ impl SpecStatus {
         if let Some(task) = self.tasks.get_mut(self.current_task_index) {
             task.status = TaskStatus::Completed;
         }
-        
+
         self.current_task_index += 1;
         if self.current_task_index >= self.tasks.len() {
             self.completed = true;

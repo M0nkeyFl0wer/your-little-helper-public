@@ -2,10 +2,10 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use services::file_index::FileIndexService;
 use shared::skill::{
     Mode, PermissionLevel, ResultType, Skill, SkillContext, SkillInput, SkillOutput,
 };
-use services::file_index::FileIndexService;
 
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ impl Skill for ForceReindexSkill {
     async fn execute(&self, _input: SkillInput, ctx: &SkillContext) -> Result<SkillOutput> {
         // Use shared service
         let service = &self.file_index;
-        
+
         // Scan user's home/project directory (or just current working dir?)
         let scan_path = &ctx.working_dir;
 

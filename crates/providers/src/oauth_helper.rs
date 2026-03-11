@@ -36,11 +36,16 @@ impl OAuthFlow {
             AuthUrl::new(auth_url)?,
             Some(TokenUrl::new(token_url)?),
         )
-        .set_redirect_uri(RedirectUrl::new(
-            format!("http://localhost:{}/callback", port),
-        )?);
+        .set_redirect_uri(RedirectUrl::new(format!(
+            "http://localhost:{}/callback",
+            port
+        ))?);
 
-        Ok(Self { client, scopes, port })
+        Ok(Self {
+            client,
+            scopes,
+            port,
+        })
     }
 
     pub async fn authenticate(&self) -> Result<(String, Option<String>)> {
@@ -107,7 +112,9 @@ fn bind_callback_listener() -> Result<(TcpListener, u16)> {
             return Ok((listener, port));
         }
     }
-    Err(anyhow!("Could not bind OAuth callback listener on any port"))
+    Err(anyhow!(
+        "Could not bind OAuth callback listener on any port"
+    ))
 }
 
 fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {

@@ -5,7 +5,7 @@
 mod rust_spec;
 pub mod spec_tracker;
 
-pub use rust_spec::{SpecInitSkill, SpecScaffoldSkill, SpecImplementSkill, SpecNextTaskSkill};
+pub use rust_spec::{SpecImplementSkill, SpecInitSkill, SpecNextTaskSkill, SpecScaffoldSkill};
 
 use crate::skills::SkillRegistry;
 use std::sync::Arc;
